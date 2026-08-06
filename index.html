@@ -20,6 +20,9 @@
   <!-- Debug tuning panel mounts here; built by debug.js from CONFIG schema -->
   <div id="debug-root"></div>
 
+  <!-- Quick respawn: back to track start -->
+  <button id="respawn-btn" aria-label="Respawn at start">&#8634;</button>
+
   <!-- Touch hint, fades after first input -->
   <div id="touch-hint">
     <span class="hint-left">◀ hold to spin left</span>
@@ -29,6 +32,7 @@
   <!-- Classic scripts, no modules: load order IS the dependency order. -->
   <script src="js/config.js"></script>
   <script src="js/state.js"></script>
+  <script src="js/terrain.js"></script>
   <script src="js/physics.js"></script>
   <script src="js/input.js"></script>
   <script src="js/renderer.js"></script>

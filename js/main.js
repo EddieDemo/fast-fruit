@@ -12,29 +12,35 @@
 (function () {
 'use strict';
 
-const { CONFIG, createState, step, initInput, createRenderer, createHud, initDebugPanel } = window.FF;
+const { CONFIG, createState, resetMelon, step, initInput, createRenderer, createHud, initDebugPanel, createTerrainGen } = window.FF;
 
-// ---- Level (stage 1: one long flat runway) ----
-// Terrain is already a polyline, so stage 2 is "add more points".
-function buildFlatLevel(state) {
-  const HALF_LENGTH = 200000; // effectively endless in both directions
-  state.terrain = [
-    [
-      { x: -HALF_LENGTH, y: 0 },
-      { x: HALF_LENGTH, y: 0 },
-    ],
-  ];
-}
+// ---- Level: endless seeded downhill run ----
+// Change SEED for a different world; the same seed always produces the
+// same track — that's the contract the ghost/sharing system relies on.
+const SEED = 20260806;
+const GEN_AHEAD = 3600;  // keep this much terrain generated in front
+const KEEP_BEHIND = 2600; // and this much behind before pruning
 
-// ---- Bootstrap ----
+const SPAWN = { x: 120 };
 const canvas = document.getElementById('game');
 const state = createState();
-buildFlatLevel(state);
+const terrainGen = createTerrainGen(SEED);
+state.terrain = [terrainGen.pts]; // live reference: gen streams into it
+terrainGen.ensure(SPAWN.x + GEN_AHEAD);
+resetMelon(state, SPAWN.x, -CONFIG.semiMinor - 200);
 
 initInput(state, canvas);
 initDebugPanel(state);
 const renderer = createRenderer(canvas);
 const hud = createHud(state);
+
+// Quick respawn: rebuild the world from the seed and drop at the start.
+document.getElementById('respawn-btn').addEventListener('click', () => {
+  terrainGen.reset();
+  terrainGen.ensure(SPAWN.x + GEN_AHEAD);
+  resetMelon(state, SPAWN.x, -CONFIG.semiMinor - 200);
+  state.camera.initialized = false; // snap camera, don't pan across the map
+});
 
 // ---- Fixed-timestep loop ----
 const MAX_FRAME_DT = 0.1; // clamp huge gaps (tab switch) — avoid spiral of death
@@ -45,6 +51,11 @@ function frame(now) {
   let dtFrame = (now - last) / 1000;
   last = now;
   if (dtFrame > MAX_FRAME_DT) dtFrame = MAX_FRAME_DT;
+
+  // Stream the world: extend ahead of the melon, prune far behind.
+  // Done per-frame (not per-step) — the margins dwarf one frame's travel.
+  terrainGen.ensure(state.melon.x + GEN_AHEAD);
+  terrainGen.prune(state.melon.x - KEEP_BEHIND);
 
   const stepDt = 1 / CONFIG.physicsHz;
   accumulator += dtFrame;

@@ -44,20 +44,23 @@ function createRenderer(canvas) {
     const iy = p.y + (m.y - p.y) * alpha;
     const iangle = p.angle + (m.angle - p.angle) * alpha;
 
-    // ---- Camera: smooth-follow x, fixed framing on the ground ----
+    // ---- Camera: melon-centered, both axes, with catch-up lag ----
+    // The melon is the camera's target; cameraLerp (tuning panel, Feel
+    // group) is the catch-up knob — low = long dreamy lag, high = locked.
     const cam = state.camera;
-    const targetX = ix + width * 0.12; // look slightly ahead of the melon
     if (!cam.initialized) {
-      cam.x = targetX;
+      cam.x = ix;
+      cam.y = iy;
       cam.initialized = true;
     } else {
       const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
-      cam.x += (targetX - cam.x) * k;
+      cam.x += (ix - cam.x) * k;
+      cam.y += (iy - cam.y) * k;
     }
-    // Ground (world y=0) sits at 72% of the screen height.
-    const groundScreenY = height * 0.72;
     const toScreenX = (wx) => wx - cam.x + width / 2;
-    const toScreenY = (wy) => wy + groundScreenY;
+    const toScreenY = (wy) => wy - cam.y + height / 2;
+    // Screen y where world y=0 sits this frame (grid anchor).
+    const groundScreenY = toScreenY(0);
 
     // ---- FX decay (presentation state owned by renderer) ----
     state.fx.squash = Math.max(0, state.fx.squash - CONFIG.squashDecay * state.fx.squash * dtFrame);
@@ -73,8 +76,9 @@ function createRenderer(canvas) {
     drawGrid(ctx, cam.x, width, height, groundScreenY);
 
     // ---- Terrain ----
-    ctx.fillStyle = COLORS.ground;
-    ctx.fillRect(0, groundScreenY, width, height - groundScreenY);
+    // The polygon fill below IS the ground — no screen-wide pre-fill.
+    // (A leftover flat-ground fillRect here was painting a phantom
+    // surface at world y=0, burying the melon in dips below it.)
     for (const poly of state.terrain) {
       ctx.beginPath();
       ctx.moveTo(toScreenX(poly[0].x), toScreenY(poly[0].y));
@@ -90,7 +94,7 @@ function createRenderer(canvas) {
     }
 
     // Distance markers every 200 world px — motion & speed reference.
-    drawMarkers(ctx, cam.x, width, groundScreenY);
+    drawMarkers(ctx, state, cam.x, width, toScreenX, toScreenY);
 
     // ---- Melon ----
     drawMelon(ctx, toScreenX(ix), toScreenY(iy), iangle, state.fx);
@@ -135,8 +139,11 @@ function createRenderer(canvas) {
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, h);
     }
-    // Horizontal lines: anchored to world y (multiples above the ground).
-    for (let sy = groundY; sy > -GRID_SPACING; sy -= GRID_SPACING) {
+    // Horizontal lines: anchored to world y, full screen height — the
+    // terrain fill covers whatever falls below the surface, so lines
+    // stay consistent inside dips below world y=0.
+    const firstY = groundY % GRID_SPACING;
+    for (let sy = firstY; sy < h + GRID_SPACING; sy += GRID_SPACING) {
       const y = Math.round(sy) + 0.5;
       ctx.moveTo(0, y);
       ctx.lineTo(w, y);
@@ -144,16 +151,36 @@ function createRenderer(canvas) {
     ctx.stroke();
   }
 
-  function drawMarkers(ctx, camX, w, groundY) {
+  // Terrain surface height (world y) at world x, or null outside the
+  // polylines. Assumes points are x-ordered, which the track builder
+  // guarantees. Linear scan is fine at this point count.
+  function terrainYAt(terrain, wx) {
+    for (const poly of terrain) {
+      for (let i = 0; i < poly.length - 1; i++) {
+        const a = poly[i], b = poly[i + 1];
+        if (wx >= a.x && wx <= b.x && b.x > a.x) {
+          const t = (wx - a.x) / (b.x - a.x);
+          return a.y + (b.y - a.y) * t;
+        }
+      }
+    }
+    return null;
+  }
+
+  function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY) {
     const SPACING = 200;
     const first = Math.floor((camX - w / 2) / SPACING) * SPACING;
     ctx.fillStyle = COLORS.marker;
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
     for (let wx = first; wx < camX + w / 2 + SPACING; wx += SPACING) {
-      const sx = wx - camX + w / 2;
-      ctx.fillRect(sx - 1.5, groundY - 14, 3, 14);
-      ctx.fillText(`${wx / 100 | 0}`, sx, groundY + 16);
+      const wy = terrainYAt(state.terrain, wx);
+      if (wy === null) continue;
+      const sx = toScreenX(wx);
+      const sy = toScreenY(wy);
+      // Tick sits ON the surface; label sits just under it, inside the fill.
+      ctx.fillRect(sx - 1.5, sy - 14, 3, 14);
+      ctx.fillText(`${wx / 100 | 0}`, sx, sy + 16);
     }
   }
 

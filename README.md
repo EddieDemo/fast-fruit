@@ -52,8 +52,9 @@ back into the melon slice** — that's what will keep ghost recording sane.
 
 ## Already wired for stage 2
 
-- Terrain is a polyline; ramps and slopes are just more points in
-  `buildFlatLevel` (rename it when you do).
+- Terrain is an endless seeded stream: js/terrain.js generates chunks
+  ahead of the melon and prunes behind (same seed = same track, always).
+  Change SEED in main.js for a different world.
 - The collider handles arbitrary segment angles and segment *endpoints*
   (vertices), so angled terrain needs zero physics changes.
 - `state.telemetry.lastImpactVn` already records landing impact speed —

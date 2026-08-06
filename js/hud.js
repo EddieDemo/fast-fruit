@@ -27,7 +27,7 @@ function createHud(state) {
     const t = state.telemetry;
     elImpact.textContent = t.lastImpactVn === null
       ? '—'
-      : `${(t.lastImpactVn / 100).toFixed(1)} m/s`;
+      : `${(t.lastImpactVn / 100).toFixed(1)} m/s @ ${t.lastImpactAngleDeg.toFixed(0)}°`;
   }
 
   return { update };

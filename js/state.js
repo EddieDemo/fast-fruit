@@ -49,7 +49,8 @@ function createState() {
 
     telemetry: {
       grounded: false,
-      lastImpactVn: null,   // normal speed of last landing (px/s)
+      lastImpactVn: null,       // normal speed of last landing (px/s)
+      lastImpactAngleDeg: null, // major-axis vs surface misalignment (0..90°)
       lastImpactTick: -1,
     },
   };
@@ -69,6 +70,7 @@ function resetMelon(state, x, y) {
   state.prevMelon = { ...state.melon };
   state.fx.squash = 0;
   state.telemetry.lastImpactVn = null;
+  state.telemetry.lastImpactAngleDeg = null;
 }
 
 // Called at the top of every physics step so the renderer can

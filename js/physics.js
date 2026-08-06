@@ -88,10 +88,15 @@ function step(state, dt) {
   let impactNormalAngle = 0;
   let impactVn = 0;
 
+  // Broad phase: only segments near the melon can touch it.
+  const cullR = CONFIG.semiMajor + 80;
   for (let iter = 0; iter < CONFIG.solverIterations; iter++) {
     for (const poly of state.terrain) {
       for (let i = 0; i < poly.length - 1; i++) {
-        ellipseVsSegment(m, poly[i], poly[i + 1], contact);
+        const A = poly[i], B = poly[i + 1];
+        if ((A.x < m.x - cullR && B.x < m.x - cullR) ||
+            (A.x > m.x + cullR && B.x > m.x + cullR)) continue;
+        ellipseVsSegment(m, A, B, contact);
         if (!contact.hit) continue;
         grounded = true;
 
@@ -112,6 +117,15 @@ function step(state, dt) {
   if (grounded && !wasGrounded && impactVn < -CONFIG.restitutionThreshold) {
     state.telemetry.lastImpactVn = -impactVn; // report as positive speed
     state.telemetry.lastImpactTick = state.tick;
+
+    // Landing orientation: angle between the melon's MAJOR axis and the
+    // surface tangent, folded to [0°, 90°]. 0° = flat-side landing
+    // (safe), 90° = landed on the pointy end (future break territory).
+    const tangentAngle = impactNormalAngle + Math.PI / 2;
+    let d = (tangentAngle - m.angle) % Math.PI;
+    if (d < 0) d += Math.PI;
+    if (d > Math.PI / 2) d = Math.PI - d;
+    state.telemetry.lastImpactAngleDeg = (d * 180) / Math.PI;
   }
 
   // Squash is an FX event sourced from physics but never read back.

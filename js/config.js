@@ -32,21 +32,25 @@ const DEFAULTS = Object.freeze({
   // a "corner" every half-turn (center height oscillates b -> a -> b).
   // Below ~18000 the motor can't beat that gravity barrier and the melon
   // rocks in place — verified by headless torque sweep. Keep above it.
-  motorTorque: 22000,      // peak torque at zero spin
-  maxAngVel: 34,           // rad/s where motor torque tapers to zero
-  brakeBoost: 1.6,         // torque multiplier when spinning against ω
+  // Static climb limit: sin(θ) = T / (m·g·r_contact). At 75000 with the
+  // default melon that's ~42° from a standstill; steeper slopes need
+  // carried momentum. Tuned via headless sweep 2026-08-06: 0→3 m/s in
+  // ~0.35s, top ~10.5 m/s, brake-to-zero from top in ~0.7s.
+  motorTorque: 75000,      // peak torque at zero spin
+  maxAngVel: 55,           // rad/s where motor torque tapers to zero
+  brakeBoost: 1.3,         // torque multiplier when spinning against ω
   airTorqueScale: 0.55,    // torque authority while airborne
-  inputResponse: 14,       // how fast input eases to target (1/s)
+  inputResponse: 24,       // how fast input eases to target (1/s)
 
   // --- Surface interaction ---
   friction: 0.95,          // Coulomb μ at contact
-  rollingResistance: 0.02, // contact losses; without this the melon rocks/rolls ~forever
+  rollingResistance: 0.025, // contact losses; also damps contact bounce at speed
   restitution: 0.18,       // bounciness (0..1)
   restitutionThreshold: 90,// impacts slower than this don't bounce (px/s)
 
   // --- Damping (air resistance & spin decay) ---
-  linearDamping: 0.06,     // 1/s
-  angularDamping: 0.28,    // 1/s
+  linearDamping: 0.035,     // 1/s
+  angularDamping: 0.12,    // 1/s
 
   // --- Contact solver stability ---
   positionCorrection: 0.6, // fraction of penetration fixed per step
@@ -64,8 +68,8 @@ const CONFIG = { ...DEFAULTS };
 // Slider schema for debug.js. Grouped for readability in the panel.
 const SCHEMA = [
   { group: 'Motor' },
-  { key: 'motorTorque',    min: 5000, max: 60000, step: 500 },
-  { key: 'maxAngVel',      min: 5,    max: 80,    step: 1 },
+  { key: 'motorTorque',    min: 5000, max: 150000, step: 1000 },
+  { key: 'maxAngVel',      min: 5,    max: 120,   step: 1 },
   { key: 'brakeBoost',     min: 1,    max: 4,     step: 0.1 },
   { key: 'airTorqueScale', min: 0,    max: 1.5,   step: 0.05 },
   { key: 'inputResponse',  min: 2,    max: 40,    step: 1 },
@@ -84,7 +88,7 @@ const SCHEMA = [
 
   { group: 'Feel' },
   { key: 'squashStrength', min: 0,    max: 0.001, step: 0.00002 },
-  { key: 'cameraLerp',     min: 1,    max: 15,    step: 0.5 },
+  { key: 'cameraLerp',     min: 0.5,  max: 20,    step: 0.5 },
 ];
 
 function resetConfig() {
