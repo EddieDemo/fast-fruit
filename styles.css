@@ -1,0 +1,147 @@
+/* ============================================================
+   Fast Fruit — Stage 1
+   The canvas is the game. Everything else is overlay chrome.
+   ============================================================ */
+
+:root {
+  --panel-bg: rgba(20, 28, 18, 0.88);
+  --panel-fg: #e8f2df;
+  --panel-accent: #ff5d73;   /* watermelon flesh */
+  --panel-dim: #93a689;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #000000;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* The game surface. touch-action: none is load-bearing:
+   without it, mobile browsers steal our pointer events for scrolling. */
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- HUD (top-left telemetry) ---------- */
+#hud {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  padding: 8px 12px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  pointer-events: none;
+  min-width: 128px;
+}
+.hud-row { display: flex; justify-content: space-between; gap: 12px; }
+.hud-label { color: var(--panel-dim); }
+#hud-impact { color: var(--panel-accent); }
+
+/* ---------- Touch hint ---------- */
+#touch-hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 24px calc(28px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: opacity 0.6s ease;
+}
+#touch-hint.hidden { opacity: 0; }
+
+/* ---------- Debug tuning panel ---------- */
+#debug-root {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 10;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.debug-toggle {
+  display: block;
+  margin-left: auto;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.debug-panel {
+  margin-top: 8px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: min(280px, calc(100vw - 24px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.debug-panel.collapsed { display: none; }
+
+.debug-group-title {
+  color: var(--panel-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  margin: 10px 0 4px;
+}
+.debug-group-title:first-child { margin-top: 0; }
+
+.debug-row { margin-bottom: 8px; }
+.debug-row label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.debug-row .val { color: var(--panel-accent); }
+
+.debug-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--panel-accent);
+  touch-action: manipulation; /* sliders may pan, but not zoom */
+}
+
+.debug-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.debug-actions button {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 0;
+  font: inherit;
+  cursor: pointer;
+}
+.debug-actions button:active { background: rgba(255, 255, 255, 0.25); }
