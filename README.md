@@ -39,6 +39,19 @@ BOT_COUNT to 0 for solo, 1 to recreate the old single-rival race.
 The pack is fully deterministic per seed when your inputs are the same —
 any same-seed divergence you didn't cause means determinism broke.
 
+## Launch checklist
+
+Before the first public push:
+1. Replace every `SITE_URL` in index.html with the deployed URL
+   (absolute URLs are mandatory for link previews).
+2. Point the "YOUR AD HERE" house billboard (js/billboards.js) at a
+   real booking page, or leave url null.
+3. Deploy once, then paste the URL into a messenger to confirm the
+   preview card renders (icons/og.png).
+4. PWA: manifest.webmanifest + sw.js ship ready; sw is network-first,
+   so deploys stay fresh and the game works offline after first load.
+5. Name: "Fast Fruit" is provisional — rename pass pending decision.
+
 ## Racer names (js/names.js)
 
 Every racer — player and bots alike — draws a name from a 36-strong

@@ -34,7 +34,7 @@ window.FF.BILLBOARDS = [
     id: 'house-yourad',
     text: 'YOUR AD HERE',
     sub: 'boards for hire',
-    url: 'https://example.com/billboards', // point at your booking page
+    url: null, // LAUNCH TODO: point at your booking page to make this clickable post-race
     fg: '#ffd22d',
   },
   {

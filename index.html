@@ -4,7 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
-  <title>Fast Fruit — Stage 1</title>
+  <title>Fast Fruit</title>
+  <meta name="description" content="A physics racing game about melons, momentum, and arriving at the wrong angle. Race the pack, smash spectacularly, beat your friends' ghosts." />
+
+  <!-- LAUNCH TODO: replace SITE_URL below with your deployed URL
+       (e.g. https://yourname.github.io/fast-fruit/) in all og:/twitter: tags.
+       Preview images MUST be absolute URLs or messengers ignore them. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Fast Fruit" />
+  <meta property="og:description" content="Melon racing with real physics. Hold to roll. Try not to explode. Beat my ghost." />
+  <meta property="og:url" content="SITE_URL/" />
+  <meta property="og:image" content="SITE_URL/icons/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Fast Fruit" />
+  <meta name="twitter:description" content="Melon racing with real physics. Beat my ghost." />
+  <meta name="twitter:image" content="SITE_URL/icons/og.png" />
+
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&display=swap" rel="stylesheet" />
@@ -16,11 +36,11 @@
   <!-- HUD: read-only telemetry. Renderer never touches this; hud.js owns it. -->
   <div id="hud" aria-hidden="true">
     <div class="hud-row"><span class="hud-label">time</span><span id="hud-time">0:00.0</span></div>
-    <div class="hud-row"><span class="hud-label">dist</span><span id="hud-dist">0.0 m</span></div>
-    <div class="hud-row"><span class="hud-label">speed</span><span id="hud-speed">0.0</span></div>
-    <div class="hud-row"><span class="hud-label">spin</span><span id="hud-spin">0.0</span></div>
-    <div class="hud-row"><span class="hud-label">impact</span><span id="hud-impact">—</span></div>
-    <div class="hud-row"><span class="hud-label">vs bot</span><span id="hud-bot">—</span></div>
+    <div class="hud-row cockpit-only"><span class="hud-label">dist</span><span id="hud-dist">0.0 m</span></div>
+    <div class="hud-row cockpit-only"><span class="hud-label">speed</span><span id="hud-speed">0.0</span></div>
+    <div class="hud-row cockpit-only"><span class="hud-label">spin</span><span id="hud-spin">0.0</span></div>
+    <div class="hud-row cockpit-only"><span class="hud-label">impact</span><span id="hud-impact">—</span></div>
+    <div class="hud-row cockpit-only"><span class="hud-label">vs bot</span><span id="hud-bot">—</span></div>
     <div class="hud-row"><span class="hud-label">lap</span><span id="hud-lap">—</span></div>
     <div class="hud-row"><span class="hud-label">last</span><span id="hud-last">—</span></div>
     <div class="hud-row"><span class="hud-label">best</span><span id="hud-best">—</span></div>
@@ -54,9 +74,18 @@
   <script src="js/debug.js"></script>
   <script src="js/names.js"></script>
   <script src="js/audio.js"></script>
+  <script src="js/deaths.js"></script>
+  <script src="js/ghost.js"></script>
   <script src="js/net.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/main.js"></script>
   <script src="js/mp.js"></script>
+<script>
+  // PWA: offline play + home-screen install. Network-first, so deploys
+  // are always fresh online; the cache only answers when offline.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
 </body>
 </html>

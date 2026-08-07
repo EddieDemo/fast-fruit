@@ -65,14 +65,14 @@ function respawnRace() {
 
   // Deal the cast: seeded from the race seed, so every peer, ghost,
   // and daily shares the same roster.
-  const castSeed = TRACKS[modeName] ? TRACKS[modeName].seed : SEED;
+  const castSeed = window.FF.trackDefByName(modeName) ? window.FF.trackDefByName(modeName).seed : SEED;
   window.FF.assignRosterNames(state, castSeed);
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
 
   const race = state.race;
-  const def = TRACKS[modeName];
+  const def = window.FF.trackDefByName(modeName);
   race.mode = def ? 'track' : 'endless';
   race.lapLengthPx = def ? def.lapLengthM * 100 : 0;
   race.laps = def ? def.laps : 0;
@@ -83,10 +83,22 @@ function respawnRace() {
   race.finishedTick = null;
 
   state.camera.initialized = false; // snap camera, don't pan across the map
+
+  window.FF.ghost.onRaceStart(state);
+}
+
+// Ensure a provider exists for any resolvable track name (registry or
+// self-describing daily), creating it on demand.
+function ensureProvider(name) {
+  if (providers[name]) return providers[name];
+  const def = window.FF.trackDefByName(name);
+  if (!def) return null;
+  providers[name] = createTrackProvider(def);
+  return providers[name];
 }
 
 function selectMode(name) {
-  if (!providers[name]) return;
+  if (!ensureProvider(name)) return;
   modeName = name;
   provider = providers[name];
   respawnRace();
@@ -99,6 +111,43 @@ let netSession = null;
 // channels are open and the host has assigned slots. Transport is
 // abstract: sendInput broadcasts a wire message; the returned receive
 // is called for every arriving message.
+window.FF.currentModeName = () => modeName;
+window.FF.selectTrackByName = selectMode;
+
+// ---- Daily button: one shared track per day, seed = the date ----
+(function buildDailyButton() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const btn = document.createElement('button');
+  btn.id = 'daily-btn';
+  const refresh = () => {
+    const daily = window.FF.dailyTrackName();
+    const active = modeName === daily;
+    btn.textContent = active ? 'daily \u2713' : 'daily';
+    btn.classList.toggle('active', active);
+  };
+  btn.addEventListener('click', () => {
+    if (netSession) return; // mode is shared state in a lockstep race
+    const daily = window.FF.dailyTrackName();
+    if (modeName === daily) {
+      selectMode('Track 1');
+    } else {
+      selectMode(daily);
+      window.FF.ghost.announce("TODAY'S TRACK \u2014 everyone races this one");
+    }
+    refresh();
+  });
+  document.body.appendChild(btn);
+  refresh();
+})();
+
+// ---- Challenge links choose their track at boot ----
+// A shared ghost names its track; dailies are self-describing, so a
+// link from any past day still reconstructs that day's world.
+(function acceptChallengeTrack() {
+  const t = window.FF.ghost.getChallengeTrack && window.FF.ghost.getChallengeTrack();
+  if (t && t !== modeName) selectMode(t);
+})();
+
 window.FF.netStart = function ({ count, slot, sendInput, setStatus }) {
   netSession = {
     ls: createLockstep(count, slot, NET_DELAY),
@@ -219,6 +268,8 @@ function frame(now) {
   renderer.render(state, alpha, dtFrame);
   hud.update(dtFrame);
   window.FF.audio.update(state, dtFrame);
+  window.FF.deaths.update(state);
+  window.FF.ghost.update(state);
 
   requestAnimationFrame(frame);
 }

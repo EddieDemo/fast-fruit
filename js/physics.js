@@ -126,6 +126,20 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     debris.spawnFromBody(m, state, tick, bodyIndex);
     m.alive = false;
     m.respawnAtTick = tick + CONFIG.respawnDelayTicks;
+    if (isPlayer) {
+      // Death certificate for the presentation layer (same per-peer
+      // divergence license as fx: sim never reads it).
+      state.lastDeath = {
+        tick,
+        name: m.name || '',
+        byPair: m.pairSeverity >= m.hitSeverity,
+        severity: sev,
+        curvR: m.lastHitCurvR || 1,
+        rFlat: (m.a || CONFIG.semiMajor) * (m.a || CONFIG.semiMajor) / (m.b || CONFIG.semiMinor),
+        vn: Math.abs(state.telemetry.lastImpactVn || 0),
+        speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
+      };
+    }
   } else if (isPlayer && sev >= T * NEAR_MISS_RATIO) {
     state.fx.flash = 1; // near-miss: teach the envelope
   }
@@ -342,6 +356,7 @@ function stepBody(m, inp, terrain, dt, sink) {
           impactNormalAngle = Math.atan2(contact.ny, contact.nx);
           impactVn = applied.vn;
         }
+        m.lastHitCurvR = contact.curvR; // death-certificate breadcrumb
       }
     }
   }

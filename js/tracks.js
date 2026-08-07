@@ -137,6 +137,33 @@ function createTrackProvider(def) {
 }
 
 window.FF = window.FF || {};
-Object.assign(window.FF, { TRACKS, createTrackProvider });
+// Resolve a track definition from its NAME. Registry tracks come from
+// TRACKS; daily tracks are SELF-DESCRIBING — 'Daily 2026-08-07' carries
+// its own seed (20260807), so a challenge link for any daily works
+// forever, with no registry entry and no server.
+const DAILY_RE = /^Daily (\d{4})-(\d{2})-(\d{2})$/;
+
+function trackDefByName(name) {
+  if (TRACKS[name]) return TRACKS[name];
+  const m = DAILY_RE.exec(name || '');
+  if (m) {
+    return {
+      seed: parseInt(m[1] + m[2] + m[3], 10),
+      lapLengthM: 400,
+      dropPerLapM: 70,
+      laps: 3,
+    };
+  }
+  return null;
+}
+
+// Today's daily name, from the local date: the seed IS the date.
+function dailyTrackName(d) {
+  const day = d || new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `Daily ${day.getFullYear()}-${p(day.getMonth() + 1)}-${p(day.getDate())}`;
+}
+
+Object.assign(window.FF, { TRACKS, createTrackProvider, trackDefByName, dailyTrackName });
 
 })();

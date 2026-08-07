@@ -81,6 +81,8 @@ function createState() {
       initialized: false,
     },
 
+    lastDeath: null, // presentation-only death certificate (local player)
+
     fx: {
       squash: 0,        // 0..~0.3, visual squash amount
       squashAngle: 0,   // world angle of last impact normal

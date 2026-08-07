@@ -172,6 +172,9 @@ function createRenderer(canvas) {
     window.FF.boards.draw(ctx, state, cam, width, toScreenX, toScreenY, zoom);
     window.FF.boards.updateSponsorLine(state);
 
+    // ---- Ghosts: translucent rivals behind the living ----
+    window.FF.ghost.draw(ctx, state, cam, toScreenX, toScreenY, zoom);
+
     // ---- Debris: wreckage under the racers, minimum-image aware ----
     drawDebris(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 

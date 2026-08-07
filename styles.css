@@ -90,6 +90,88 @@ html, body {
 }
 #respawn-btn:active { color: var(--panel-accent); }
 
+/* ---------- Ghost banner + challenge button ---------- */
+#ghost-banner {
+  display: none;
+  position: fixed;
+  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  z-index: 9;
+  pointer-events: none;
+}
+#challenge-btn {
+  display: none;
+  position: fixed;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 44px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-accent);
+  color: #1a1a1a;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  z-index: 9;
+}
+
+/* ---------- Death overlay ---------- */
+#death-overlay {
+  position: fixed;
+  top: 26%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.94);
+  text-align: center;
+  font-family: var(--mono);
+  color: #ffffff;
+  z-index: 8;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+#death-overlay.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+#death-overlay .death-title {
+  font-size: clamp(20px, 5.5vw, 42px);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 18px rgba(255, 71, 87, 0.55);
+}
+#death-overlay .death-sub {
+  margin-top: 8px;
+  font-size: clamp(12px, 3vw, 18px);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* ---------- Clean mode / cockpit toggle ---------- */
+#cockpit-toggle {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: calc(max(10px, env(safe-area-inset-right)) + 88px);
+  z-index: 10;
+  background: var(--panel-bg);
+  color: var(--panel-dim);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+body.clean .cockpit-only { display: none; }
+body.clean #debug-root { display: none; }
+
 /* ---------- Sound toggle ---------- */
 #snd-toggle {
   position: fixed;
