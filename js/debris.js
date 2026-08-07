@@ -28,7 +28,9 @@
 (function () {
 'use strict';
 
-const { CONFIG, mulberry32, segStartIndex } = window.FF;
+const { CONFIG, mulberry32, segStartIndex, dmath } = window.FF;
+const dsin = dmath.sin, dcos = dmath.cos;
+const dhyp = (x, y) => Math.sqrt(x * x + y * y); // sqrt IS pinned; hypot is not
 
 const MAX_FRAGS = 640; // sized for doubled bursts before eviction kicks in
 const HOT_TICKS = 180;        // 1.5s of full simulation after the burst
@@ -73,7 +75,7 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   // Deterministic per-smash stream: same run, same carnage.
   const rng = mulberry32((Math.imul(tick | 0, 2654435761) ^ Math.imul(bodyIndex + 1, 40503)) >>> 0);
   const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
-  const cos = Math.cos(m.angle), sin = Math.sin(m.angle);
+  const cos = dcos(m.angle), sin = dsin(m.angle);
   const count = 32 + Math.floor(rng() * 13); // 32-44 fragments per smash
 
   for (let i = 0; i < count; i++) {
@@ -82,12 +84,12 @@ function spawnFromBody(m, state, tick, bodyIndex) {
     const isRind = rng() < 0.42;
     // Rind bits come from the perimeter, flesh from the interior.
     const k = isRind ? 0.9 + rng() * 0.1 : 0.25 + rng() * 0.6;
-    const lx = a * k * Math.cos(t);
-    const ly = b * k * Math.sin(t);
+    const lx = a * k * dcos(t);
+    const ly = b * k * dsin(t);
     const wx = m.x + lx * cos - ly * sin;
     const wy = m.y + lx * sin + ly * cos;
     const rx = wx - m.x, ry = wy - m.y;
-    const rlen = Math.hypot(rx, ry) || 1;
+    const rlen = dhyp(rx, ry) || 1;
     const burst = 140 + rng() * 320;
 
     f.active = true; f.cold = false; f.grounded = false;
@@ -123,7 +125,7 @@ function collideFragTerrain(f, terrain) {
       t = t < 0 ? 0 : (t > 1 ? 1 : t);
       const cx = A.x + abx * t, cy = A.y + aby * t;
       const dx = f.x - cx, dy = f.y - cy;
-      const d = Math.hypot(dx, dy);
+      const d = dhyp(dx, dy);
       if (d >= f.r || d < 1e-9) continue;
       const nx = dx / d, ny = dy / d;
       f.x += nx * (f.r - d);
@@ -193,7 +195,7 @@ function stepDebris(state, dt) {
     f.offWorld = sawTerrain ? 0 : (f.offWorld || 0) + 1;
     if (f.offWorld > 60) { f.active = false; continue; }
 
-    const slow = Math.hypot(f.vx, f.vy) < 45 && Math.abs(f.omega) < 4;
+    const slow = dhyp(f.vx, f.vy) < 45 && Math.abs(f.omega) < 4;
     f.rest = (f.grounded && slow) ? f.rest + 1 : 0;
     if (f.rest > 10 || (tick > f.hotUntil && f.grounded)) {
       f.cold = true; f.vx = 0; f.vy = 0; f.omega = 0;
@@ -230,13 +232,13 @@ function stepDebris(state, dt) {
 
   // 3. Racers plow through debris (one-way, minimum-image aware).
   const bodyR = (CONFIG.semiMajor + CONFIG.semiMinor) / 2;
-  racerShove(state.melon, state, bodyR, period, tick);
+  for (const pl of state.players) racerShove(pl.melon, state, bodyR, period, tick);
   for (const b of state.bots) racerShove(b.melon, state, bodyR, period, tick);
 }
 
 function racerShove(m, state, bodyR, period, tick) {
   if (!m.alive) return;
-  const speedy = Math.hypot(m.vx, m.vy) > 30 || Math.abs(m.omega) > 2;
+  const speedy = dhyp(m.vx, m.vy) > 30 || Math.abs(m.omega) > 2;
   if (!speedy) return; // parked melons don't churn their surroundings
   for (const f of fragments) {
     if (!f.active) continue;
@@ -261,7 +263,7 @@ function racerShove(m, state, bodyR, period, tick) {
     // underground). Up-and-forward is also what gravel does.
     const pvx = m.vx - m.omega * dy;
     const pvy = m.vy + m.omega * dx;
-    const speed = Math.hypot(m.vx, m.vy);
+    const speed = dhyp(m.vx, m.vy);
     const kick = 120 + speed * 0.25;
     f.cold = false;
     f.hotUntil = tick + WAKE_TICKS;

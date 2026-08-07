@@ -14,11 +14,13 @@
 (function () {
 'use strict';
 
-const { CONFIG, createState, resetMelon, resetBots, step, initInput, createRenderer,
-        createHud, initDebugPanel, createTerrainGen, TRACKS, createTrackProvider } = window.FF;
+const { CONFIG, createState, resetMelon, resetPlayers, resetBots, step, initInput,
+        createRenderer, createHud, initDebugPanel, createTerrainGen, TRACKS,
+        createTrackProvider, createLockstep } = window.FF;
 
 const SEED = 20260806;   // endless-mode world seed
-const BOT_COUNT = 11;    // hold-right rivals spawned on load (0 = solo); 12-melon grid
+const GRID_SIZE = 12;    // total racers; bots fill whatever humans don't
+const NET_DELAY = 6;     // lockstep input delay in ticks (~50ms at 120Hz)
 const GEN_AHEAD = 3600;  // terrain kept generated in front of the leaders
 const KEEP_BEHIND = 2600; // and behind the backmarkers
 const SPAWN = { x: 120 };
@@ -54,8 +56,17 @@ function respawnRace() {
   state.terrain = [provider.pts];
   state.period = provider.period;
 
-  resetMelon(state, SPAWN.x, -CONFIG.semiMinor - 200);
-  resetBots(state, BOT_COUNT, SPAWN.x, -CONFIG.semiMinor - 200);
+  const humans = netSession ? netSession.ls.playerCount : 1;
+  const localSlot = netSession ? netSession.ls.localSlot : 0;
+  // Netplay feeds every player's input from the lockstep buffer;
+  // solo aliases the UI input straight into player 0.
+  resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
+  resetBots(state, Math.max(0, GRID_SIZE - humans), SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200);
+
+  // Deal the cast: seeded from the race seed, so every peer, ghost,
+  // and daily shares the same roster.
+  const castSeed = TRACKS[modeName] ? TRACKS[modeName].seed : SEED;
+  window.FF.assignRosterNames(state, castSeed);
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
@@ -82,6 +93,29 @@ function selectMode(name) {
 }
 
 // Expose the mode system for the debug panel (must precede initDebugPanel).
+let netSession = null;
+
+// Begin a multiplayer race. mp.js calls this on every peer once the
+// channels are open and the host has assigned slots. Transport is
+// abstract: sendInput broadcasts a wire message; the returned receive
+// is called for every arriving message.
+window.FF.netStart = function ({ count, slot, sendInput, setStatus }) {
+  netSession = {
+    ls: createLockstep(count, slot, NET_DELAY),
+    sendInput,
+    setStatus: setStatus || (() => {}),
+  };
+  modeName = 'Track 1'; // multiplayer races the canonical circuit
+  provider = providers[modeName];
+  respawnRace();
+  return {
+    receive(msg) {
+      if (msg && msg.t === 'i') netSession.ls.addRemote(msg.s, msg.k, msg.a);
+    },
+    stop() { netSession = null; respawnRace(); },
+  };
+};
+
 window.FF.modes = {
   names: Object.keys(providers),
   select: selectMode,
@@ -94,7 +128,10 @@ initDebugPanel(state);
 const renderer = createRenderer(canvas);
 const hud = createHud(state);
 
-document.getElementById('respawn-btn').addEventListener('click', respawnRace);
+document.getElementById('respawn-btn').addEventListener('click', () => {
+  if (netSession) return; // a solo respawn would desync a lockstep race
+  respawnRace();
+});
 
 // ---- Lap accounting (tick-accurate: called after every physics step) ----
 function checkLapCrossings() {
@@ -121,6 +158,7 @@ function checkLapCrossings() {
 // After the chequered flag: hold for a beat so the frozen finish time
 // and final splits can be read, then restart the race clean.
 function checkAutoRestart() {
+  if (netSession) return; // peers can't unilaterally restart a shared race
   const race = state.race;
   if (race.mode !== 'track' || race.finishedTick === null) return;
   if (state.tick >= race.finishedTick + FINISH_RESTART_TICKS) respawnRace();
@@ -146,16 +184,41 @@ function frame(now) {
 
   const stepDt = 1 / CONFIG.physicsHz;
   accumulator += dtFrame;
-  while (accumulator >= stepDt) {
-    step(state, stepDt);
-    checkLapCrossings();
-    accumulator -= stepDt;
+  if (netSession) {
+    const ls = netSession.ls;
+    // Input production FREE-RUNS ahead with bounded lookahead —
+    // gating it on sim progress starves the other peers (measured).
+    while (ls.queuedThrough < state.tick + 1 + ls.delay + 10) {
+      netSession.sendInput(ls.queueLocal(ls.queuedThrough + 1, state.input.rawAxis));
+    }
+    let stalled = false;
+    while (accumulator >= stepDt) {
+      const next = state.tick + 1;
+      if (!ls.ready(next)) { stalled = true; break; }
+      const ins = ls.inputs(next);
+      for (let i = 0; i < state.players.length; i++) {
+        state.players[i].input.rawAxis = ins[i];
+      }
+      step(state, stepDt);
+      checkLapCrossings();
+      ls.prune(next);
+      accumulator -= stepDt;
+    }
+    if (stalled) accumulator = Math.min(accumulator, stepDt * 4); // no spiral
+    netSession.setStatus(stalled ? 'waiting for peers…' : '');
+  } else {
+    while (accumulator >= stepDt) {
+      step(state, stepDt);
+      checkLapCrossings();
+      accumulator -= stepDt;
+    }
+    checkAutoRestart();
   }
-  checkAutoRestart();
 
   const alpha = accumulator / stepDt;
   renderer.render(state, alpha, dtFrame);
   hud.update(dtFrame);
+  window.FF.audio.update(state, dtFrame);
 
   requestAnimationFrame(frame);
 }

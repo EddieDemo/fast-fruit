@@ -39,6 +39,47 @@ BOT_COUNT to 0 for solo, 1 to recreate the old single-rival race.
 The pack is fully deterministic per seed when your inputs are the same —
 any same-seed divergence you didn't cause means determinism broke.
 
+## Racer names (js/names.js)
+
+Every racer — player and bots alike — draws a name from a 36-strong
+Worms-style cast (puns, menace, and aggressively mundane secret
+weapons). Assignment is a seeded Fisher-Yates off the race seed, so
+every peer, ghost, and daily shares the same canonical roster.
+Nameplates render in Geist Mono in each fruit's color: x tracks the
+fruit, y anchors to the terrain surface — a shadow-label that stays in
+the floor while its fruit tumbles overhead. The cast list is a content
+file: edit js/names.js freely, engine untouched.
+
+## Trackside billboards (js/billboards.js + js/boards.js)
+
+Diegetic, flow-preserving ad space. js/billboards.js is the booking
+sheet — edit, commit, deploy; git IS the ad server. Entries carry
+from/to dates (client filters daily), optional url, colors. House ads
+fill unsold slots so the world never looks vacant. Boards place
+themselves deterministically on flat breathers (~6 per lap, well
+spaced), are never on the racing line and NEVER clickable mid-race;
+links appear only on the post-race sponsor line. Content is
+presentation-only — the sim never sees it, so lockstep and ghosts are
+untouched. Manual commit is the editorial approval step: everything on
+these boards ships under your name.
+
+## Private multiplayer (2-4 friends)
+
+Deterministic lockstep over WebRTC — peers exchange ONLY inputs (a few
+bytes per tick) because every machine runs the bit-identical sim:
+js/dmath.js supplies cross-engine deterministic sin/cos/pow (Math.* is
+not spec-pinned), js/net.js is the delay-based lockstep core (6-tick
+input delay ~50ms), js/webrtc.js is a zero-server P2P transport with
+copy-paste signaling, js/mp.js is the host/join UI (the "mp" button,
+bottom-right). Host picks 2-4p, sends each friend a code over any
+messenger, pastes their reply, hits START. Host is slot 0 and relays
+guest inputs. During a net race, respawn/auto-restart/mode switching
+are disabled (they'd desync). Verified headless: three simulated peers
+over latency links, full 12-body sim + debris, bit-identical at tick
+3000. The WebRTC/UI layer itself is browser-only and needs live
+testing. Known limits: no TURN fallback (~10-15% of network pairs
+won't connect), no rejoin after disconnect, no synced rematch yet.
+
 ## The smash rule
 
 Severity = contact impulse x (R_flat/R_contact)^curvExponent, evaluated

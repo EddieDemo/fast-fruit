@@ -15,6 +15,7 @@ const { CONFIG, terrainYAt } = window.FF;
 const COLORS = {
   sky: '#000000',            // pure black background
   grid: 'rgba(255, 255, 255, 0.08)', // background grid — visible but discreet
+  terrainGrid: 'rgba(255, 255, 255, 0.06)', // ground grid — 2m squares, subtler
   ground: '#3a3a3a',         // ground fill
   rind: '#00ff00',           // full-green melon, no detail
   marker: 'rgba(255,255,255,0.35)',
@@ -22,6 +23,12 @@ const COLORS = {
 
 const GRID_SPACING = 100; // world px between grid lines
 const MIN_VISIBLE_M = 10;  // vertical view never shows less than this
+const MIN_VISIBLE_W_M = 16; // horizontal view never shows less than this
+// Racing camera: the melon rides at 38% from the trailing edge, not
+// center — backward vision is worthless, so the same window buys ~25%
+// more forward reaction time. Purely presentational; the sim never
+// sees the camera.
+const MELON_SCREEN_FRAC = 0.38;
 
 // Bot palette: each melon its own bright shade (player stays pure green).
 // Indexed by spawn order, so a bot keeps its color for the whole race.
@@ -41,6 +48,9 @@ const BOT_PALETTE = [
 
 // Reused per-frame list of interpolated body poses (no per-frame GC).
 const drawList = [];
+
+// Canonical player-slot colors: every peer agrees on who wears what.
+const PLAYER_PALETTE = ['#00ff00', '#ff2d2d', '#2d8cff', '#ffd22d'];
 
 function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -64,24 +74,32 @@ function createRenderer(canvas) {
     const iy = p.y + (m.y - p.y) * alpha;
     const iangle = p.angle + (m.angle - p.angle) * alpha;
 
-    // ---- Camera: melon-centered, both axes, with catch-up lag ----
-    // The melon is the camera's target; cameraLerp (tuning panel, Feel
-    // group) is the catch-up knob — low = long dreamy lag, high = locked.
+    // ---- Zoom: guarantee a minimum visible BOX of world ----
+    // At least 10m vertically AND 16m horizontally on every device.
+    // Windows short in either axis zoom OUT until the floor fits;
+    // larger windows stay at native 1:1 and simply see more world.
+    // The box floor (vs an exact letterboxed window) keeps native
+    // feel; a fixed 16x10 "ranked view" stays in reserve for serious
+    // leaderboards. World coordinates and physics are untouched —
+    // this is purely the camera's lens.
+    const zoom = Math.min(1, height / (MIN_VISIBLE_M * 100), width / (MIN_VISIBLE_W_M * 100));
+
+    // ---- Camera: forward-biased on x, centered on y ----
+    // Target puts the melon at MELON_SCREEN_FRAC of screen width;
+    // cameraLerp (tuning panel, Feel group) is the catch-up knob —
+    // low = long dreamy lag, high = locked. Vertical stays centered:
+    // jump arcs need vision both ways.
     const cam = state.camera;
+    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom;
     if (!cam.initialized) {
-      cam.x = ix;
+      cam.x = targetX;
       cam.y = iy;
       cam.initialized = true;
     } else {
       const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
-      cam.x += (ix - cam.x) * k;
+      cam.x += (targetX - cam.x) * k;
       cam.y += (iy - cam.y) * k;
     }
-    // ---- Zoom: guarantee at least MIN_VISIBLE_M metres vertically ----
-    // Short windows zoom OUT so exactly 10m fits; taller windows stay
-    // at native 1:1 and simply see more world. World coordinates and
-    // physics are untouched — this is purely the camera's lens.
-    const zoom = Math.min(1, height / (MIN_VISIBLE_M * 100));
     const toScreenX = (wx) => (wx - cam.x) * zoom + width / 2;
     const toScreenY = (wy) => (wy - cam.y) * zoom + height / 2;
     // Screen y where world y=0 sits this frame (grid anchor).
@@ -105,8 +123,10 @@ function createRenderer(canvas) {
     // The polygon fill below IS the ground — no screen-wide pre-fill.
     // (A leftover flat-ground fillRect here was painting a phantom
     // surface at world y=0, burying the melon in dips below it.)
+    // Build the ground path once: fill it, then reuse it as a CLIP so
+    // the terrain's own grid draws only inside the ground.
+    ctx.beginPath();
     for (const poly of state.terrain) {
-      ctx.beginPath();
       ctx.moveTo(toScreenX(poly[0].x), toScreenY(poly[0].y));
       for (let i = 1; i < poly.length; i++) {
         ctx.lineTo(toScreenX(poly[i].x), toScreenY(poly[i].y));
@@ -115,9 +135,18 @@ function createRenderer(canvas) {
       ctx.lineTo(toScreenX(poly[poly.length - 1].x), height);
       ctx.lineTo(toScreenX(poly[0].x), height);
       ctx.closePath();
-      ctx.fillStyle = COLORS.ground;
-      ctx.fill();
     }
+    ctx.fillStyle = COLORS.ground;
+    ctx.fill();
+
+    // Terrain grid: 2m squares (vs the background's 1m), world-anchored
+    // to the same origin so every terrain line coincides with every
+    // other background line — the two grids read as one system at two
+    // densities, and the density change itself marks the surface.
+    ctx.save();
+    ctx.clip();
+    drawTerrainGrid(ctx, cam, width, height, groundScreenY, zoom);
+    ctx.restore();
 
     // Distance markers every 200 world px — motion & speed reference.
     drawMarkers(ctx, state, cam.x, width, toScreenX, toScreenY, zoom);
@@ -139,6 +168,10 @@ function createRenderer(canvas) {
       }
     }
 
+    // ---- Trackside billboards (world furniture; flow-safe) ----
+    window.FF.boards.draw(ctx, state, cam, width, toScreenX, toScreenY, zoom);
+    window.FF.boards.updateSponsorLine(state);
+
     // ---- Debris: wreckage under the racers, minimum-image aware ----
     drawDebris(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 
@@ -155,11 +188,32 @@ function createRenderer(canvas) {
         angle: gp.angle + (gm.angle - gp.angle) * alpha,
         color: BOT_PALETTE[i % BOT_PALETTE.length],
         fx: null,
+        name: gm.name,
       });
     }
-    // Player last, so it draws on top of the pack.
+    // Remote players (canonical slot colors), then the local player
+    // last so it draws on top of everyone.
+    for (let i = 0; i < state.players.length; i++) {
+      if (i === state.localSlot) continue;
+      const pl = state.players[i];
+      if (!pl.melon.alive) continue;
+      const gm = pl.melon, gp = pl.prevMelon;
+      drawList.push({
+        x: gp.x + (gm.x - gp.x) * alpha,
+        y: gp.y + (gm.y - gp.y) * alpha,
+        angle: gp.angle + (gm.angle - gp.angle) * alpha,
+        color: PLAYER_PALETTE[i % PLAYER_PALETTE.length],
+        fx: null,
+        name: gm.name,
+      });
+    }
     if (state.melon.alive) {
-      drawList.push({ x: ix, y: iy, angle: iangle, color: COLORS.rind, fx: state.fx, isPlayer: true });
+      drawList.push({
+        x: ix, y: iy, angle: iangle,
+        color: PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
+        fx: state.fx, isPlayer: true,
+        name: state.melon.name,
+      });
     }
 
     // Race places: 1 = furthest along in ABSOLUTE space (true race
@@ -177,6 +231,19 @@ function createRenderer(canvas) {
         if (k !== 0) { dxw -= k * state.period.L; dyw -= k * state.period.D; }
       }
       const sx = toScreenX(dxw), sy = toScreenY(dyw);
+      // Nameplate: x tracks the fruit, y anchors to the terrain
+      // surface — a shadow-label that stays calmly in the floor while
+      // its fruit tumbles through the air above it.
+      if (d.name) {
+        const wy = terrainYAt(state.terrain, dxw);
+        if (wy !== null) {
+          ctx.font = '400 11px "Geist Mono", ui-monospace, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillStyle = d.color;
+          ctx.fillText(d.name, sx, toScreenY(wy) + 34);
+        }
+      }
       drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom);
       // Near-miss flash: white overlay that decays fast. Flash, not
       // squash — the survival warning must read differently from
@@ -252,6 +319,31 @@ function createRenderer(canvas) {
     ctx.fill();
 
     ctx.restore();
+  }
+
+  const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
+
+  function drawTerrainGrid(ctx, cam, w, h, groundY, zoom) {
+    ctx.strokeStyle = COLORS.terrainGrid;
+    ctx.lineWidth = 1; // hairline at every zoom, like the background grid
+    ctx.beginPath();
+    const spacing = TERRAIN_GRID_SPACING * zoom;
+    // Vertical lines: world-anchored, so they scroll with the terrain.
+    const span = (w / 2) / zoom;
+    const firstX = Math.floor((cam.x - span) / TERRAIN_GRID_SPACING) * TERRAIN_GRID_SPACING;
+    for (let wx = firstX; wx < cam.x + span + TERRAIN_GRID_SPACING; wx += TERRAIN_GRID_SPACING) {
+      const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
+      ctx.moveTo(sx, 0);
+      ctx.lineTo(sx, h);
+    }
+    // Horizontal lines: anchored to world y (same origin as background).
+    const firstY = ((groundY % spacing) + spacing) % spacing;
+    for (let sy = firstY; sy < h + spacing; sy += spacing) {
+      const y = Math.round(sy) + 0.5;
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+    }
+    ctx.stroke();
   }
 
   function drawGrid(ctx, camX, w, h, groundY, zoom) {

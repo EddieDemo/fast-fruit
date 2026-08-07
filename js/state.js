@@ -38,8 +38,15 @@ function createState() {
       torqueAxis: 0,  // smoothed axis actually applied by physics
     },
 
-    melon: null,      // set by resetMelon
-    prevMelon: null,  // previous-step snapshot for render interpolation
+    melon: null,      // ALIAS of players[localSlot].melon (the local racer)
+    prevMelon: null,  // alias of that player's prev snapshot
+
+    // All human racers in CANONICAL SLOT ORDER — every peer simulates
+    // this array identically (same order, same inputs), which is what
+    // keeps lockstep multiplayer bit-identical. Solo play is just one
+    // player whose input object IS state.input.
+    players: [],      // [{ melon, prevMelon, input: {rawAxis, torqueAxis} }]
+    localSlot: 0,
 
     // Hold-right bots: same body shape, same physics path, inputs
     // pinned to full right. Unlike the old single ghost, bots DO
@@ -110,14 +117,35 @@ function createBody(x, y) {
   };
 }
 
-function resetMelon(state, x, y) {
-  state.melon = createBody(x, y);
-  state.melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
-  state.prevMelon = { ...state.melon };
+// Set up `count` human players in canonical slot order. Slot 0 spawns
+// at (x, y); further slots cascade up-and-behind like bots. localSlot
+// picks which player this machine controls; aliasLocalInput wires the
+// UI input object straight into that player (solo/back-compat path) —
+// netplay passes false and feeds ALL inputs from the lockstep buffer.
+function resetPlayers(state, count, localSlot, x, y, aliasLocalInput) {
+  state.players.length = 0;
+  for (let i = 0; i < count; i++) {
+    const melon = createBody(x - 46 * i, y - 92 * i);
+    melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
+    state.players.push({
+      melon,
+      prevMelon: { ...melon },
+      input: { rawAxis: 0, torqueAxis: 0 },
+    });
+  }
+  state.localSlot = localSlot;
+  if (aliasLocalInput) state.players[localSlot].input = state.input;
+  state.melon = state.players[localSlot].melon;
+  state.prevMelon = state.players[localSlot].prevMelon;
   state.fx.squash = 0;
   state.fx.flash = 0;
   state.telemetry.lastImpactVn = null;
   state.telemetry.lastImpactAngleDeg = null;
+}
+
+// Back-compat solo reset: one player, locally controlled.
+function resetMelon(state, x, y) {
+  resetPlayers(state, 1, 0, x, y, true);
 }
 
 // Spawn `count` bots in a diagonal cascade up-and-behind the player
@@ -143,13 +171,15 @@ function resetBots(state, count, x, y) {
 // Called at the top of every physics step so the renderer can
 // interpolate between the previous and current state.
 function snapshotPrev(state) {
-  const m = state.melon, p = state.prevMelon;
-  p.x = m.x; p.y = m.y; p.angle = m.angle;
+  for (const pl of state.players) {
+    const gm = pl.melon, gp = pl.prevMelon;
+    gp.x = gm.x; gp.y = gm.y; gp.angle = gm.angle;
+  }
   for (const b of state.bots) {
     const gm = b.melon, gp = b.prevMelon;
     gp.x = gm.x; gp.y = gm.y; gp.angle = gm.angle;
   }
 }
 
-Object.assign(window.FF, { createState, resetMelon, resetBots, snapshotPrev });
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev });
 })();

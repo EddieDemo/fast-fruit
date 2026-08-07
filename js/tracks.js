@@ -42,7 +42,7 @@ function buildLapTemplate(seed, L, D) {
     const x0 = x, y0 = y;
     for (let i = 1; i <= segs; i++) {
       const t = i / segs;
-      pts.push({ x: x0 + l * t, y: y0 + base * t + amp * 0.5 * (1 - Math.cos(2 * Math.PI * t)) });
+      pts.push({ x: x0 + l * t, y: y0 + base * t + amp * 0.5 * (1 - window.FF.dmath.cos(2 * Math.PI * t)) });
     }
     x = x0 + l; y = y0 + base;
   };

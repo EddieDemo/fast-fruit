@@ -24,7 +24,9 @@
 //    be recorded positions, not re-simulation (per design).
 // ============================================================
 
-const { CONFIG, melonInertia, terrainYAt, segStartIndex, debris } = window.FF;
+const { CONFIG, melonInertia, terrainYAt, segStartIndex, debris, dmath } = window.FF;
+// Motion-affecting transcendentals MUST be deterministic (lockstep).
+const dsin = dmath.sin, dcos = dmath.cos, dpow = dmath.pow;
 const { snapshotPrev } = window.FF;
 
 // Scratch object reused every contact test to avoid GC churn.
@@ -53,11 +55,17 @@ function step(state, dt) {
   const tick = state.tick;
 
   // ---- Revive bodies whose respawn is due ----
-  reviveIfDue(state.melon, state, tick);
+  for (const pl of state.players) reviveIfDue(pl.melon, state, tick);
   for (const b of state.bots) reviveIfDue(b.melon, state, tick);
 
-  // ---- Simulate the living ----
-  if (state.melon.alive) stepBody(state.melon, state.input, state.terrain, dt, state);
+  // ---- Simulate the living, in CANONICAL order (players by slot,
+  // then bots) — identical iteration on every lockstep peer. ----
+  for (let i = 0; i < state.players.length; i++) {
+    const pl = state.players[i];
+    if (pl.melon.alive) {
+      stepBody(pl.melon, pl.input, state.terrain, dt, i === state.localSlot ? state : null);
+    }
+  }
   for (const b of state.bots) {
     if (b.melon.alive) stepBody(b.melon, b.input, state.terrain, dt, null);
   }
@@ -66,7 +74,7 @@ function step(state, dt) {
   const invM = 1 / CONFIG.mass;
   const invI = 1 / melonInertia();
   bodyList.length = 0;
-  if (state.melon.alive) bodyList.push(state.melon);
+  for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
   for (const m of bodyList) m.pairSeverity = 0;
   if (bodyList.length > 1) {
@@ -82,9 +90,11 @@ function step(state, dt) {
   }
 
   // ---- Smash resolution: one rule for everyone ----
-  applySmashRule(state.melon, state, tick, true, 0);
+  for (let i = 0; i < state.players.length; i++) {
+    applySmashRule(state.players[i].melon, state, tick, i === state.localSlot, i);
+  }
   for (let i = 0; i < state.bots.length; i++) {
-    applySmashRule(state.bots[i].melon, state, tick, false, i + 1);
+    applySmashRule(state.bots[i].melon, state, tick, false, state.players.length + i);
   }
 
   // ---- Debris: burst physics, guts collisions, wreckage shoving ----
@@ -102,7 +112,7 @@ function step(state, dt) {
 function severity(jn, curvR) {
   const Rflat = (CONFIG.semiMajor * CONFIG.semiMinor) === 0 ? 1
     : (CONFIG.semiMajor * CONFIG.semiMajor) / CONFIG.semiMinor;
-  return jn * Math.pow(Rflat / curvR, CONFIG.curvExponent);
+  return jn * dpow(Rflat / curvR, CONFIG.curvExponent);
 }
 
 function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
@@ -147,7 +157,7 @@ const bodyList = [];
 // approximate in the pair solve is only the contact normal (we use
 // the center line), which is very close at this low eccentricity.
 function supportRadius(m, nx, ny) {
-  const c = Math.cos(m.angle), s = Math.sin(m.angle);
+  const c = dcos(m.angle), s = dsin(m.angle);
   const bx = nx * c + ny * s;   // direction component along major axis
   const by = -nx * s + ny * c;  // along minor axis
   const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
@@ -157,7 +167,7 @@ function supportRadius(m, nx, ny) {
 // Curvature radius of a melon's surface at the point facing world
 // direction (nx, ny) — the melon-vs-melon analogue of contact.curvR.
 function curvAtDirection(m, nx, ny) {
-  const c = Math.cos(m.angle), s = Math.sin(m.angle);
+  const c = dcos(m.angle), s = dsin(m.angle);
   const bx = nx * c + ny * s;
   const by = -nx * s + ny * c;
   const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
@@ -380,8 +390,8 @@ function ellipseVsSegment(m, A, B, out) {
   const b = CONFIG.semiMinor;
   const s = a / b; // local y-scale that turns the ellipse into a circle radius a
 
-  const cos = Math.cos(m.angle);
-  const sin = Math.sin(m.angle);
+  const cos = dcos(m.angle);
+  const sin = dsin(m.angle);
 
   // World -> local (translate, rotate by -angle), then scale y by s.
   let ax = (A.x - m.x) * cos + (A.y - m.y) * sin;

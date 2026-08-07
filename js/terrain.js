@@ -66,7 +66,7 @@ function createTerrainGen(seed) {
         const t = i / segs;
         this.pts.push({
           x: x0 + len * t,
-          y: y0 + baseDy * t + amp * 0.5 * (1 - Math.cos(2 * Math.PI * t)),
+          y: y0 + baseDy * t + amp * 0.5 * (1 - window.FF.dmath.cos(2 * Math.PI * t)),
         });
       }
       this.x = x0 + len;
