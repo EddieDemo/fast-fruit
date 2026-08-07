@@ -21,6 +21,7 @@ const COLORS = {
 };
 
 const GRID_SPACING = 100; // world px between grid lines
+const MIN_VISIBLE_M = 10;  // vertical view never shows less than this
 
 // Bot palette: each melon its own bright shade (player stays pure green).
 // Indexed by spawn order, so a bot keeps its color for the whole race.
@@ -76,8 +77,13 @@ function createRenderer(canvas) {
       cam.x += (ix - cam.x) * k;
       cam.y += (iy - cam.y) * k;
     }
-    const toScreenX = (wx) => wx - cam.x + width / 2;
-    const toScreenY = (wy) => wy - cam.y + height / 2;
+    // ---- Zoom: guarantee at least MIN_VISIBLE_M metres vertically ----
+    // Short windows zoom OUT so exactly 10m fits; taller windows stay
+    // at native 1:1 and simply see more world. World coordinates and
+    // physics are untouched — this is purely the camera's lens.
+    const zoom = Math.min(1, height / (MIN_VISIBLE_M * 100));
+    const toScreenX = (wx) => (wx - cam.x) * zoom + width / 2;
+    const toScreenY = (wy) => (wy - cam.y) * zoom + height / 2;
     // Screen y where world y=0 sits this frame (grid anchor).
     const groundScreenY = toScreenY(0);
 
@@ -93,7 +99,7 @@ function createRenderer(canvas) {
 
     // Grid: world-anchored so it scrolls with the camera. Drawn before
     // terrain, so the ground fill covers the below-surface portion.
-    drawGrid(ctx, cam.x, width, height, groundScreenY);
+    drawGrid(ctx, cam.x, width, height, groundScreenY, zoom);
 
     // ---- Terrain ----
     // The polygon fill below IS the ground — no screen-wide pre-fill.
@@ -114,26 +120,27 @@ function createRenderer(canvas) {
     }
 
     // Distance markers every 200 world px — motion & speed reference.
-    drawMarkers(ctx, state, cam.x, width, toScreenX, toScreenY);
+    drawMarkers(ctx, state, cam.x, width, toScreenX, toScreenY, zoom);
 
     // Start/finish line each lap (track mode): a post on the surface.
     if (state.period && state.race.mode === 'track') {
       const L = state.period.L;
-      const lo = Math.floor((cam.x - width / 2 - state.raceStartX) / L);
-      const hi = Math.ceil((cam.x + width / 2 - state.raceStartX) / L);
+      const lo = Math.floor((cam.x - (width / 2) / zoom - state.raceStartX) / L);
+      const hi = Math.ceil((cam.x + (width / 2) / zoom - state.raceStartX) / L);
       ctx.fillStyle = '#ffffff';
       for (let k = lo; k <= hi; k++) {
         const wx = state.raceStartX + k * L;
         const wy = terrainYAt(state.terrain, wx);
         if (wy === null) continue;
         const sx = toScreenX(wx), sy = toScreenY(wy);
-        ctx.fillRect(sx - 2, sy - 150, 4, 150);       // the post
-        ctx.fillRect(sx - 2, sy - 150, 26, 14);       // the flag
+        // Post and flag are world objects: they scale with the lens.
+        ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 4 * zoom, 150 * zoom);
+        ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 26 * zoom, 14 * zoom);
       }
     }
 
     // ---- Debris: wreckage under the racers, minimum-image aware ----
-    drawDebris(ctx, state, cam, width, height, toScreenX, toScreenY);
+    drawDebris(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 
     // ---- Bodies: gather interpolated poses, rank, draw ----
     // Bots are OPAQUE — they're physical rivals. Transparency is
@@ -170,23 +177,23 @@ function createRenderer(canvas) {
         if (k !== 0) { dxw -= k * state.period.L; dyw -= k * state.period.D; }
       }
       const sx = toScreenX(dxw), sy = toScreenY(dyw);
-      drawMelon(ctx, sx, sy, d.angle, d.fx, d.color);
+      drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom);
       // Near-miss flash: white overlay that decays fast. Flash, not
       // squash — the survival warning must read differently from
       // ordinary impact juice.
       if (d.isPlayer && state.fx.flash > 0.02) {
         ctx.globalAlpha = state.fx.flash;
-        drawMelon(ctx, sx, sy, d.angle, d.fx, '#ffffff');
+        drawMelon(ctx, sx, sy, d.angle, d.fx, '#ffffff', zoom);
         ctx.globalAlpha = 1;
       }
-      drawPlace(ctx, sx, sy, d.place);
+      drawPlace(ctx, sx, sy, d.place, zoom);
     }
   }
 
   const DEBRIS_RIND = '#0f8f3a';
   const DEBRIS_FLESH = '#ff4757';
 
-  function drawDebris(ctx, state, cam, w, h, toScreenX, toScreenY) {
+  function drawDebris(ctx, state, cam, w, h, toScreenX, toScreenY, zoom) {
     const frags = window.FF.debris.fragments;
     const period = state.period;
     for (const f of frags) {
@@ -200,6 +207,7 @@ function createRenderer(canvas) {
       if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) continue;
       ctx.save();
       ctx.translate(sx, sy);
+      ctx.scale(zoom, zoom);
       ctx.rotate(f.angle);
       ctx.fillStyle = f.rind ? DEBRIS_RIND : DEBRIS_FLESH;
       ctx.fillRect(-f.r, -f.r * 0.7, f.r * 2, f.r * 1.4);
@@ -209,20 +217,21 @@ function createRenderer(canvas) {
 
   // Race-place number at the melon's center, in SCREEN space — it never
   // rotates with the body. Geist Mono 400 per the design spec.
-  function drawPlace(ctx, sx, sy, n) {
-    ctx.font = `400 ${Math.round(CONFIG.semiMinor * 0.8)}px "Geist Mono", ui-monospace, monospace`;
+  function drawPlace(ctx, sx, sy, n, zoom) {
+    ctx.font = `400 ${Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom))}px "Geist Mono", ui-monospace, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(String(n), sx, sy);
   }
 
-  function drawMelon(ctx, sx, sy, angle, fx, color) {
+  function drawMelon(ctx, sx, sy, angle, fx, color, zoom) {
     const a = CONFIG.semiMajor;
     const b = CONFIG.semiMinor;
 
     ctx.save();
     ctx.translate(sx, sy);
+    ctx.scale(zoom, zoom); // world-sized body under the camera lens
 
     // Squash: compress along the impact normal, stretch along tangent.
     // Applied in the impact frame, then we rotate into body frame.
@@ -245,23 +254,25 @@ function createRenderer(canvas) {
     ctx.restore();
   }
 
-  function drawGrid(ctx, camX, w, h, groundY) {
+  function drawGrid(ctx, camX, w, h, groundY, zoom) {
     ctx.strokeStyle = COLORS.grid;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1; // grid stays hairline at every zoom
     ctx.beginPath();
+    const spacing = GRID_SPACING * zoom; // world-anchored, screen-spaced
     // Vertical lines: anchored to world x, scroll with the camera.
     // 0.5 offset keeps 1px lines crisp on integer pixel boundaries.
-    const firstX = Math.floor((camX - w / 2) / GRID_SPACING) * GRID_SPACING;
-    for (let wx = firstX; wx < camX + w / 2 + GRID_SPACING; wx += GRID_SPACING) {
-      const sx = Math.round(wx - camX + w / 2) + 0.5;
+    const span = (w / 2) / zoom;
+    const firstX = Math.floor((camX - span) / GRID_SPACING) * GRID_SPACING;
+    for (let wx = firstX; wx < camX + span + GRID_SPACING; wx += GRID_SPACING) {
+      const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, h);
     }
     // Horizontal lines: anchored to world y, full screen height — the
     // terrain fill covers whatever falls below the surface, so lines
     // stay consistent inside dips below world y=0.
-    const firstY = groundY % GRID_SPACING;
-    for (let sy = firstY; sy < h + GRID_SPACING; sy += GRID_SPACING) {
+    const firstY = ((groundY % spacing) + spacing) % spacing;
+    for (let sy = firstY; sy < h + spacing; sy += spacing) {
       const y = Math.round(sy) + 0.5;
       ctx.moveTo(0, y);
       ctx.lineTo(w, y);
@@ -269,13 +280,15 @@ function createRenderer(canvas) {
     ctx.stroke();
   }
 
-  function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY) {
+  function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY, zoom) {
     const SPACING = 200;
-    const first = Math.floor((camX - w / 2) / SPACING) * SPACING;
+    const span = (w / 2) / zoom;
+    const first = Math.floor((camX - span) / SPACING) * SPACING;
     ctx.fillStyle = COLORS.marker;
+    // Labels stay screen-sized: they're UI, not world objects.
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    for (let wx = first; wx < camX + w / 2 + SPACING; wx += SPACING) {
+    for (let wx = first; wx < camX + span + SPACING; wx += SPACING) {
       const wy = terrainYAt(state.terrain, wx);
       if (wy === null) continue;
       const sx = toScreenX(wx);
