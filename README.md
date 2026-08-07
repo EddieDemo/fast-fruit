@@ -29,6 +29,53 @@ from a plain `file://` open it falls back to printing config in the console.
 Tune with: `motorTorque`, `maxAngVel`, `friction`, `angularDamping` first.
 Those four are ~80% of the feel.
 
+## The hold-right pack
+
+BOT_COUNT solid-colored melons (main.js, default 5) spawn in a cascade
+behind you and hold right forever. They collide with you and each other
+(orientation-aware ellipse contact along the center line). The HUD
+"vs bot" row shows your lead in metres over the LEADING bot. Set
+BOT_COUNT to 0 for solo, 1 to recreate the old single-rival race.
+The pack is fully deterministic per seed when your inputs are the same —
+any same-seed divergence you didn't cause means determinism broke.
+
+## The smash rule
+
+Severity = contact impulse x (R_flat/R_contact)^curvExponent, evaluated
+at the exact contact point on the ellipse. Flat-side landings spread
+load (safe to ~9.5 m/s); the pointy tips concentrate it (~2x more
+fragile). Impulse-based severity makes melon-vs-melon inherently
+gentler than terrain (the other melon recoils; the ground doesn't) and
+asymmetric (each melon suffers by its OWN contact curvature — hit them
+with your flat side on their tip and only they smash). Near-lethal
+landings flash the player white. A smashed melon vanishes for 0.1s,
+then respawns on the surface at the smash point, still and briefly
+protected. Bots smash by the same rule — headless measurement: the
+hold-right pack is ~48% slower with smashing on. Skill now pays.
+
+## Debris (js/debris.js)
+
+Smashed melons burst into 16-22 rind/flesh fragments that inherit the
+body's exact velocity field (v + w x r) — spinning deaths spiral, fast
+deaths spray forward. Fragments bounce on terrain, collide with each
+other while "hot" (~1.5s, spatial-hash), then settle cold and persist
+for the whole race: lap wreckage accumulates and racers plow through it
+(one-way — debris scatters, racers are never slowed). All randomness is
+seeded per-smash, so identical runs produce identical carnage. Pool is
+capped at 400 with oldest-cold eviction; off-world fragments are reaped.
+
+## Track mode (lap circuits)
+
+Tracks are recipes in js/tracks.js: { seed, lapLengthM, dropPerLapM,
+laps }. The lap is generated from the seed as a template spanning
+exactly (L, D), then tiled — terrain repeats every lap, offset downward
+(a Penrose staircase): you descend forever but ride the same circuit.
+Melon-vs-melon collision uses the minimum-image convention, so lapping
+a rival is physical: they meet you through their periodic image.
+Switch between Endless and tracks in the tune panel ("Track" section);
+the HUD shows lap count, last lap, and best lap. The stopwatch freezes
+at the finish line. Splits are tick-accurate and deterministic.
+
 ## Architecture
 
 ```

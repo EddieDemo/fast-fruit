@@ -10,7 +10,7 @@
 // feel can be pasted back into config.js as the new DEFAULTS.
 // ============================================================
 
-const { CONFIG, DEFAULTS, SCHEMA, resetConfig } = window.FF;
+const { CONFIG, DEFAULTS, SCHEMA, PRESETS, applyPreset, getActivePreset, resetConfig } = window.FF;
 const { resetMelon } = window.FF;
 
 function initDebugPanel(state) {
@@ -30,6 +30,65 @@ function initDebugPanel(state) {
 
   // valueLabels: key -> span, so reset can refresh the whole panel.
   const inputs = new Map();
+
+  function refreshSliders() {
+    for (const [key, { slider, val }] of inputs) {
+      slider.value = CONFIG[key];
+      val.textContent = format(CONFIG[key]);
+    }
+  }
+
+  // ---- Tracks: mode buttons (Endless + registry entries) ----
+  if (window.FF.modes) {
+    const trackTitle = document.createElement('div');
+    trackTitle.className = 'debug-group-title';
+    trackTitle.textContent = 'Track';
+    panel.appendChild(trackTitle);
+
+    const trackRow = document.createElement('div');
+    trackRow.className = 'debug-actions';
+    const modeButtons = new Map();
+    for (const name of window.FF.modes.names) {
+      const b = button(name, () => {
+        window.FF.modes.select(name);
+        updateModeHighlight();
+      });
+      modeButtons.set(name, b);
+      trackRow.appendChild(b);
+    }
+    var updateModeHighlight = () => {
+      for (const [name, b] of modeButtons) {
+        b.classList.toggle('active', name === window.FF.modes.active());
+      }
+    };
+    panel.appendChild(trackRow);
+    updateModeHighlight();
+  }
+
+  // ---- Presets: complete feel-snapshots, toggle live ----
+  const presetTitle = document.createElement('div');
+  presetTitle.className = 'debug-group-title';
+  presetTitle.textContent = 'Preset';
+  panel.appendChild(presetTitle);
+
+  const presetRow = document.createElement('div');
+  presetRow.className = 'debug-actions';
+  const presetButtons = new Map();
+  for (const name of Object.keys(PRESETS)) {
+    const b = button(name, () => {
+      applyPreset(name);
+      refreshSliders();
+      updatePresetHighlight();
+    });
+    presetButtons.set(name, b);
+    presetRow.appendChild(b);
+  }
+  function updatePresetHighlight() {
+    for (const [name, b] of presetButtons) {
+      b.classList.toggle('active', name === getActivePreset());
+    }
+  }
+  panel.appendChild(presetRow);
 
   for (const entry of SCHEMA) {
     if (entry.group) {
@@ -76,12 +135,9 @@ function initDebugPanel(state) {
     resetMelon(state, state.melon.x, -CONFIG.semiMinor - 200);
   });
 
-  const btnReset = button('defaults', () => {
-    resetConfig();
-    for (const [key, { slider, val }] of inputs) {
-      slider.value = DEFAULTS[key];
-      val.textContent = format(DEFAULTS[key]);
-    }
+  const btnReset = button('preset \u21ba', () => {
+    resetConfig(); // restores the ACTIVE preset, undoing slider fiddling
+    refreshSliders();
   });
 
   const btnCopy = button('copy', async () => {
@@ -102,6 +158,7 @@ function initDebugPanel(state) {
   actions.append(btnRespawn, btnReset, btnCopy);
   panel.appendChild(actions);
   root.append(toggle, panel);
+  updatePresetHighlight();
 }
 
 function button(text, onClick) {

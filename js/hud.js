@@ -5,12 +5,20 @@
 // Throttled: DOM writes are expensive, telemetry doesn't need 60fps.
 // ============================================================
 
+const { CONFIG } = window.FF;
+
 const UPDATE_INTERVAL = 1 / 10; // seconds
 
 function createHud(state) {
+  const elTime = document.getElementById('hud-time');
+  const elDist = document.getElementById('hud-dist');
   const elSpeed = document.getElementById('hud-speed');
   const elSpin = document.getElementById('hud-spin');
   const elImpact = document.getElementById('hud-impact');
+  const elBot = document.getElementById('hud-bot');
+  const elLap = document.getElementById('hud-lap');
+  const elLast = document.getElementById('hud-last');
+  const elBest = document.getElementById('hud-best');
 
   let acc = 0;
 
@@ -20,6 +28,16 @@ function createHud(state) {
     acc = 0;
 
     const m = state.melon;
+
+    const race = state.race;
+    const endTick = race.finishedTick !== null ? race.finishedTick : state.tick;
+    elTime.textContent = fmtTicks(endTick - state.raceStartTick);
+
+    const dist = Math.max(0, (m.x - state.raceStartX) / 100); // metres
+    elDist.textContent = dist < 1000
+      ? `${dist.toFixed(1)} m`
+      : `${(dist / 1000).toFixed(2)} km`;
+
     const speed = Math.hypot(m.vx, m.vy);
     elSpeed.textContent = `${(speed / 100).toFixed(1)} m/s`;
     elSpin.textContent = `${m.omega.toFixed(1)} rad/s`;
@@ -28,6 +46,34 @@ function createHud(state) {
     elImpact.textContent = t.lastImpactVn === null
       ? '—'
       : `${(t.lastImpactVn / 100).toFixed(1)} m/s @ ${t.lastImpactAngleDeg.toFixed(0)}°`;
+
+    if (race.mode === 'track') {
+      elLap.textContent = race.finishedTick !== null
+        ? `${race.laps}/${race.laps} \u2713`
+        : `${Math.min(Math.max(race.lapIndex, 0) + 1, race.laps)}/${race.laps}`;
+      elLast.textContent = race.splits.length ? fmtTicks(race.splits[race.splits.length - 1]) : '\u2014';
+      elBest.textContent = race.bestLapTicks !== null ? fmtTicks(race.bestLapTicks) : '\u2014';
+    } else {
+      elLap.textContent = '\u2014';
+      elLast.textContent = '\u2014';
+      elBest.textContent = '\u2014';
+    }
+
+    if (state.bots.length > 0) {
+      let leadX = -Infinity;
+      for (const b of state.bots) leadX = Math.max(leadX, b.melon.x);
+      const d = (m.x - leadX) / 100; // metres vs the LEADING bot; + = winning
+      elBot.textContent = `${d >= 0 ? '+' : ''}${d.toFixed(1)} m`;
+    } else {
+      elBot.textContent = '—';
+    }
+  }
+
+  function fmtTicks(t) {
+    const secs = Math.max(0, t / CONFIG.physicsHz);
+    const mins = Math.floor(secs / 60);
+    const rem = secs - mins * 60;
+    return `${mins}:${rem < 10 ? '0' : ''}${rem.toFixed(1)}`;
   }
 
   return { update };

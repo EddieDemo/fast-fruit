@@ -127,6 +127,38 @@ function nextChunk(g) {
 }
 
 window.FF = window.FF || {};
+// Terrain surface height (world y) at world x, or null outside the
+// polylines. Assumes x-ordered points (both generators guarantee it).
+// Shared by the renderer (markers) and physics (respawn placement).
+function terrainYAt(terrain, wx) {
+  for (const poly of terrain) {
+    for (let i = 0; i < poly.length - 1; i++) {
+      const a = poly[i], b = poly[i + 1];
+      if (wx >= a.x && wx <= b.x && b.x > a.x) {
+        const t = (wx - a.x) / (b.x - a.x);
+        return a.y + (b.y - a.y) * t;
+      }
+    }
+  }
+  return null;
+}
+
+// First segment index whose END could reach xLo (points are x-sorted).
+// Callers scan forward from here and stop when segment start > xHi —
+// turns O(n) terrain scans into O(log n + k).
+function segStartIndex(poly, xLo) {
+  let lo = 0, hi = poly.length - 2;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (poly[mid + 1].x < xLo) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+window.FF.segStartIndex = segStartIndex;
+window.FF.terrainYAt = terrainYAt;
 window.FF.createTerrainGen = createTerrainGen;
+window.FF.mulberry32 = mulberry32;
 
 })();

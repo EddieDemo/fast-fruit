@@ -8,7 +8,7 @@
   --panel-fg: #e8f2df;
   --panel-accent: #ff5d73;   /* watermelon flesh */
   --panel-dim: #93a689;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -164,3 +164,8 @@ html, body {
   cursor: pointer;
 }
 .debug-actions button:active { background: rgba(255, 255, 255, 0.25); }
+.debug-actions button.active {
+  background: var(--panel-accent);
+  color: #1a1a1a;
+  font-weight: 700;
+}
