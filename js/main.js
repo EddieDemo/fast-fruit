@@ -158,6 +158,8 @@ window.FF.selectTrackByName = selectMode;
 })();
 
 // ---- The naming ceremony: one-time, first boot ----
+if (window.FF.studio) window.FF.studio.init();
+
 window.FF.melon.maybeAskName((name) => {
   // Apply immediately: the melon you just named is the one on track.
   if (!netSession && state.players.length) {
@@ -287,6 +289,14 @@ function frame(now) {
       accumulator -= stepDt;
     }
     checkAutoRestart();
+  }
+
+  // Shader Studio takes the frame over when active (sim pauses too:
+  // the accumulator keeps draining above, but we skip render+HUD).
+  if (window.FF.studio && window.FF.studio.active) {
+    window.FF.studio.frame(dtFrame, state.input.rawAxis);
+    requestAnimationFrame(frame);
+    return;
   }
 
   const alpha = accumulator / stepDt;

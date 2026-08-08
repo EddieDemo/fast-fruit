@@ -301,7 +301,85 @@ function createRenderer(canvas) {
           ctx.fillText(d.name, sx, toScreenY(wy) + 34 + Math.round(150 * zoom));
         }
       }
+      // ---- Cast shadow: the body's ellipse projected sunward onto
+      // the terrain, stretching along the light, fading with height.
+      if (RIG.P.castShadow) {
+        const wyG = terrainYAt(state.terrain, dxw);
+        if (wyG !== null) {
+          const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);
+          if (hM < RIG.P.castMaxM) {
+            const s2 = RIG.sun();
+            const fade = 1 - hM / RIG.P.castMaxM;
+            const sxG = toScreenX(dxw + (wyG - dyw) * (s2.x / Math.max(0.25, -s2.y) || 0) * 0.35);
+            const grow = 1 + hM * 0.25;
+            ctx.save();
+            ctx.globalAlpha = RIG.P.castAlpha * fade;
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.ellipse(sxG, toScreenY(wyG), d.melon.a * RIG.P.castStretch * grow * zoom,
+              d.melon.b * 0.32 * grow * zoom, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }
+      // ---- Speed smear: stretch along velocity above the threshold ----
+      let smeared = false;
+      if (RIG.P.smear) {
+        const vv = Math.sqrt(d.melon.vx * d.melon.vx + d.melon.vy * d.melon.vy);
+        if (vv > RIG.P.smearThresh) {
+          const k = Math.min(1, (vv - RIG.P.smearThresh) / RIG.P.smearThresh) * RIG.P.smearAmount;
+          const va = Math.atan2(d.melon.vy, d.melon.vx);
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(va);
+          ctx.scale(1 + k, 1 - k * 0.6);
+          ctx.rotate(-va);
+          ctx.translate(-sx, -sy);
+          smeared = true;
+        }
+      }
       drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
+      // ---- Contact shadow: the body darkens near its ground touch ----
+      if (RIG.P.contactShadow) {
+        const wyG = terrainYAt(state.terrain, dxw);
+        if (wyG !== null) {
+          const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);
+          if (hM < RIG.P.contactMaxM) {
+            const fade = 1 - hM / RIG.P.contactMaxM;
+            const az = d.melon.a * zoom, bz = d.melon.b * zoom;
+            ctx.save();
+            ctx.beginPath();
+            ctx.ellipse(sx, sy, az, bz, d.angle, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.globalAlpha = RIG.P.contactAlpha * fade;
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.ellipse(sx, sy + bz * (1 - RIG.P.contactFrac), az * 1.1,
+              bz * RIG.P.contactFrac * 2.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }
+      if (smeared) ctx.restore();
+      // ---- Impact star: a drawn burst on the hit flash's leading edge ----
+      if (RIG.P.impactStar && d.isPlayer && state.fx.flash > 0.55) {
+        const R = d.melon.b * zoom * RIG.P.impactSize * (0.7 + state.fx.flash * 0.5);
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, (state.fx.flash - 0.55) * 3);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        for (let i = 0; i < 16; i++) {
+          const t = (i / 16) * Math.PI * 2;
+          const rr = i % 2 === 0 ? R : R * 0.44;
+          const px2 = sx + Math.cos(t) * rr, py2 = sy + Math.sin(t) * rr;
+          if (i === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
       // Near-miss flash: white overlay that decays fast. Flash, not
       // squash — the survival warning must read differently from
       // ordinary impact juice.
@@ -312,6 +390,32 @@ function createRenderer(canvas) {
       }
       drawPlace(ctx, sx, sy, d.place, zoom);
     }
+
+    // ---- Speed lines: streaks behind the player at terminal pace ----
+    if (RIG.P.speedLines && state.melon.alive) {
+      const vv = Math.sqrt(state.melon.vx * state.melon.vx + state.melon.vy * state.melon.vy);
+      if (vv > RIG.P.speedThresh) {
+        const k = Math.min(1, (vv - RIG.P.speedThresh) / RIG.P.speedThresh);
+        const va = Math.atan2(state.melon.vy, state.melon.vx);
+        const cx2 = toScreenX(state.melon.x), cy2 = toScreenY(state.melon.y);
+        ctx.save();
+        ctx.globalAlpha = 0.28 * k;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 5; i++) {
+          const off = (i - 2) * 16;
+          const ox = -Math.sin(va) * off, oy = Math.cos(va) * off;
+          const len = (40 + (i % 3) * 26) * k * zoom;
+          ctx.beginPath();
+          ctx.moveTo(cx2 + ox - Math.cos(va) * d0(i), cy2 + oy - Math.sin(va) * d0(i));
+          ctx.lineTo(cx2 + ox - Math.cos(va) * (d0(i) + len), cy2 + oy - Math.sin(va) * (d0(i) + len));
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    function d0(i) { return 60 + (i * 13) % 30; }
 
     // Respawn smoke LAST in the body layer: the poof sits on top and
     // the reborn melon falls out beneath it.
@@ -421,124 +525,18 @@ function createRenderer(canvas) {
     ctx.restore();
   }
 
-  // ---- Cel lighting: one sun, twelve lit bodies, a flat world ----
-  // World-fixed light from the upper-left, hard two-tone terminator
-  // plus a thin shadow rim. The lit half-plane is oriented to the
-  // GLOBAL light while the clip is the body's ROTATED ellipse — so as
-  // the melon rolls, its surface visibly turns beneath a terminator
-  // that stays put. Cel-shading as a rotation indicator: orientation
-  // is the core mechanic, and the silhouette alone is 180-degree
-  // ambiguous. Shading = alive: pulp, debris, and the world stay flat.
-  const LIGHT_ANGLE = Math.atan2(-0.8, -0.6); // to the light, upper-left (y-down)
-  const LIGHT_X = Math.cos(LIGHT_ANGLE), LIGHT_Y = Math.sin(LIGHT_ANGLE);
-
-  // ---- Lit-color craft: sunlight, not whitewash ----
-  // Lighten-toward-white desaturates — that's why naive highlights read
-  // chalky. Sunlight on green shifts HUE toward yellow with lightness
-  // gained by available headroom and saturation held, so every base in
-  // the palette gets a tailored warm highlight: pure green goes juicy
-  // yellow-green, deep sea-green gets a fresh bright cap, pale mints
-  // brighten gently. Cached per base color.
-  const litCache = new Map();
-  const LIT_DELTA = 11; // constant perceptual contrast: L*lit = L*base + 11 (softened by request from 16)
-
-  function srgbLin(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
-  function lstarOf(rr, gg, bb) {
-    const Y = 0.2126 * srgbLin(rr) + 0.7152 * srgbLin(gg) + 0.0722 * srgbLin(bb);
-    return Y > 0.008856 ? 116 * Math.cbrt(Y) - 16 : 903.3 * Y;
-  }
-  function hslToRgb(h, s, l) {
-    const C = (1 - Math.abs(2 * l - 1)) * s;
-    const X = C * (1 - Math.abs(((h / 60) % 2) - 1));
-    const m = l - C / 2;
-    let r1 = 0, g1 = 0, b1 = 0;
-    if (h < 60) { r1 = C; g1 = X; } else if (h < 120) { r1 = X; g1 = C; }
-    else if (h < 180) { g1 = C; b1 = X; } else if (h < 240) { g1 = X; b1 = C; }
-    else if (h < 300) { r1 = X; b1 = C; } else { r1 = C; b1 = X; }
-    return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255)];
-  }
-
-  // CONSTANT-CONTRAST HIGHLIGHT SOLVER. Every melon's lit tone sits
-  // exactly LIT_DELTA above its base in CIE L* (perceptual lightness),
-  // solved per color by binary search over HSL lightness with the hue
-  // pulled toward sunlight yellow. When a base is too bright to grant
-  // the full delta (the player's sacred #00ff00), the shortfall is
-  // repaid in extra hue shift — hue contrast substitutes for the
-  // lightness the headroom can't supply. Cached per base.
-  function litColor(hex) {
-    let cached = litCache.get(hex);
-    if (cached) return cached;
-    const n = parseInt(hex.slice(1), 16);
-    const rr = (n >> 16) & 255, gg = (n >> 8) & 255, bb = n & 255;
-    const Lb = lstarOf(rr, gg, bb);
-    // Ceiling at L*92, not 98: above ~92 every hue collapses toward
-    // white (measured: the player's highlight rendered as paper).
-    // Saturation must survive the lift; the hue shift below repays
-    // whatever lightness the ceiling withholds.
-    const Lt = Math.min(92, Lb + LIT_DELTA);
-    const deficit = (Lb + LIT_DELTA) - Lt;
-
-    // base HSL
-    const r1 = rr / 255, g1 = gg / 255, b1 = bb / 255;
-    const mx = Math.max(r1, g1, b1), mn = Math.min(r1, g1, b1), dd = mx - mn;
-    let h = 0;
-    const l0 = (mx + mn) / 2;
-    const s = dd === 0 ? 0 : dd / (1 - Math.abs(2 * l0 - 1));
-    if (dd > 0) {
-      if (mx === r1) h = ((g1 - b1) / dd) % 6;
-      else if (mx === g1) h = (b1 - r1) / dd + 2;
-      else h = (r1 - g1) / dd + 4;
-      h *= 60; if (h < 0) h += 360;
-    }
-    const hueShift = 0.22 + Math.min(0.3, (deficit / LIT_DELTA) * 0.3);
-    h = h + (60 - h) * hueShift;
-
-    let lo = l0, hi = 1;
-    for (let i = 0; i < 18; i++) {
-      const mid = (lo + hi) / 2;
-      const c = hslToRgb(h, s, mid);
-      if (lstarOf(c[0], c[1], c[2]) < Lt) lo = mid; else hi = mid;
-    }
-    const c = hslToRgb(h, s, (lo + hi) / 2);
-    cached = '#' + ((1 << 24) | (c[0] << 16) | (c[1] << 8) | c[2]).toString(16).slice(1);
-    litCache.set(hex, cached);
-    return cached;
-  }
-
-  // ---- The cap: EXACT ellipsoid Lambert iso-contour ----
-  // All-out mode. Each melon is treated as the prolate spheroid it
-  // depicts (semi-axes a, b, b). The highlight is the true cel-
-  // quantized diffuse region: the set of surface points whose normal
-  // satisfies N.L > TAU, solved per frame — brightest point in closed
-  // form (u* = normalize(M L): where the ellipsoid's normal aligns
-  // with the light), then the iso-contour traced by bisection along
-  // 32 spokes on the parameter sphere and projected orthographically.
-  // Everything the eye expects EMERGES instead of being tuned: broad
-  // flank to the sun -> wide gentle cap; tip into the sun -> the
-  // highlight tightens and migrates onto the point, because normals
-  // swing faster over high curvature. Cost: ~10k flops per melon per
-  // frame — pocket change.
-  const LIGHT_LZ = 0.42; // light elevation toward the viewer (cap size)
-  const CEL_TAU = 0.52;  // lit where diffuse exceeds this (cap tightness)
-  const SHADE_ECC = 1.0; // shading-normal eccentricity boost: 1.0 = honest
-  // silhouette keeps its true a/b, but the LIGHTING believes a far
-  // pointier spheroid — honest physics at this melon's 1.28 roundness
-  // caps the side-vs-tip drama at ~1.7x (measured), so the curvature
-  // anisotropy that DRIVES the effect is exaggerated in the shading
-  // matrix only. The classic cartoon decoupling: shading normals are
-  // not geometric normals. Continuity and light-truth fully retained.
-  const SPOKES = 32;
+// ---- Cel lighting: delegated to the RIG (js/shading.js) ----
+  // The renderer owns no lighting constants: sun, bands, deltas, and
+  // every effect parameter live in FF.shading.P, editable live by the
+  // Shader Studio. This file only DRAWS what the rig solves.
+  const RIG = window.FF.shading;
+  const litColor = (hex) => RIG.bandColor(hex, RIG.P.litDL);
+  const hslToRgb = RIG.hslToRgb;
 
   // ---- Respawn smoke: the cartoon poof ----
-  // Presentation-tier FX (never read by the sim; Math.random licensed).
-  // On any body's death->alive edge, a cluster of various-sized white
-  // balls bursts at the respawn point — which sits 2m above the
-  // surface, so the melon literally FALLS OUT beneath the smoke as it
-  // drops. Each ball is cel-shaded by the same sun as the melons: a
-  // grey base circle with a white core offset toward the light —
-  // the offset-circle crescent construction, one more time, in
-  // miniature. Balls pop to size fast, drift outward with a rising
-  // bias, and shrink away inside a second.
+  // (Restored after the rig refactor accidentally swept it away with
+  // its neighboring constants.) Presentation-tier FX; each ball is
+  // cel-shaded by the RIG's sun: grey base, white core sunward.
   const puffs = [];
   let puffPrevAlive = [];
 
@@ -565,7 +563,7 @@ function createRenderer(canvas) {
       balls.push({
         dx: Math.cos(ang) * dist,
         dy: Math.sin(ang) * dist * 0.8,
-        r: 10 + Math.pow(Math.random(), 1.6) * 34, // bigger, wider spread: many mid, few huge
+        r: 10 + Math.pow(Math.random(), 1.6) * 34,
         vx: Math.cos(ang) * (12 + Math.random() * 38),
         vy: Math.sin(ang) * (10 + Math.random() * 28) - 22, // smoke rises, gently
         life: 0.7 + Math.random() * 0.5,
@@ -592,7 +590,6 @@ function createRenderer(canvas) {
       for (const bl of puff.balls) {
         const t = age / bl.life;
         if (t >= 1) continue;
-        // Pop to full size fast, hold, shrink away.
         const grow = Math.min(1, t / 0.18);
         const shrink = 1 - Math.max(0, (t - 0.5) / 0.5);
         const r = bl.r * grow * shrink * zoom;
@@ -601,14 +598,14 @@ function createRenderer(canvas) {
         const by = sy0 + (bl.dy + bl.vy * age) * zoom;
         ctx.save();
         ctx.globalAlpha = 0.95 * Math.min(1, (1 - t) * 4);
-        // Cel ball: grey base, white core toward the sun.
         ctx.beginPath();
         ctx.arc(bx, by, r, 0, Math.PI * 2);
         ctx.fillStyle = '#e2e2e2';
         ctx.fill();
         ctx.clip();
+        const sn = RIG.sun();
         ctx.beginPath();
-        ctx.arc(bx + LIGHT_X * r * 0.38, by + LIGHT_Y * r * 0.38, r * 0.9, 0, Math.PI * 2);
+        ctx.arc(bx + sn.x * r * 0.38, by + sn.y * r * 0.38, r * 0.9, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.fill();
         ctx.restore();
@@ -616,20 +613,11 @@ function createRenderer(canvas) {
     }
   }
 
-  // Deterministic bright nameplate color, hashed from the name itself:
-  // full-saturation hues at readable lightness, stable per character
-  // across races, peers, and ghosts.
+  // ---- Full-spectrum nameplate colors with SOLVED contrast ----
+  // (Also restored.) Golden-angle hue spread; lightness binary-searched
+  // to WCAG AA 4.5:1 against the terrain grey.
   const nameColorCache = new Map();
-  // Full-spectrum nameplate colors with SOLVED contrast. Two crafts:
-  //  * HUE: hash -> golden-angle spread (h % 36 slots * 137.508deg), so
-  //    any subset of the cast spans the whole wheel — blues, purples,
-  //    pinks, reds — instead of clustering where raw hashes land.
-  //  * CONTRAST: lightness is binary-searched per hue so every color
-  //    hits WCAG AA 4.5:1 against the terrain grey (#3a3a3a, Y=0.042).
-  //    Saturated blues and reds can't reach that dark-ground contrast
-  //    at full depth, so they resolve to bright sky-blues and corals —
-  //    still unmistakably their hue, always legible.
-  const TERRAIN_Y = 0.0423; // relative luminance of #3a3a3a
+  const TERRAIN_Y = 0.0423;
   const NAME_CONTRAST = 4.5;
   function nameColor(name) {
     let c = nameColorCache.get(name);
@@ -657,80 +645,37 @@ function createRenderer(canvas) {
 
   function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit) {
     const TAU2 = Math.PI * 2;
+    const B = RIG.bands();
     ctx.save();
     ctx.beginPath();
     ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
-    ctx.fillStyle = baseColor;
+    // Darkest region first: core shadow (when on) else base.
+    const hasShadowBand = B.length && B[0].baseDL !== undefined;
+    ctx.fillStyle = hasShadowBand ? RIG.bandColor(baseColor, B[0].baseDL) : baseColor;
     ctx.fill();
     ctx.clip();
 
-    // Light in the body frame (world xy rotated by -angle; z is the
-    // viewer axis and is rotation-invariant).
-    const ca = Math.cos(angle), sa = Math.sin(angle);
-    let Lx = LIGHT_X * ca + LIGHT_Y * sa;
-    let Ly = -LIGHT_X * sa + LIGHT_Y * ca;
-    let Lz = LIGHT_LZ;
-    const Ln = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
-    Lx /= Ln; Ly /= Ln; Lz /= Ln;
-
-    // Diffuse at parameter-sphere point u: normal dir is M^-1 u.
-    const aS = a * SHADE_ECC; // the pointier spheroid the light believes in
-    const diffuse = (ux, uy, uz) => {
-      const nx = ux / aS, ny = uy / b, nz = uz / b;
-      return (nx * Lx + ny * Ly + nz * Lz) / Math.sqrt(nx * nx + ny * ny + nz * nz);
-    };
-
-    // Brightest point u* = normalize(M_shade L).
-    let ux = aS * Lx, uy = b * Ly, uz = b * Lz;
-    const un = Math.sqrt(ux * ux + uy * uy + uz * uz);
-    ux /= un; uy /= un; uz /= un;
-    if (diffuse(ux, uy, uz) > CEL_TAU) {
-      // Tangent basis at u*.
-      let rx = 0, ry = 0, rz = 1;
-      if (Math.abs(uz) > 0.9) { rx = 1; rz = 0; }
-      let e1x = uy * rz - uz * ry, e1y = uz * rx - ux * rz, e1z = ux * ry - uy * rx;
-      const e1n = Math.sqrt(e1x * e1x + e1y * e1y + e1z * e1z);
-      e1x /= e1n; e1y /= e1n; e1z /= e1n;
-      const e2x = uy * e1z - uz * e1y, e2y = uz * e1x - ux * e1z, e2z = ux * e1y - uy * e1x;
-
+    // Bands darkest -> brightest: each fills its solved iso region.
+    for (const band of B) {
+      const fillCol = band.baseDL !== undefined
+        ? baseColor // the shadow band's iso region IS the base region
+        : RIG.bandColor(baseColor, band.dL);
+      const iso = RIG.isoContour(angle, a, b, band.tau);
+      if (!iso) continue;
+      ctx.fillStyle = fillCol;
       ctx.beginPath();
-      for (let i = 0; i <= SPOKES; i++) {
-        const phi = ((i % SPOKES) / SPOKES) * TAU2;
-        const dx = Math.cos(phi), dy = Math.sin(phi);
-        const tx = dx * e1x + dy * e2x, ty = dx * e1y + dy * e2y, tz = dx * e1z + dy * e2z;
-        let lo = 0, hi = Math.PI;
-        for (let k = 0; k < 18; k++) {
-          const mid = (lo + hi) / 2;
-          const c = Math.cos(mid), s = Math.sin(mid);
-          if (diffuse(c * ux + s * tx, c * uy + s * ty, c * uz + s * tz) > CEL_TAU) lo = mid;
-          else hi = mid;
+      if (iso.full) {
+        ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
+      } else {
+        for (let i = 0; i < iso.pts.length; i++) {
+          const p = iso.pts[i];
+          if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
         }
-        const psi = (lo + hi) / 2;
-        const c = Math.cos(psi), s = Math.sin(psi);
-        let px = a * (c * ux + s * tx), py = b * (c * uy + s * ty);
-        const pz = b * (c * uz + s * tz);
-        if (pz < 0) {
-          // Wrapped past the rim: clamp to the silhouette.
-          const rr = Math.sqrt((px / a) * (px / a) + (py / b) * (py / b));
-          if (rr > 1e-9) { px /= rr; py /= rr; }
-        }
-        const wx = px * ca - py * sa, wy = px * sa + py * ca;
-        if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+        ctx.closePath();
       }
-      ctx.closePath();
-      ctx.fillStyle = litColor(baseColor);
       ctx.fill();
     }
 
-    // ---- Watermelon stripes: the melon generator ----
-    // Each racer owns a SEEDED PATTERN SPEC, generated once and cached
-    // (seeded by name, so a cast character's rind is theirs forever;
-    // color is the fallback key). Beyond meridian geometry and true
-    // foreshortening, the generator varies: stripe COUNT (4-6),
-    // longitude JITTER off even spacing, JAGGED multi-harmonic edges
-    // (lightning-bolt fingers, each edge its own), swell-and-pinch
-    // width modulation, centerline MEANDER, per-stripe darkness, and
-    // faint SECONDARY stripes between the mains.
     // ---- The rind raster: wrap-once, rotate-forever ----
     // The pattern layer (stripes / net / crackle) is rendered ONCE per
     // racer into an offscreen canvas in the BODY frame (2x supersampled
@@ -750,7 +695,75 @@ function createRenderer(canvas) {
       ctx.restore();
     }
 
-    ctx.restore();
+    // ---- Rim light: bright crescent hugging the anti-sun silhouette ----
+    if (RIG.P.rim) {
+      const { tPeak, halfSpan } = RIG.rimArc(angle, a, b);
+      const w = RIG.P.rimWidth;
+      const caA = Math.cos(angle), saA = Math.sin(angle);
+      ctx.beginPath();
+      const N = 26;
+      for (let i = 0; i <= N; i++) {
+        const t = tPeak - halfSpan + (i / N) * 2 * halfSpan;
+        const x = a * Math.cos(t), y = b * Math.sin(t);
+        const wx = x * caA - y * saA, wy = x * saA + y * caA;
+        if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+      }
+      for (let i = N; i >= 0; i--) {
+        const t = tPeak - halfSpan + (i / N) * 2 * halfSpan;
+        const x = (a - w) * Math.cos(t), y = (b - w) * Math.sin(t);
+        ctx.lineTo(x * caA - y * saA, x * saA + y * caA);
+      }
+      ctx.closePath();
+      ctx.fillStyle = RIG.bandColor(baseColor, RIG.P.rimDL);
+      ctx.fill();
+    }
+
+    // ---- Specular ping: a glint only when the pose aligns ----
+    if (RIG.P.specular) {
+      const sp = RIG.specPoint(angle, a, b);
+      if (sp.peak > RIG.P.specTau && sp.z > 0) {
+        const r0 = b * RIG.P.specSize
+          * Math.min(1, (sp.peak - RIG.P.specTau) / (1 - RIG.P.specTau) + 0.35);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, r0, 0, TAU2);
+        ctx.fillStyle = RIG.bandColor(baseColor, RIG.P.specDL);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore(); // body clip ends here
+
+    // ---- Ink: outline drawn over everything, outside the clip ----
+    if (RIG.P.inkMode !== 'none') {
+      ctx.strokeStyle = RIG.shadeHex(baseColor, RIG.P.inkDarkK);
+      ctx.lineCap = 'round';
+      if (RIG.P.inkMode === 'silhouette') {
+        ctx.lineWidth = RIG.P.inkWidth;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
+        ctx.stroke();
+      } else {
+        // Weighted: thick on the shadow side, hairline on the lit —
+        // the hand-drawn tell.
+        const { tPeak, halfSpan } = RIG.rimArc(angle, a, b);
+        const caA = Math.cos(angle), saA = Math.sin(angle);
+        const seg = (t0, t1, w2) => {
+          ctx.lineWidth = w2;
+          ctx.beginPath();
+          const N = 30;
+          for (let i = 0; i <= N; i++) {
+            const t = t0 + (i / N) * (t1 - t0);
+            const x = a * Math.cos(t), y = b * Math.sin(t);
+            const wx = x * caA - y * saA, wy = x * saA + y * caA;
+            if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+          }
+          ctx.stroke();
+        };
+        const span = Math.max(halfSpan, 0.6);
+        seg(tPeak - span, tPeak + span, RIG.P.inkWidth);
+        seg(tPeak + span, tPeak + 2 * Math.PI - span, RIG.P.inkWidth * 0.4);
+      }
+    }
   }
 
   // ---- Seeded 2D gradient (Perlin) noise + fBm ----
@@ -1117,6 +1130,10 @@ function createRenderer(canvas) {
   }
 
     window.FF.shadeEllipse = shadeEllipse; // ghosts borrow the same sun
+  // The studio's pinned melon: full stack, no state required.
+  window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit) {
+    shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit);
+  };
 
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
 
