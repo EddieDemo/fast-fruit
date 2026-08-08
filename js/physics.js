@@ -71,8 +71,7 @@ function step(state, dt) {
   }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----
-  const invM = 1 / CONFIG.mass;
-  const invI = 1 / melonInertia();
+
   bodyList.length = 0;
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
@@ -83,7 +82,7 @@ function step(state, dt) {
     for (let iter = 0; iter < PAIR_ITERS; iter++) {
       for (let i = 0; i < bodyList.length; i++) {
         for (let j = i + 1; j < bodyList.length; j++) {
-          resolveMelonPair(bodyList[i], bodyList[j], invM, invI, period);
+          resolveMelonPair(bodyList[i], bodyList[j], period);
         }
       }
     }
@@ -109,9 +108,9 @@ function step(state, dt) {
 // impulse into ~2x the severity at exponent 1. Impulse-based severity
 // is what makes melon-vs-melon physically gentler than terrain: another
 // melon recoils (k includes both inverse masses), the ground does not.
-function severity(jn, curvR) {
-  const Rflat = (CONFIG.semiMajor * CONFIG.semiMinor) === 0 ? 1
-    : (CONFIG.semiMajor * CONFIG.semiMajor) / CONFIG.semiMinor;
+function severity(jn, curvR, m) {
+  const a = m.a, b = m.b;
+  const Rflat = (a * b) === 0 ? 1 : (a * a) / b;
   return jn * dpow(Rflat / curvR, CONFIG.curvExponent);
 }
 
@@ -135,7 +134,7 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
         byPair: m.pairSeverity >= m.hitSeverity,
         severity: sev,
         curvR: m.lastHitCurvR || 1,
-        rFlat: (m.a || CONFIG.semiMajor) * (m.a || CONFIG.semiMajor) / (m.b || CONFIG.semiMinor),
+        rFlat: (m.a * m.a) / m.b,
         vn: Math.abs(state.telemetry.lastImpactVn || 0),
         speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
       };
@@ -153,7 +152,7 @@ function reviveIfDue(m, state, tick) {
   m.alive = true;
   // 200px falls in ~0.41s arriving at ~9.8 m/s flat-side — well inside
   // the safe envelope, and spawn protection covers the landing anyway.
-  m.y = (wy === null ? m.y : wy - CONFIG.semiMinor - RESPAWN_DROP);
+  m.y = (wy === null ? m.y : wy - m.b - RESPAWN_DROP);
   m.vx = 0; m.vy = 0; m.omega = 0;
   m.angle = 0;            // flat side down
   m.grounded = false;
@@ -174,7 +173,7 @@ function supportRadius(m, nx, ny) {
   const c = dcos(m.angle), s = dsin(m.angle);
   const bx = nx * c + ny * s;   // direction component along major axis
   const by = -nx * s + ny * c;  // along minor axis
-  const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
+  const a = m.a, b = m.b;
   return (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
 }
 
@@ -184,7 +183,7 @@ function curvAtDirection(m, nx, ny) {
   const c = dcos(m.angle), s = dsin(m.angle);
   const bx = nx * c + ny * s;
   const by = -nx * s + ny * c;
-  const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
+  const a = m.a, b = m.b;
   const r = (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
   const u = (r * bx) / a;   // cos t at the surface point
   const v = (r * by) / b;   // sin t
@@ -193,7 +192,7 @@ function curvAtDirection(m, nx, ny) {
 }
 
 // Two-body impulse contact between melons A and B, with friction and
-// split positional correction. Equal mass and inertia (all melons).
+// split positional correction by inverse mass (true two-body).
 //
 // Minimum-image convention (track mode): the terrain repeats every
 // (L, D), so each body's periodic images are physically legitimate —
@@ -202,7 +201,12 @@ function curvAtDirection(m, nx, ny) {
 // neither velocities nor contact geometry, the impulses apply to the
 // real B unchanged. This is what makes "lapping" another melon a
 // physical event: a rival one lap back meets you through its image.
-function resolveMelonPair(A, B, invM, invI, period) {
+function resolveMelonPair(A, B, period) {
+  // True two-body dynamics: each side brings its OWN invM/invI. The
+  // impulse split follows the mass ratio — the heavy fruit barely
+  // recoils, the light one flies. Pack bullying as emergent physics.
+  const invMA = A.invM, invIA = A.invI;
+  const invMB = B.invM, invIB = B.invI;
   let ox = 0, oy = 0;
   if (period) {
     const k = Math.round((B.x - A.x) / period.L);
@@ -237,20 +241,20 @@ function resolveMelonPair(A, B, invM, invI, period) {
     const e = -vn > CONFIG.restitutionThreshold ? CONFIG.restitution : 0;
     const raCn = rax * ny - ray * nx;
     const rbCn = rbx * ny - rby * nx;
-    const k = 2 * invM + raCn * raCn * invI + rbCn * rbCn * invI;
+    const k = invMA + invMB + raCn * raCn * invIA + rbCn * rbCn * invIB;
     jn = (-(1 + e) * vn) / k;
-    A.vx -= jn * nx * invM; A.vy -= jn * ny * invM; A.omega -= raCn * jn * invI;
-    B.vx += jn * nx * invM; B.vy += jn * ny * invM; B.omega += rbCn * jn * invI;
+    A.vx -= jn * nx * invMA; A.vy -= jn * ny * invMA; A.omega -= raCn * jn * invIA;
+    B.vx += jn * nx * invMB; B.vy += jn * ny * invMB; B.omega += rbCn * jn * invIB;
 
     // --- Smash severity, evaluated PER BODY ---
     // Newton's third law: both receive the same impulse. But stress is
     // impulse x each melon's OWN local curvature penalty — a melon
     // struck on its pointy tip suffers more than the one that hit with
     // its broad flat side. Same collision, different fates.
-    const sevA = severity(jn, curvAtDirection(A, nx, ny));
-    const sevB = severity(jn, curvAtDirection(B, -nx, -ny));
-    if (sevA > A.pairSeverity) A.pairSeverity = sevA;
-    if (sevB > B.pairSeverity) B.pairSeverity = sevB;
+    const sevA = severity(jn, curvAtDirection(A, nx, ny), A);
+    const sevB = severity(jn, curvAtDirection(B, -nx, -ny), B);
+    if (sevA > A.pairSeverity) { A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn; }
+    if (sevB > B.pairSeverity) { B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn; }
   }
 
   // --- Friction impulse (melon rind on melon rind) ---
@@ -262,20 +266,21 @@ function resolveMelonPair(A, B, invM, invI, period) {
     const vt = rvx * tx + rvy * ty;
     const raCt = rax * ty - ray * tx;
     const rbCt = rbx * ty - rby * tx;
-    const kt = 2 * invM + raCt * raCt * invI + rbCt * rbCt * invI;
+    const kt = invMA + invMB + raCt * raCt * invIA + rbCt * rbCt * invIB;
     let jt = -vt / kt;
     const maxJt = CONFIG.friction * jn;
     if (jt > maxJt) jt = maxJt;
     if (jt < -maxJt) jt = -maxJt;
-    A.vx -= jt * tx * invM; A.vy -= jt * ty * invM; A.omega -= raCt * jt * invI;
-    B.vx += jt * tx * invM; B.vy += jt * ty * invM; B.omega += rbCt * jt * invI;
+    A.vx -= jt * tx * invMA; A.vy -= jt * ty * invMA; A.omega -= raCt * jt * invIA;
+    B.vx += jt * tx * invMB; B.vy += jt * ty * invMB; B.omega += rbCt * jt * invIB;
   }
 
-  // --- Positional correction, split evenly (equal masses) ---
-  const corr = Math.max(pen - CONFIG.penetrationSlop, 0) * CONFIG.positionCorrection * 0.5;
+  // --- Positional correction, split by inverse mass ---
+  const corr = Math.max(pen - CONFIG.penetrationSlop, 0) * CONFIG.positionCorrection;
   if (corr > 0) {
-    A.x -= nx * corr; A.y -= ny * corr;
-    B.x += nx * corr; B.y += ny * corr;
+    const wA = invMA / (invMA + invMB), wB = 1 - wA;
+    A.x -= nx * corr * wA; A.y -= ny * corr * wA;
+    B.x += nx * corr * wB; B.y += ny * corr * wB;
   }
 }
 
@@ -285,9 +290,8 @@ function resolveMelonPair(A, B, invM, invI, period) {
 // Grounded-ness lives ON the body (m.grounded) so each body's motor
 // sees its own contact status.
 function stepBody(m, inp, terrain, dt, sink) {
-  const I = melonInertia();
-  const invM = 1 / CONFIG.mass;
-  const invI = 1 / I;
+  const invM = m.invM;
+  const invI = m.invI;
 
   // ---- 1. Input smoothing (ease torqueAxis toward rawAxis) ----
   const ease = Math.min(1, CONFIG.inputResponse * dt);
@@ -337,7 +341,7 @@ function stepBody(m, inp, terrain, dt, sink) {
   // Broad phase: only segments near the melon can touch it. Terrain
   // points are x-sorted, so binary-search the window start instead of
   // scanning every segment (matters with long streamed polylines).
-  const cullR = CONFIG.semiMajor + 80;
+  const cullR = CONFIG.semiMajor * 1.08 + 80; // headroom for size-varied bots
   for (let iter = 0; iter < CONFIG.solverIterations; iter++) {
     for (const poly of terrain) {
       const startIdx = segStartIndex(poly, m.x - cullR);
@@ -355,6 +359,12 @@ function stepBody(m, inp, terrain, dt, sink) {
           strongestCurvR = contact.curvR;
           impactNormalAngle = Math.atan2(contact.ny, contact.nx);
           impactVn = applied.vn;
+          // Escape direction of the blow (away from the ground) —
+          // pinned ops only: the debris burst aims along this, so it
+          // must be deterministic (Math.atan2 above is telemetry-only).
+          m.hitNx = contact.nx;
+          m.hitNy = contact.ny;
+          m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
         }
         m.lastHitCurvR = contact.curvR; // death-certificate breadcrumb
       }
@@ -362,7 +372,7 @@ function stepBody(m, inp, terrain, dt, sink) {
   }
   m.grounded = grounded;
   if (strongestImpulse > 0) {
-    m.hitSeverity = severity(strongestImpulse, strongestCurvR);
+    m.hitSeverity = severity(strongestImpulse, strongestCurvR, m);
   }
 
   // ---- 6. Telemetry & FX events (player body only) ----
@@ -401,8 +411,8 @@ function stepBody(m, inp, terrain, dt, sink) {
 function ellipseVsSegment(m, A, B, out) {
   out.hit = false;
 
-  const a = CONFIG.semiMajor;
-  const b = CONFIG.semiMinor;
+  const a = m.a;
+  const b = m.b;
   const s = a / b; // local y-scale that turns the ellipse into a circle radius a
 
   const cos = dcos(m.angle);

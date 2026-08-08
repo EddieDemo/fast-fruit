@@ -101,8 +101,24 @@ function createState() {
   return state;
 }
 
-function createBody(x, y) {
+function createBody(x, y, scale) {
+  const sc = scale || 1;
+  // ---- Per-body mass & inertia: the fruit-roster foundation, done ----
+  // Density normalized so the scale-1.0 player has EXACTLY the tuned
+  // mass (CONFIG.mass): every existing number stays calibrated for
+  // them. Mass follows VOLUME (spheroid: a*b^2 ~ s^3), so +/-5% size
+  // is +/-16% mass; lamina inertia I = m(a^2+b^2)/4 ~ s^5. The
+  // square-cube law is EMBRACED: impulses scale with mass against a
+  // fixed smash threshold, so bigger melons are pack-dominant but
+  // land-fragile — ants survive falls, elephants don't.
+  const a = CONFIG.semiMajor * sc;
+  const b = CONFIG.semiMinor * sc;
+  const mass = CONFIG.mass * sc * sc * sc;
+  const inertia = mass * (a * a + b * b) / 4;
   return {
+    a, b,
+    invM: 1 / mass,
+    invI: 1 / inertia,
     x, y,           // center, world px (y is down)
     angle: 0,       // radians; positive = clockwise on screen
     vx: 0,
@@ -116,6 +132,9 @@ function createBody(x, y) {
     protectTick: 0,    // smash-immune until tick exceeds this
     hitSeverity: 0,    // worst terrain-contact severity this step
     pairSeverity: 0,   // worst melon-contact severity this step
+    hitNx: 0, hitNy: -1,   // escape normal of the worst terrain blow
+    pairNx: 0, pairNy: -1, // escape normal of the worst rival blow
+    hitJn: 0, pairJn: 0,   // raw impulse of those blows (the drama budget)
   };
 }
 
@@ -160,7 +179,17 @@ function resetBots(state, count, x, y) {
   // it. Diagonal spacing stays >= ~95px so no pair overlaps at rest.
   const dx = Math.min(60, 370 / Math.max(count, 1));
   for (let i = 0; i < count; i++) {
-    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1));
+    // Seeded size variety, keyed to the grid slot (identical on every
+    // peer; bot #4 is always bot #4's size). Triangular distribution
+    // 0.85..1.18 centered near 1: mostly mid-sized, the odd runt, the
+    // odd whopper — like actual produce. The player stays exactly 1.0.
+    // Square-cube consequences are embraced and now pronounced: the
+    // whopper (~1.6x mass) bullies the pack but dies on landings the
+    // mid-pack shrugs off; the runt (~0.6x mass) gets battered around
+    // and is nearly unkillable. Personality from physics alone.
+    const srng = window.FF.mulberry32((0xB07 + i * 2654435761) >>> 0);
+    const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
+    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), 0.85 + u * 0.33);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,

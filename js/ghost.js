@@ -198,11 +198,16 @@ function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle,
   ctx.globalAlpha = 0.35;
   ctx.translate(sx, syy);
   ctx.scale(zoom, zoom);
-  ctx.rotate(gAngle);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, a, b, 0, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
+  // Same sun as the living: a lit ghost reads as a RACER, not a marker.
+  if (window.FF.shadeEllipse) {
+    window.FF.shadeEllipse(ctx, gAngle, a, b, color, label);
+  } else {
+    ctx.rotate(gAngle);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, a, b, 0, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
   ctx.restore();
 
   // Nameplate with the live gap: + means the ghost is ahead.
