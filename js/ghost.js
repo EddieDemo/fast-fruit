@@ -54,6 +54,7 @@ function encodeRun(run) {
     t: run.track,
     ms: run.timeTicks,
     n: run.name || '',
+    m: run.melonSeed || 0, // the runner's melon: friends race GERALD
     sp: run.splits,
     d: deltas,
   }));
@@ -65,7 +66,7 @@ function decodeCode(code) {
     if (o.v !== 1 || !Array.isArray(o.d)) return null;
     const coarse = [0];
     for (const d of o.d) coarse.push(coarse[coarse.length - 1] + d * DELTA_UNIT);
-    return { track: o.t, timeTicks: o.ms, name: o.n || 'A RIVAL', splits: o.sp || [], coarse };
+    return { track: o.t, timeTicks: o.ms, name: o.n || 'A RIVAL', melonSeed: o.m || 0, splits: o.sp || [], coarse };
   } catch (_) { return null; }
 }
 
@@ -107,6 +108,7 @@ function update(state) {
       track,
       timeTicks: state.race.finishedTick - state.raceStartTick,
       name: state.melon.name || '',
+      melonSeed: (window.FF.melon && window.FF.melon.active().seed) || 0,
       splits: state.race.splits.slice(),
       coarse: rec.coarse.slice(),
       frames: rec.frames.slice(),
@@ -164,7 +166,7 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
     const dist = coarsePos(challenge.coarse, elapsed);
     const wx = state.raceStartX + dist;
     drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, null, null,
-      challenge.name, dist, period, '#ffffff');
+      challenge.name, dist, period, '#ffffff', challenge.melonSeed);
   }
 
   // Local best ghost: full-fidelity replay (skip if a challenge is
@@ -176,14 +178,18 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
   }
 }
 
-function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle, label, dist, period, color) {
+function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle, label, dist, period, color, melonSeed) {
   // Nearest image to the camera.
   let gx = wx, gy = wy;
   if (period) {
     const k = Math.round((wx - cam.x) / period.L);
     if (k !== 0) { gx -= k * period.L; if (gy !== null) gy -= k * period.D; }
   }
-  const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
+  // The ghost wears its owner's physique: scale from the melon seed
+  // (old codes without a seed render at 1.0 — back-compatible).
+  const gd = melonSeed ? window.FF.melon.derive(melonSeed) : null;
+  const gs = gd ? gd.scale : 1;
+  const a = CONFIG.semiMajor * gs, b = CONFIG.semiMinor * gs;
   let gAngle = angle;
   if (gy === null) {
     // Coarse ghost: ride the surface, fake a rolling angle from distance.
@@ -200,7 +206,7 @@ function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle,
   ctx.scale(zoom, zoom);
   // Same sun as the living: a lit ghost reads as a RACER, not a marker.
   if (window.FF.shadeEllipse) {
-    window.FF.shadeEllipse(ctx, gAngle, a, b, color, label);
+    window.FF.shadeEllipse(ctx, gAngle, a, b, color, gd ? gd.patternKey : label);
   } else {
     ctx.rotate(gAngle);
     ctx.beginPath();

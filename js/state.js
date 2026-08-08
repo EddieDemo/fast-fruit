@@ -117,6 +117,7 @@ function createBody(x, y, scale) {
   const inertia = mass * (a * a + b * b) / 4;
   return {
     a, b,
+    fruit: 'watermelon', // species tag: aesthetics look up through FRUITS
     invM: 1 / mass,
     invI: 1 / inertia,
     x, y,           // center, world px (y is down)
@@ -172,7 +173,7 @@ function resetMelon(state, x, y) {
 // Spawn `count` bots in a diagonal cascade up-and-behind the player
 // spawn: spaced so no pair overlaps at rest, clear of the back wall,
 // and they tumble down onto the runway as the race starts.
-function resetBots(state, count, x, y) {
+function resetBots(state, count, x, y, sizeSeed) {
   state.bots.length = 0;
   // Horizontal spacing adapts to the pack size: the endless-mode wall
   // face sits ~420px behind spawn, and every bot must land in front of
@@ -187,9 +188,19 @@ function resetBots(state, count, x, y) {
     // whopper (~1.6x mass) bullies the pack but dies on landings the
     // mid-pack shrugs off; the runt (~0.6x mass) gets battered around
     // and is nearly unkillable. Personality from physics alone.
-    const srng = window.FF.mulberry32((0xB07 + i * 2654435761) >>> 0);
+    // Sizes re-deal per RACE (sizeSeed = the race's cast seed), so the
+    // casting rotates: today's daily might hand the whopper body to
+    // Gourdzilla; tomorrow Just Dave inherits the doom. Identical on
+    // every peer. Without a seed (headless suites), the deal is the
+    // legacy fixed one.
+    const srng = window.FF.mulberry32((((sizeSeed === undefined ? 0xB07 : sizeSeed) >>> 0) + i * 2654435761) >>> 0);
     const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
     const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), 0.85 + u * 0.33);
+    // Species deal: ~1/3 of a seeded grid are cantaloupes — same seed
+    // stream family as sizes, so every peer fields the same mix and
+    // each daily has its own species casting. Legacy (seedless) grids
+    // stay all-watermelon, keeping the headless suites byte-stable.
+    if (sizeSeed !== undefined && srng() < 0.35) melon.fruit = 'cantaloupe';
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,
@@ -212,5 +223,17 @@ function snapshotPrev(state) {
   }
 }
 
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev });
+// Re-derive a body's physique at a given scale — the same laws
+// createBody applies (volume mass, lamina inertia). Used to dress the
+// player in their persistent melon's spec.
+function setBodyScale(m, scale) {
+  const sc = scale || 1;
+  m.a = CONFIG.semiMajor * sc;
+  m.b = CONFIG.semiMinor * sc;
+  const mass = CONFIG.mass * sc * sc * sc;
+  m.invM = 1 / mass;
+  m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
+}
+
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale });
 })();

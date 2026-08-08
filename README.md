@@ -109,14 +109,22 @@ hold-right pack is ~48% slower with smashing on. Skill now pays.
 
 ## Debris (js/debris.js)
 
-Smashed melons burst into 16-22 rind/flesh fragments that inherit the
-body's exact velocity field (v + w x r) — spinning deaths spiral, fast
-deaths spray forward. Fragments bounce on terrain, collide with each
-other while "hot" (~1.5s, spatial-hash), then settle cold and persist
-for the whole race: lap wreckage accumulates and racers plow through it
-(one-way — debris scatters, racers are never slowed). All randomness is
-seeded per-smash, so identical runs produce identical carnage. Pool is
-capped at 400 with oldest-cold eviction; off-world fragments are reaped.
+Smashes are tessellated, contact-aimed, and conservation-honest:
+~66 fragments spawn AS cells of the dying ellipse (frame zero looks
+like the melon with cracks in it, never a swap), sized by fracture's
+power law (few big rind slabs, many flesh flecks) to ~1.2x the
+silhouette area — a melon is a volume, and its hidden depth unpacks
+onto the ground. The burst aims along the killing blow's escape
+normal: crush-zone flecks near the contact, surviving slabs on the far
+side; a nose-dive sprays forward, a pancake slam squirts sideways, a
+rival hit throws you away from the rival. Each smash also leaves a
+persistent dark stain on the terrain (the liquid to the fragments'
+solids). Fragments inherit the body's velocity field (v + w x r),
+bounce on terrain, collide while hot (~1.5s, spatial-hash), then
+settle cold for the race. Everything is seeded per-smash and
+deterministic. Pool capped at 900 with oldest-cold eviction; the
+ORIGINAL center-radial burst survives as debris.confettiBurst,
+reserved for balloon pops (docs/physics-witnesses.md).
 
 ## Track mode (lap circuits)
 

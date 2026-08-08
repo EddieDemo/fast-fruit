@@ -103,7 +103,27 @@ const PRESETS = Object.freeze({
     // tilt lethal ~19, tip lethal ~11.5. Kills only the worst ~5% of
     // unprepared tumbling landings; a prepared flat landing survives
     // any achievable speed. Smash = exceptional speed AND bad angle.
-    smashThreshold: 5400, curvExponent: 1.7,
+    smashThreshold: 5400,
+  // Size-toughness exponent k: a body's effective threshold scales as
+  // s^k (via its mass ratio). k=0: raw square-cube (big melons ~34%
+  // more land-fragile at s=1.15). k=2: area-law structural honesty —
+  // thicker rind on bigger fruit, gentle residual penalty. k=3: fully
+  // size-neutral lethal SPEED. The fruit roster's materials dial.
+  sizeToughness: 2,
+  // The LAWS OF MELON NATURE — uniform physical rules across the size
+  // family, tuned so distinct characters equalize in WIN RATE without
+  // ever fudging an individual or an outcome:
+  //   sizeEngineExp: motor torque ~ s^g (g=4 is accel-neutral;
+  //     lower g leaves big melons torquey but slower to spool)
+  //   sizeRevExp: rev limit ~ (1/s)^q — small wheels rev higher, as
+  //     in every real vehicle; q=1 makes TOP SPEED size-neutral
+  // Tournament-tuned (36-race win-rate harness, 2026-08-08): these
+  // values balance WIN PERCENTAGE across the 0.85-1.18 size family
+  // while keeping every physical character distinct — the whopper
+  // still dies 4x/race and podiums anyway; the runt is still nearly
+  // immortal. Laws, not favors.
+  sizeEngineExp: 3.5,
+  sizeRevExp: 0.4, curvExponent: 1.7,
   }),
 });
 const DEFAULT_PRESET = 'Loose 1';

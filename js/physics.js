@@ -118,7 +118,10 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
   if (!m.alive) return;
   const sev = Math.max(m.hitSeverity, m.pairSeverity);
   if (tick <= m.protectTick || sev <= 0) return;
-  const T = CONFIG.smashThreshold;
+  // Per-body threshold: rind strength scales with size^k (mass ratio
+  // is s^3, so T scales by mr^(k/3)). Pinned dpow: lockstep-safe.
+  const mr = 1 / (m.invM * CONFIG.mass); // mass ratio = s^3; 1.0 for the player
+  const T = CONFIG.smashThreshold * (mr === 1 ? 1 : dpow(mr, CONFIG.sizeToughness / 3));
   if (sev >= T) {
     // Burst BEFORE clearing the body: fragments inherit its velocity
     // field (v + w x r) at the instant of death.
@@ -305,12 +308,22 @@ function stepBody(m, inp, terrain, dt, sink) {
   const axis = inp.torqueAxis;
   if (axis !== 0) {
     let torque;
+    // ENGINE SCALING: bigger fruit, bigger engine. Motor torque scales
+    // as I/r (i.e. s^4), which makes LINEAR acceleration size-neutral:
+    // torque * invI * r = const. Without this, angular accel inherits
+    // the full s^-5 and the whopper is a freight train (tournament-
+    // measured: -49% distance even with deaths equalized). Player at
+    // scale 1.0: engineK is exactly 1. Pinned ops only.
+    const sRatio = m.a / CONFIG.semiMajor;
+    const engineK = sRatio === 1 ? 1 : dpow(sRatio, CONFIG.sizeEngineExp);
+    // Rev limit: small wheels rev higher (real vehicle mechanics).
+    const revCap = CONFIG.maxAngVel * (sRatio === 1 ? 1 : dpow(sRatio, -CONFIG.sizeRevExp));
     const sameDir = axis * m.omega > 0;
     if (sameDir) {
-      const headroom = Math.max(0, 1 - Math.abs(m.omega) / CONFIG.maxAngVel);
-      torque = axis * CONFIG.motorTorque * headroom;
+      const headroom = Math.max(0, 1 - Math.abs(m.omega) / revCap);
+      torque = axis * CONFIG.motorTorque * engineK * headroom;
     } else {
-      torque = axis * CONFIG.motorTorque * CONFIG.brakeBoost;
+      torque = axis * CONFIG.motorTorque * engineK * CONFIG.brakeBoost;
     }
     if (!m.grounded) torque *= CONFIG.airTorqueScale;
     m.omega += torque * invI * dt;

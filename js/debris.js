@@ -127,8 +127,10 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   // watermelon fiction. Colors are presentation-only strings riding on
   // sim-tier fragments: identical on every peer, never read by motion.
   const baseCol = window.FF.racerColor ? window.FF.racerColor(state, bodyIndex) : '#00ff00';
-  const rindCol = shadeHex(baseCol, 0.72);
-  const slabCol = shadeHex(baseCol, 0.52);
+  const pulp = (window.FF.FRUITS && window.FF.FRUITS[m.fruit] && window.FF.FRUITS[m.fruit].pulp)
+    || { flesh: '#ff4757', fleshLight: '#ff6b7d', seed: '#222222', rindK: 0.72, slabK: 0.52 };
+  const rindCol = shadeHex(baseCol, pulp.rindK);
+  const slabCol = shadeHex(baseCol, pulp.slabK);
 
   // Cell recipe: radial band (k), size band (r), kind, and direction
   // bias: 'far' = along +n (survivors), 'near' = along -n (the crush
@@ -171,7 +173,11 @@ function spawnFromBody(m, state, tick, bodyIndex) {
       // Seeds: a scatter of the flesh becomes small dark pips.
       f.seed = band.kind <= 1 && rng() < 0.13;
       if (f.seed) f.r *= 0.72;
-      f.col = f.seed ? '#222222' : (band.kind === 3 ? slabCol : band.kind === 2 ? rindCol : null);
+      f.col = f.seed ? pulp.seed
+        : band.kind === 3 ? slabCol
+        : band.kind === 2 ? rindCol
+        : band.kind === 1 ? pulp.flesh
+        : pulp.fleshLight;
       makeShard(f, rng);
 
       // SMASH ENERGY MODEL: most fragments are SLUMPERS — they receive

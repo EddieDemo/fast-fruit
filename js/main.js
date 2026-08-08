@@ -60,13 +60,29 @@ function respawnRace() {
   const localSlot = netSession ? netSession.ls.localSlot : 0;
   // Netplay feeds every player's input from the lockstep buffer;
   // solo aliases the UI input straight into player 0.
-  resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
-  resetBots(state, Math.max(0, GRID_SIZE - humans), SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200);
-
   // Deal the cast: seeded from the race seed, so every peer, ghost,
-  // and daily shares the same roster.
+  // and daily shares the same roster. Sizes deal from an independent
+  // stream of the same seed — the CASTING rotates per race (today's
+  // daily might hand the whopper body to Gourdzilla; tomorrow it's
+  // Just Dave's doom), identically on every peer.
   const castSeed = window.FF.trackDefByName(modeName) ? window.FF.trackDefByName(modeName).seed : SEED;
+
+  resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
+  resetBots(state, Math.max(0, GRID_SIZE - humans), SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0);
+
   window.FF.assignRosterNames(state, castSeed);
+
+  // Dress the local player in their PERSISTENT melon (solo only:
+  // the MP handshake doesn't carry specs yet, and a peer guessing
+  // wrong about your mass is a desync — netplay races scale 1.0
+  // until the handshake field ships).
+  if (!netSession) {
+    const spec = window.FF.melon.active();
+    const d = window.FF.melon.derive(spec.seed);
+    window.FF.setBodyScale(state.melon, d.scale);
+    state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
+    if (spec.name) state.melon.name = spec.name;
+  }
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
@@ -139,6 +155,14 @@ window.FF.selectTrackByName = selectMode;
   document.body.appendChild(btn);
   refresh();
 })();
+
+// ---- The naming ceremony: one-time, first boot ----
+window.FF.melon.maybeAskName((name) => {
+  // Apply immediately: the melon you just named is the one on track.
+  if (!netSession && state.players.length) {
+    state.melon.name = name;
+  }
+});
 
 // ---- Challenge links choose their track at boot ----
 // A shared ghost names its track; dailies are self-describing, so a

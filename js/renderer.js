@@ -22,13 +22,23 @@ const COLORS = {
 };
 
 const GRID_SPACING = 100; // world px between grid lines
-const MIN_VISIBLE_M = 10;  // vertical view never shows less than this
-const MIN_VISIBLE_W_M = 16; // horizontal view never shows less than this
 // Racing camera: the melon rides at 38% from the trailing edge, not
 // center — backward vision is worthless, so the same window buys ~25%
 // more forward reaction time. Purely presentational; the sim never
 // sees the camera.
-const MELON_SCREEN_FRAC = 0.38;
+// Camera floors: small screens bind on these guarantees and zoom in;
+// the min(1, ...) cap keeps desktop at native 1:1 (its original view,
+// by explicit preference). Mobile floors tightened from the original
+// 10m/16m to bring phones ~33% closer.
+// Compact screens (phone landscape: h < 500 CSS px) bind on tighter
+// floors (7.5m/14.5m -> ~33% closer); everything else uses the
+// ORIGINAL floors (10m/16m) — a mid-size desktop window binds
+// exactly as it always did (the tightened-floors-for-all version
+// measurably zoomed windowed desktops too).
+const COMPACT_H_PX = 500;
+const MIN_H_M_COMPACT = 7.5, MIN_W_M_COMPACT = 14.5;
+const MIN_H_M_FULL = 10, MIN_W_M_FULL = 16;
+const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
 
 // Bot palette: each melon its own bright shade (player stays pure green).
 // Indexed by spawn order, so a bot keeps its color for the whole race.
@@ -53,7 +63,10 @@ const drawList = [];
 window.FF.racerColor = function (state, bodyIndex) {
   const np = state.players.length;
   if (bodyIndex < np) return PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
-  return BOT_PALETTE[(bodyIndex - np) % BOT_PALETTE.length];
+  const body = state.bots[bodyIndex - np] && state.bots[bodyIndex - np].melon;
+  const species = (window.FF.FRUITS && body && window.FF.FRUITS[body.fruit]) || null;
+  const pal = species ? species.bots : BOT_PALETTE;
+  return pal[(bodyIndex - np) % pal.length];
 };
 
 // Canonical player-slot colors: every peer agrees on who wears what.
@@ -90,7 +103,14 @@ function createRenderer(canvas) {
     // feel; a fixed 16x10 "ranked view" stays in reserve for serious
     // leaderboards. World coordinates and physics are untouched —
     // this is purely the camera's lens.
-    const zoom = Math.min(1, height / (MIN_VISIBLE_M * 100), width / (MIN_VISIBLE_W_M * 100));
+    // Guarantee-style zoom: small screens bind on a floor and zoom in;
+    // large screens cap at native 1:1. Typical phone (844x390): zoom
+    // 0.52 -> 16.2m x 7.5m view, melons +33% vs the original mobile.
+    // Desktop 1080p: zoom 1 -> 19.2m x 10.8m, exactly the original.
+    const compact = height < COMPACT_H_PX;
+    const mh = compact ? MIN_H_M_COMPACT : MIN_H_M_FULL;
+    const mw = compact ? MIN_W_M_COMPACT : MIN_W_M_FULL;
+    const zoom = Math.min(1, height / (mh * 100), width / (mw * 100));
 
     // ---- Camera: forward-biased on x, centered on y ----
     // Target puts the melon at MELON_SCREEN_FRAC of screen width;
@@ -201,7 +221,7 @@ function createRenderer(canvas) {
         x: gp.x + (gm.x - gp.x) * alpha,
         y: gp.y + (gm.y - gp.y) * alpha,
         angle: gp.angle + (gm.angle - gp.angle) * alpha,
-        color: BOT_PALETTE[i % BOT_PALETTE.length],
+        color: window.FF.racerColor(state, state.players.length + i),
         fx: null,
         name: gm.name,
       });
@@ -274,13 +294,13 @@ function createRenderer(canvas) {
           ctx.fillText(d.name, sx, toScreenY(wy) + 34 + Math.round(150 * zoom));
         }
       }
-      drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom, d.name || d.color, d.melon.a, d.melon.b);
+      drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
       // Near-miss flash: white overlay that decays fast. Flash, not
       // squash — the survival warning must read differently from
       // ordinary impact juice.
       if (d.isPlayer && state.fx.flash > 0.02) {
         ctx.globalAlpha = state.fx.flash;
-        drawMelon(ctx, sx, sy, d.angle, d.fx, '#ffffff', zoom, d.name || d.color, d.melon.a, d.melon.b);
+        drawMelon(ctx, sx, sy, d.angle, d.fx, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
         ctx.globalAlpha = 1;
       }
       drawPlace(ctx, sx, sy, d.place, zoom);
@@ -359,15 +379,17 @@ function createRenderer(canvas) {
 
   // Race-place number at the melon's center, in SCREEN space — it never
   // rotates with the body. Geist Mono 400 per the design spec.
+  // Place number floats ONE GRID CELL (1m) above the body, in the
+  // racer's own color — a label over the fruit, not a tattoo on it.
   function drawPlace(ctx, sx, sy, n, zoom) {
     ctx.font = `400 ${Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom))}px "Geist Mono", ui-monospace, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillText(String(n), sx, sy);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillText(String(n), sx, sy - 100 * zoom);
   }
 
-  function drawMelon(ctx, sx, sy, angle, fx, color, zoom, seedKey, bodyA, bodyB) {
+  function drawMelon(ctx, sx, sy, angle, fx, color, zoom, seedKey, bodyA, bodyB, fruit) {
     const a = bodyA || CONFIG.semiMajor;
     const b = bodyB || CONFIG.semiMinor;
 
@@ -387,7 +409,7 @@ function createRenderer(canvas) {
     // Cel-shaded body: world-fixed sun, terminator the surface rolls
     // beneath. The rotation that was invisible by design is now
     // readable against the light.
-    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey);
+    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit);
 
     ctx.restore();
   }
@@ -626,7 +648,7 @@ function createRenderer(canvas) {
     return c;
   }
 
-  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey) {
+  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit) {
     const TAU2 = Math.PI * 2;
     ctx.save();
     ctx.beginPath();
@@ -702,8 +724,13 @@ function createRenderer(canvas) {
     // (lightning-bolt fingers, each edge its own), swell-and-pinch
     // width modulation, centerline MEANDER, per-stripe darkness, and
     // faint SECONDARY stripes between the mains.
-    const pat = melonPattern(seedKey || baseColor);
     const caB = Math.cos(angle), saB = Math.sin(angle);
+    if (fruit === 'cantaloupe') {
+      drawNet(ctx, angle, a, b, seedKey || baseColor);
+      ctx.restore();
+      return;
+    }
+    const pat = melonPattern(seedKey || baseColor);
     for (const st of pat.stripes) {
       ctx.fillStyle = `rgba(0, 0, 0, ${st.alpha})`;
       ctx.beginPath();
@@ -778,7 +805,132 @@ function createRenderer(canvas) {
     patternCache.set(key, p);
     return p;
   }
-  window.FF.shadeEllipse = shadeEllipse; // ghosts borrow the same sun  window.FF.shadeEllipse = shadeEllipse; // ghosts borrow the same sun
+  // Two line families on the spheroid, both body-fixed so the net
+  // tumbles with the fruit and foreshortens truthfully:
+  //  * light MERIDIANS: the stripe geometry inverted — thin, pale,
+  //    numerous (raised net is LIGHTER than skin, watermelon's
+  //    inverse), wavy-edged;
+  //  * LATITUDE RINGS: circles of constant polar angle project to
+  //    straight chords perpendicular to the major axis — the
+  //    crosshatch's other direction, for free from the geometry;
+  //  * faint darker MOTTLE blotches, seeded.
+  // Cached per racer as baked Path2D geometry (body frame): the whole
+  // organic web costs THREE fills per melon per frame.
+  const netCache = new Map();
+  function netPaths(key, a, b) {
+    const ck = key + '|' + (a | 0);
+    let p = netCache.get(ck);
+    if (p) return p;
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const rng = window.FF.mulberry32(h >>> 0);
+    const surf = (u, phi) => [a * Math.cos(u), b * Math.sin(u) * Math.cos(phi)];
+
+    // Mottle: blobby darker patches, varied sizes.
+    const mottle = new Path2D();
+    const nB = 11 + (rng() * 5 | 0);
+    for (let i = 0; i < nB; i++) {
+      const mt = rng() * 6.28, mk = rng() * 0.9;
+      const mx = a * mk * Math.cos(mt), my = b * mk * Math.sin(mt);
+      const mr = 4 + rng() * 10, ph = rng() * 6.28, sq = 0.6 + rng() * 0.4;
+      for (let j = 0; j <= 9; j++) {
+        const t = (j / 9) * 6.28;
+        const rr = mr * (1 + 0.3 * Math.sin(3 * t + ph));
+        const x = mx + rr * Math.cos(t), y = my + rr * sq * Math.sin(t);
+        if (j === 0) mottle.moveTo(x, y); else mottle.lineTo(x, y);
+      }
+      mottle.closePath();
+    }
+
+    // Sutures: a few wavering full-meridian grooves, faintly darker.
+    const sutures = new Path2D();
+    const nS = 3 + (rng() * 2 | 0);
+    for (let j = 0; j < nS; j++) {
+      const phi0 = -1.0 + (j / Math.max(1, nS - 1)) * 2.0 + (rng() - 0.5) * 0.3;
+      const ph = rng() * 6.28;
+      for (let pass = 0; pass < 2; pass++) {
+        const off = (pass === 0 ? -1 : 1) * 0.014;
+        for (let q = 0; q <= 16; q++) {
+          const qq = pass === 0 ? q : 16 - q;
+          const u = (qq / 16) * Math.PI;
+          const wav = 0.06 * Math.sin(3 * u + ph);
+          const pt = surf(u, phi0 + wav + off);
+          if (pass === 0 && q === 0) sutures.moveTo(pt[0], pt[1]);
+          else sutures.lineTo(pt[0], pt[1]);
+        }
+      }
+      sutures.closePath();
+    }
+
+    // THE NET: jittered mesh on the surface — nodes displaced hard,
+    // edges as wandering midpoint-displaced polylines with per-edge
+    // and per-segment thickness variation, ~13% dropout so the web
+    // breaks, occasional diagonals to kill the quad rhythm. Nothing
+    // straight anywhere; foreshortening free from the surface param.
+    const ridges = new Path2D();
+    const NU = 8, NF = 6, MARG = 0.28, PHIMAX = 1.2;
+    const nodes = [];
+    for (let iu = 0; iu < NU; iu++) {
+      nodes.push([]);
+      for (let jf = 0; jf < NF; jf++) {
+        const u = Math.max(0.08, Math.min(Math.PI - 0.08,
+          MARG + (iu + (rng() - 0.5) * 0.64) / (NU - 1) * (Math.PI - 2 * MARG)));
+        const phi = -PHIMAX + (jf + (rng() - 0.5) * 0.64) / (NF - 1) * 2 * PHIMAX;
+        nodes[iu].push([u, phi]);
+      }
+    }
+    const edge = (p0, p1) => {
+      if (rng() < 0.13) return; // broken web
+      const [u0, f0] = p0, [u1, f1] = p1;
+      const pts = [];
+      for (let s = 0; s <= 4; s++) {
+        let u = u0 + (u1 - u0) * (s / 4);
+        let f = f0 + (f1 - f0) * (s / 4);
+        if (s > 0 && s < 4) { u += (rng() - 0.5) * 0.1; f += (rng() - 0.5) * 0.18; }
+        pts.push(surf(u, f));
+      }
+      const wbase = 1.1 + rng() * 1.5;
+      for (let s = 0; s < 4; s++) {
+        const [x0, y0] = pts[s], [x1, y1] = pts[s + 1];
+        const dx = x1 - x0, dy = y1 - y0;
+        const L = Math.sqrt(dx * dx + dy * dy) || 1;
+        const w = wbase * (0.7 + rng() * 0.6) / 2;
+        const nx = -dy / L * w, ny = dx / L * w;
+        ridges.moveTo(x0 + nx, y0 + ny);
+        ridges.lineTo(x1 + nx, y1 + ny);
+        ridges.lineTo(x1 - nx, y1 - ny);
+        ridges.lineTo(x0 - nx, y0 - ny);
+        ridges.closePath();
+      }
+    };
+    for (let iu = 0; iu < NU; iu++) {
+      for (let jf = 0; jf < NF; jf++) {
+        if (iu + 1 < NU) edge(nodes[iu][jf], nodes[iu + 1][jf]);
+        if (jf + 1 < NF) edge(nodes[iu][jf], nodes[iu][jf + 1]);
+        if (iu + 1 < NU && jf + 1 < NF && rng() < 0.22) edge(nodes[iu][jf], nodes[iu + 1][jf + 1]);
+      }
+    }
+    p = { mottle, sutures, ridges };
+    netCache.set(ck, p);
+    return p;
+  }
+
+  function drawNet(ctx, angle, a, b, key) {
+    const paths = netPaths(key, a, b);
+    ctx.save();
+    ctx.rotate(angle); // net is surface pattern: it tumbles with the fruit
+    ctx.fillStyle = 'rgba(60, 40, 10, 0.09)';
+    ctx.fill(paths.mottle);
+    ctx.fillStyle = 'rgba(50, 32, 6, 0.10)';
+    ctx.fill(paths.sutures);
+    // Toward white, not cream: the ridges must survive the lit cap
+    // (white contrasts with lit cream via saturation, not lightness).
+    ctx.fillStyle = 'rgba(255, 253, 245, 0.32)';
+    ctx.fill(paths.ridges);
+    ctx.restore();
+  }
+
+    window.FF.shadeEllipse = shadeEllipse; // ghosts borrow the same sun
 
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
 
