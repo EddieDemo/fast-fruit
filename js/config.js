@@ -109,7 +109,15 @@ const PRESETS = Object.freeze({
   // more land-fragile at s=1.15). k=2: area-law structural honesty —
   // thicker rind on bigger fruit, gentle residual penalty. k=3: fully
   // size-neutral lethal SPEED. The fruit roster's materials dial.
-  sizeToughness: 2,
+  sizeToughness: 2.35,
+  // ---- Bot species toggles (launch config) ----
+  // Flip to false to keep a species off the grid. The species DRAW
+  // still happens (the seeded stream is consumed identically), so
+  // toggling one species never reshuffles anyone else's size or
+  // pattern — disabled draws simply land as watermelon. Solo-safe;
+  // in netplay all peers must share these values or bodies desync.
+  botCantaloupe: false,
+  botHoneydew: false,
   // The LAWS OF MELON NATURE — uniform physical rules across the size
   // family, tuned so distinct characters equalize in WIN RATE without
   // ever fudging an individual or an outcome:

@@ -194,13 +194,22 @@ function resetBots(state, count, x, y, sizeSeed) {
     // every peer. Without a seed (headless suites), the deal is the
     // legacy fixed one.
     const srng = window.FF.mulberry32((((sizeSeed === undefined ? 0xB07 : sizeSeed) >>> 0) + i * 2654435761) >>> 0);
+    // Species deal FIRST (its multiplier feeds the body factory):
+    // seeded grids field roughly 40% watermelon / 30% cantaloupe /
+    // 30% honeydew, identical on every peer, per-daily casting.
+    // Legacy (seedless) grids stay all-watermelon for suite stability.
+    let fruit = 'watermelon';
+    if (sizeSeed !== undefined) {
+      const rSp = srng(); // always drawn: stream position is sacred
+      fruit = rSp < 0.3 ? 'cantaloupe' : rSp < 0.6 ? 'honeydew' : 'watermelon';
+      if (fruit === 'cantaloupe' && !CONFIG.botCantaloupe) fruit = 'watermelon';
+      if (fruit === 'honeydew' && !CONFIG.botHoneydew) fruit = 'watermelon';
+    }
     const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
-    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), 0.85 + u * 0.33);
-    // Species deal: ~1/3 of a seeded grid are cantaloupes — same seed
-    // stream family as sizes, so every peer fields the same mix and
-    // each daily has its own species casting. Legacy (seedless) grids
-    // stay all-watermelon, keeping the headless suites byte-stable.
-    if (sizeSeed !== undefined && srng() < 0.35) melon.fruit = 'cantaloupe';
+    const F = window.FF.FRUITS;
+    const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
+    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), (0.85 + u * 0.33) * mult);
+    melon.fruit = fruit;
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,

@@ -35,11 +35,15 @@ function derive(seed) {
   const u = (rng() + rng()) / 2;
   const scale = 0.85 + u * 0.33;
   const kg = BASE_KG * scale * scale * scale;
+  const wm = window.FF.FRUITS && window.FF.FRUITS.watermelon;
   return {
     scale,
     kg,
     lb: kg * 2.20462,
     patternKey: 'm' + (seed >>> 0),
+    // The melon's own green, drawn from the same watermelon palette
+    // as the bots — one more trait the seed owns forever.
+    bodyColor: wm ? wm.bots[(seed >>> 0) % wm.bots.length] : null,
   };
 }
 

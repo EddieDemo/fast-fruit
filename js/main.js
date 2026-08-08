@@ -81,6 +81,7 @@ function respawnRace() {
     const d = window.FF.melon.derive(spec.seed);
     window.FF.setBodyScale(state.melon, d.scale);
     state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
+    state.melon.bodyColor = d.bodyColor; // and so does the green
     if (spec.name) state.melon.name = spec.name;
   }
 

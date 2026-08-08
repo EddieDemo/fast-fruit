@@ -24,7 +24,16 @@
 
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="manifest" href="manifest.webmanifest" />
+  <script>
+    // PWA dressing only when actually served: on file:// the manifest
+    // fetch trips CORS (origin null) and logs a console error, and
+    // service workers can't register anyway. file:// must run CLEAN.
+    if (location.protocol !== 'file:') {
+      const l = document.createElement('link');
+      l.rel = 'manifest'; l.href = 'manifest.webmanifest';
+      document.head.appendChild(l);
+    }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&display=swap" rel="stylesheet" />
@@ -85,7 +94,7 @@
 <script>
   // PWA: offline play + home-screen install. Network-first, so deploys
   // are always fresh online; the cache only answers when offline.
-  if ('serviceWorker' in navigator) {
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 </script>

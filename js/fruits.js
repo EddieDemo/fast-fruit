@@ -16,6 +16,7 @@
 
 const FRUITS = {
   watermelon: {
+    sizeMult: 1.0, // the reference fruit
     // Eleven greens (L* 54-74). The player's sacred #00ff00 lives in
     // PLAYER_PALETTE, outside the species table.
     bots: [
@@ -33,6 +34,11 @@ const FRUITS = {
   },
 
   cantaloupe: {
+    // Indicative, not accurate (cartoon license): real cantaloupes are
+    // ~54% linear scale of a watermelon; 0.8 keeps the ORDERING
+    // emphatic while every fruit still reads as a racer. Mass follows
+    // the law from total scale: 0.8^3 = 0.51x at the same roll.
+    sizeMult: 0.8,
     // Eleven muted tans/creams/yellows (hues 38-56, L* 54-74).
     bots: [
       '#d4b16c', '#c39b2e', '#c4ad4f', '#9b8c29', '#c4a163', '#b18f1f',
@@ -46,6 +52,24 @@ const FRUITS = {
       slabK: 0.52,
     },
     pattern: 'net',          // light raised netting + latitude rings + mottle
+  },
+
+  honeydew: {
+    sizeMult: 0.9, // between the melon and the cantaloupe, as in life
+    // Eleven BRIGHT sunny yellows (hues 50-57, saturated, L* raised
+    // to 64-80 — honeydews are the luminous ones on the shelf).
+    bots: [
+      '#e3c609', '#cab70d', '#e1bf12', '#b3a914', '#d9ba0b', '#c0b005',
+      '#dcc516', '#a69f18', '#ccb30d', '#b1a60e', '#af9f16',
+    ],
+    pulp: {
+      flesh: '#b8e086',      // pale green flesh: the third forensic color
+      fleshLight: '#d2eda9',
+      seed: '#f0e6c8',       // cream seeds
+      rindK: 0.72,
+      slabK: 0.52,
+    },
+    pattern: 'crackle',      // hairline vein web + pores + whisper streaks
   },
 };
 

@@ -62,7 +62,10 @@ const drawList = [];
 // its own green. Presentation-only; the sim never reads colors.
 window.FF.racerColor = function (state, bodyIndex) {
   const np = state.players.length;
-  if (bodyIndex < np) return PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
+  if (bodyIndex < np) {
+    const pb = state.players[bodyIndex] && state.players[bodyIndex].melon;
+    return (pb && pb.bodyColor) || PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
+  }
   const body = state.bots[bodyIndex - np] && state.bots[bodyIndex - np].melon;
   const species = (window.FF.FRUITS && body && window.FF.FRUITS[body.fruit]) || null;
   const pal = species ? species.bots : BOT_PALETTE;
@@ -247,7 +250,11 @@ function createRenderer(canvas) {
       drawList.push({
         melon: state.melon,
         x: ix, y: iy, angle: iangle,
-        color: PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
+        // The sacred #00ff00 retires from the BODY (it fought the
+        // light marble bands); the player's body wears the palette
+        // green their persistent melon's seed picked — Gerald's green
+        // is Gerald's. Identity lives in the nameplate now.
+        color: state.melon.bodyColor || PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
         fx: state.fx, isPlayer: true,
         name: state.melon.name,
       });
@@ -290,7 +297,7 @@ function createRenderer(canvas) {
           // Bots wear seeded BRIGHT name colors (the melons are all
           // green now, so the names carry the color identity instead);
           // the player's name keeps their sacred green.
-          ctx.fillStyle = d.isPlayer ? d.color : nameColor(d.name);
+          ctx.fillStyle = d.isPlayer ? '#00ff00' : nameColor(d.name); // sacred green lives HERE now
           ctx.fillText(d.name, sx, toScreenY(wy) + 34 + Math.round(150 * zoom));
         }
       }
@@ -724,87 +731,159 @@ function createRenderer(canvas) {
     // (lightning-bolt fingers, each edge its own), swell-and-pinch
     // width modulation, centerline MEANDER, per-stripe darkness, and
     // faint SECONDARY stripes between the mains.
-    const caB = Math.cos(angle), saB = Math.sin(angle);
-    if (fruit === 'cantaloupe') {
-      drawNet(ctx, angle, a, b, seedKey || baseColor);
+    // ---- The rind raster: wrap-once, rotate-forever ----
+    // The pattern layer (stripes / net / crackle) is rendered ONCE per
+    // racer into an offscreen canvas in the BODY frame (2x supersampled
+    // for crispness under devicePixelRatio), then every frame is just
+    // this rotated drawImage. Possible because our melons rotate only
+    // in the screen plane: the visible hemisphere never changes, so
+    // the spheroid warp is baked at build time. The Lambert cap stays
+    // vector and world-fixed above the base fill (sun doesn't rotate);
+    // the pattern rides on top, translucent over base AND lit alike.
+    // This is also the future texture pipe: a hand-painted rind map is
+    // just another way to fill the offscreen.
+    const raster = patternRaster(seedKey || baseColor, fruit, a, b);
+    if (raster) {
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.drawImage(raster.canvas, -raster.w / 2, -raster.h / 2, raster.w, raster.h);
       ctx.restore();
-      return;
-    }
-    const pat = melonPattern(seedKey || baseColor);
-    for (const st of pat.stripes) {
-      ctx.fillStyle = `rgba(0, 0, 0, ${st.alpha})`;
-      ctx.beginPath();
-      for (let pass = 0; pass < 2; pass++) {
-        const sgn = pass === 0 ? -1 : 1;
-        const harm = pass === 0 ? st.edgeA : st.edgeB;
-        for (let j = 0; j <= 26; j++) {
-          const jj = pass === 0 ? j : 26 - j;
-          const th = (jj / 26) * Math.PI;
-          // centerline meander + jagged edge, both in longitude space
-          const kc = st.k + st.meandA * Math.sin(st.meandF * th + st.meandP);
-          let edge = 1;
-          for (const hm of harm) edge += hm.a * Math.sin(hm.f * th + hm.p);
-          const swell = 1 + st.swellA * Math.sin(2 * th + st.swellP);
-          const kk = kc + sgn * st.dphi * swell * Math.max(0.25, edge)
-            * Math.sqrt(Math.max(0.05, 1 - kc * kc));
-          const x = a * Math.cos(th);
-          const y = b * kk * Math.sin(th);
-          const wx = x * caB - y * saB, wy = x * saB + y * caB;
-          if (pass === 0 && j === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
-        }
-      }
-      ctx.closePath();
-      ctx.fill();
     }
 
     ctx.restore();
   }
 
-  // The melon generator: a seeded stripe-pattern spec per racer.
-  const patternCache = new Map();
-  function melonPattern(key) {
-    let p = patternCache.get(key);
-    if (p) return p;
-    let h = 2166136261;
-    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
-    const rng = window.FF.mulberry32(h >>> 0);
-    const count = 4 + (rng() * 3 | 0); // 4-6 main stripes
-    const MARGIN = 0.34;
-    const stripes = [];
-    const mkHarm = () => [
-      { f: 4 + rng() * 3, a: 0.16 + rng() * 0.1, p: rng() * 6.28 },
-      { f: 9 + rng() * 5, a: 0.1 + rng() * 0.08, p: rng() * 6.28 },
-      { f: 17 + rng() * 8, a: 0.05 + rng() * 0.05, p: rng() * 6.28 },
-    ];
-    for (let i = 0; i < count; i++) {
-      const even = MARGIN + ((i + 0.5) / count) * (Math.PI - 2 * MARGIN);
-      const phi = even + (rng() - 0.5) * 0.16; // spacing jitter
-      const main = {
-        k: Math.cos(phi),
-        dphi: 0.09 + rng() * 0.06,
-        alpha: 0.12 + rng() * 0.06,
-        edgeA: mkHarm(), edgeB: mkHarm(),
-        meandA: 0.02 + rng() * 0.035, meandF: 1 + rng() * 2, meandP: rng() * 6.28,
-        swellA: 0.15 + rng() * 0.25, swellP: rng() * 6.28,
-      };
-      stripes.push(main);
-      // A faint secondary between this main and the next, sometimes.
-      if (i < count - 1 && rng() < 0.6) {
-        const phi2 = even + (Math.PI - 2 * MARGIN) / count * 0.5 + (rng() - 0.5) * 0.1;
-        stripes.push({
-          k: Math.cos(phi2),
-          dphi: 0.04 + rng() * 0.03,
-          alpha: 0.05 + rng() * 0.03,
-          edgeA: mkHarm(), edgeB: mkHarm(),
-          meandA: 0.02 + rng() * 0.03, meandF: 1 + rng() * 2, meandP: rng() * 6.28,
-          swellA: 0.2 + rng() * 0.2, swellP: rng() * 6.28,
-        });
+  // ---- Seeded 2D gradient (Perlin) noise + fBm ----
+  // Bake-time only (the raster pipeline makes per-pixel noise free).
+  // Seeded permutation per racer: every marble is unique, and the
+  // same racer marbles identically on every peer and ghost.
+  function makeNoise2(seed) {
+    const rng = window.FF.mulberry32(seed >>> 0);
+    const perm = new Uint8Array(512);
+    const p = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) p[i] = i;
+    for (let i = 255; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+    for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+    const grad = (h, x, y) => {
+      switch (h & 7) {
+        case 0: return x + y; case 1: return x - y; case 2: return -x + y; case 3: return -x - y;
+        case 4: return x; case 5: return -x; case 6: return y; default: return -y;
+      }
+    };
+    const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+    const noise = (x, y) => {
+      const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+      x -= Math.floor(x); y -= Math.floor(y);
+      const u = fade(x), v = fade(y);
+      const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+      const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+      const l1 = grad(aa, x, y) + u * (grad(ba, x - 1, y) - grad(aa, x, y));
+      const l2 = grad(ab, x, y - 1) + u * (grad(bb, x - 1, y - 1) - grad(ab, x, y - 1));
+      return l1 + v * (l2 - l1); // ~[-1, 1]
+    };
+    const fbm = (x, y, oct) => {
+      let s = 0, amp = 1, f = 1, norm = 0;
+      for (let o = 0; o < oct; o++) { s += amp * noise(x * f, y * f); norm += amp; amp *= 0.5; f *= 2.03; }
+      return s / norm;
+    };
+    return { noise, fbm };
+  }
+
+  // Build (and cache) a racer's pattern layer as an offscreen raster.
+  const RSCALE = 2; // supersample factor
+  const rasterCache = new Map();
+  function patternRaster(key, fruit, a, b) {
+    const species = fruit || 'watermelon';
+    const ck = key + '|' + species + '|' + (a | 0);
+    let rst = rasterCache.get(ck);
+    if (rst !== undefined) return rst;
+    if (typeof document === 'undefined') { rasterCache.set(ck, null); return null; }
+    const pad = 4; // stroke overhang room (body clip trims at draw time)
+    const w = Math.ceil(a * 2) + pad * 2, h = Math.ceil(b * 2) + pad * 2;
+    const cv = document.createElement('canvas');
+    cv.width = w * RSCALE; cv.height = h * RSCALE;
+    const octx = cv.getContext('2d');
+    octx.scale(RSCALE, RSCALE);
+    octx.translate(w / 2, h / 2);
+    if (species === 'cantaloupe') drawNet(octx, a, b, key);
+    else if (species === 'honeydew') drawCrackle(octx, a, b, key);
+    else buildMarbleStripes(octx, cv, a, b, key, w, h);
+    rst = { canvas: cv, w, h };
+    rasterCache.set(ck, rst);
+    return rst;
+  }
+
+  // ---- Watermelon marble stripes: domain-warped noise banding ----
+  // The hydromelon look, honestly constructed. The botanical stripe
+  // SCAFFOLD survives (meridian centers converging at the poles; the
+  // per-pixel inverse projection u=acos(x/a), k=y/(b sin u) IS the
+  // exact foreshortening), but the band boundaries are warped by
+  // fractal Brownian motion: a large octave makes stripes wander and
+  // swell; a high-frequency octave TEARS the edges and calves off
+  // marbled islands — the camouflage speckle. Bands render LIGHT over
+  // the base (pale warm cream, riding over lit and shadow alike).
+  function buildMarbleStripes(octx, cv, a, b, key, w, h) {
+    let hsh = 2166136261;
+    for (let i = 0; i < key.length; i++) { hsh ^= key.charCodeAt(i); hsh = Math.imul(hsh, 16777619); }
+    const rng = window.FF.mulberry32(hsh >>> 0);
+    const nz = makeNoise2((hsh ^ 0x51CE) >>> 0);
+    const nStripes = 5 + (rng() * 2 | 0);
+    const centers = [];
+    for (let i = 0; i < nStripes; i++) {
+      centers.push((i + 0.5) / nStripes * Math.PI + (rng() - 0.5) * 0.22);
+    }
+    // Proof-tuned (three-round PIL bracket, 2026-08-08): band duty
+    // ~45% — fat hydromelon bands with legible dark gaps between.
+    const halfW = (0.58 + rng() * 0.14) * (Math.PI / nStripes) / 2; // band half-width in longitude
+    const warpA = 0.4 + rng() * 0.18;   // large-scale wander amplitude
+    const tearA = 1.0 + rng() * 0.3;    // STRONG tears: bands pinch clean apart
+    const fU = 0.55 + rng() * 0.3, fP = 0.5 + rng() * 0.25; // warp frequencies
+    const off1 = rng() * 40, off2 = rng() * 40, off3 = rng() * 40, off4 = rng() * 40;
+    const alpha = Math.round(255 * 0.30);
+
+    const img = octx.createImageData(cv.width, cv.height);
+    const data = img.data;
+    for (let py = 0; py < cv.height; py++) {
+      for (let px = 0; px < cv.width; px++) {
+        const x = px / RSCALE - w / 2, y = py / RSCALE - h / 2;
+        const ex = x / a, ey = y / b;
+        if (ex * ex + ey * ey > 1) continue; // outside the body
+        // Inverse spheroid projection (exact foreshortening):
+        const u = Math.acos(Math.max(-1, Math.min(1, ex)));
+        const su = Math.sin(u);
+        const k = su < 0.04 ? 0 : Math.max(-1, Math.min(1, ey / su));
+        const phi = Math.acos(k); // longitude in [0, PI]
+        // Domain warp: boundaries wander organically.
+        const wPhi = phi + warpA * nz.fbm(u * fU * 2 + off1, phi * fP * 2, 3);
+        // Distance to nearest stripe center, torn by high-freq noise.
+        let d = 1e9;
+        for (const c of centers) { const dd = Math.abs(wPhi - c); if (dd < d) d = dd; }
+        const tear = 1 + tearA * nz.fbm(u * 1.6 + off2, phi * 1.45, 2); // chunky tears, rounded
+        // Three-layer detail (the hydromelon grammar): bands that
+        // BREAK (tear can pinch width to nothing), interior HOLES
+        // (bare patches inside bands), and detached ISLANDS hugging
+        // the band edges.
+        let paint = false;
+        if (d < halfW * tear) {
+          paint = nz.fbm(u * 3.0 + off3, phi * 2.7, 2) <= 0.24; // holes (rounded)
+        } else if (d < halfW * (tear + 1.2)) {
+          paint = nz.fbm(u * 3.4 + off4, phi * 3.0, 2) > 0.30;  // islands (rounded)
+        }
+        if (paint) {
+          const idx = (py * cv.width + px) * 4;
+          data[idx] = 255; data[idx + 1] = 252; data[idx + 2] = 235; // pale warm cream
+          data[idx + 3] = alpha;
+        }
       }
     }
-    p = { stripes };
-    patternCache.set(key, p);
-    return p;
+    octx.save();
+    octx.setTransform(1, 0, 0, 1, 0, 0); // putImageData ignores transforms; be explicit
+    octx.putImageData(img, 0, 0);
+    octx.restore();
   }
+
+  // The melon generator: a seeded stripe-pattern spec per racer.
+  // The melon generator: a seeded stripe-pattern spec per racer.
   // Two line families on the spheroid, both body-fixed so the net
   // tumbles with the fruit and foreshortens truthfully:
   //  * light MERIDIANS: the stripe geometry inverted — thin, pale,
@@ -833,11 +912,17 @@ function createRenderer(canvas) {
       const mt = rng() * 6.28, mk = rng() * 0.9;
       const mx = a * mk * Math.cos(mt), my = b * mk * Math.sin(mt);
       const mr = 4 + rng() * 10, ph = rng() * 6.28, sq = 0.6 + rng() * 0.4;
-      for (let j = 0; j <= 9; j++) {
+      // Smooth blob: quadratic curves through vertex midpoints.
+      const bp = [];
+      for (let j = 0; j < 9; j++) {
         const t = (j / 9) * 6.28;
         const rr = mr * (1 + 0.3 * Math.sin(3 * t + ph));
-        const x = mx + rr * Math.cos(t), y = my + rr * sq * Math.sin(t);
-        if (j === 0) mottle.moveTo(x, y); else mottle.lineTo(x, y);
+        bp.push([mx + rr * Math.cos(t), my + rr * sq * Math.sin(t)]);
+      }
+      mottle.moveTo((bp[0][0] + bp[8][0]) / 2, (bp[0][1] + bp[8][1]) / 2);
+      for (let j = 0; j < 9; j++) {
+        const nx2 = bp[(j + 1) % 9];
+        mottle.quadraticCurveTo(bp[j][0], bp[j][1], (bp[j][0] + nx2[0]) / 2, (bp[j][1] + nx2[1]) / 2);
       }
       mottle.closePath();
     }
@@ -867,7 +952,10 @@ function createRenderer(canvas) {
     // and per-segment thickness variation, ~13% dropout so the web
     // breaks, occasional diagonals to kill the quad rhythm. Nothing
     // straight anywhere; foreshortening free from the surface param.
-    const ridges = new Path2D();
+    // Ridges as STROKED polylines in three width buckets — round caps
+    // and joins give the web its soft, corky edge (the filled-quad
+    // version had hard corners at every segment joint).
+    const ridges = { fine: new Path2D(), mid: new Path2D(), bold: new Path2D() };
     const NU = 8, NF = 6, MARG = 0.28, PHIMAX = 1.2;
     const nodes = [];
     for (let iu = 0; iu < NU; iu++) {
@@ -882,6 +970,10 @@ function createRenderer(canvas) {
     const edge = (p0, p1) => {
       if (rng() < 0.13) return; // broken web
       const [u0, f0] = p0, [u1, f1] = p1;
+      const wbase = 1.1 + rng() * 1.5;
+      const path = wbase < 1.6 ? ridges.fine : wbase < 2.1 ? ridges.mid : ridges.bold;
+      // Smooth wandering polyline: jittered control points joined by
+      // quadratic curves through midpoints — no corners anywhere.
       const pts = [];
       for (let s = 0; s <= 4; s++) {
         let u = u0 + (u1 - u0) * (s / 4);
@@ -889,19 +981,12 @@ function createRenderer(canvas) {
         if (s > 0 && s < 4) { u += (rng() - 0.5) * 0.1; f += (rng() - 0.5) * 0.18; }
         pts.push(surf(u, f));
       }
-      const wbase = 1.1 + rng() * 1.5;
-      for (let s = 0; s < 4; s++) {
-        const [x0, y0] = pts[s], [x1, y1] = pts[s + 1];
-        const dx = x1 - x0, dy = y1 - y0;
-        const L = Math.sqrt(dx * dx + dy * dy) || 1;
-        const w = wbase * (0.7 + rng() * 0.6) / 2;
-        const nx = -dy / L * w, ny = dx / L * w;
-        ridges.moveTo(x0 + nx, y0 + ny);
-        ridges.lineTo(x1 + nx, y1 + ny);
-        ridges.lineTo(x1 - nx, y1 - ny);
-        ridges.lineTo(x0 - nx, y0 - ny);
-        ridges.closePath();
+      path.moveTo(pts[0][0], pts[0][1]);
+      for (let s = 1; s < 4; s++) {
+        const mx = (pts[s][0] + pts[s + 1][0]) / 2, my = (pts[s][1] + pts[s + 1][1]) / 2;
+        path.quadraticCurveTo(pts[s][0], pts[s][1], mx, my);
       }
+      path.lineTo(pts[4][0], pts[4][1]);
     };
     for (let iu = 0; iu < NU; iu++) {
       for (let jf = 0; jf < NF; jf++) {
@@ -915,18 +1000,119 @@ function createRenderer(canvas) {
     return p;
   }
 
-  function drawNet(ctx, angle, a, b, key) {
+  // ---- Honeydew crackle: the hairline vein web ----
+  // From the reference photo: honeydew skin carries sparse superficial
+  // russeting — thin WANDERING, BRANCHING hairline veins (random walks
+  // in surface space, clustered around a seeded region with strays),
+  // tiny pore specks, and 2-4 whisper-faint near-meridian streaks.
+  // All body-fixed, surface-parameterized (foreshortening free),
+  // baked to Path2D per racer: two fills per melon per frame.
+  const crackleCache = new Map();
+  function cracklePaths(key, a, b) {
+    const ck = key + '|' + (a | 0);
+    let p = crackleCache.get(ck);
+    if (p) return p;
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const rng = window.FF.mulberry32(h >>> 0);
+    const surf = (u, phi) => [a * Math.cos(u), b * Math.sin(u) * Math.cos(phi)];
+
+    const faint = new Path2D(); // streaks live fainter than veins
+    const nS = 2 + (rng() * 3 | 0);
+    for (let j = 0; j < nS; j++) {
+      const phi0 = -1.0 + rng() * 2.0, ph = rng() * 6.28;
+      for (let pass = 0; pass < 2; pass++) {
+        const off = (pass === 0 ? -1 : 1) * 0.05;
+        for (let q = 0; q <= 14; q++) {
+          const qq = pass === 0 ? q : 14 - q;
+          const u = (qq / 14) * Math.PI;
+          const pt = surf(u, phi0 + 0.1 * Math.sin(2 * u + ph) + off);
+          if (pass === 0 && q === 0) faint.moveTo(pt[0], pt[1]);
+          else faint.lineTo(pt[0], pt[1]);
+        }
+      }
+      faint.closePath();
+    }
+
+    // Veins as stroked polylines (two width classes, round caps):
+    // smooth quadratic wandering, soft branch tips — no hard corners.
+    const veins = { fine: new Path2D(), main: new Path2D() };
+    const pores = new Path2D();
+    const clU = 0.8 + rng() * 1.5, clF = -0.7 + rng() * 1.4; // crackle cluster
+    const walk = (u, fphi, heading, steps, w, depth) => {
+      const path = w < 1.1 ? veins.fine : veins.main;
+      const pts = [surf(u, fphi)];
+      for (let s = 0; s < steps; s++) {
+        heading += (rng() - 0.5) * 1.8;
+        u = Math.max(0.15, Math.min(Math.PI - 0.15, u + Math.cos(heading) * (0.06 + rng() * 0.08)));
+        fphi += Math.sin(heading) * (0.1 + rng() * 0.12);
+        pts.push(surf(u, fphi));
+        if (depth < 2 && rng() < 0.28 && steps - s > 1) {
+          walk(u, fphi, heading + (rng() < 0.5 ? -1.2 : 1.2), steps - s - 1, w * 0.8, depth + 1);
+        }
+      }
+      path.moveTo(pts[0][0], pts[0][1]);
+      if (pts.length === 2) path.lineTo(pts[1][0], pts[1][1]);
+      else {
+        for (let s = 1; s < pts.length - 1; s++) {
+          const mx = (pts[s][0] + pts[s + 1][0]) / 2, my = (pts[s][1] + pts[s + 1][1]) / 2;
+          path.quadraticCurveTo(pts[s][0], pts[s][1], mx, my);
+        }
+        path.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+      }
+    };
+    const nV = 16 + (rng() * 10 | 0);
+    for (let i = 0; i < nV; i++) {
+      let u0, f0;
+      if (rng() < 0.7) { u0 = clU + (rng() - 0.5) * 1.0; f0 = clF + (rng() - 0.5) * 0.9; }
+      else { u0 = 0.3 + rng() * (Math.PI - 0.6); f0 = -1.1 + rng() * 2.2; }
+      walk(Math.max(0.15, Math.min(Math.PI - 0.15, u0)), f0, rng() * 6.28,
+        2 + (rng() * 4 | 0), 0.8 + rng() * 0.8, 0);
+    }
+    // pore specks: their own fill layer (already round by nature)
+    const nP = 12 + (rng() * 8 | 0);
+    for (let i = 0; i < nP; i++) {
+      const u0 = 0.2 + rng() * (Math.PI - 0.4), f0 = -1.15 + rng() * 2.3;
+      const pt = surf(u0, f0), r0 = 0.7 + rng() * 1.3;
+      pores.moveTo(pt[0] + r0, pt[1]);
+      pores.arc(pt[0], pt[1], r0, 0, 6.2832);
+      pores.closePath();
+    }
+    p = { faint, veins, pores };
+    crackleCache.set(ck, p);
+    return p;
+  }
+
+  function drawCrackle(ctx, a, b, key) {
+    const paths = cracklePaths(key, a, b);
+    ctx.save();
+    ctx.fillStyle = 'rgba(140, 100, 30, 0.05)';
+    ctx.fill(paths.faint);
+    ctx.strokeStyle = 'rgba(150, 92, 48, 0.18)';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 0.8; ctx.stroke(paths.veins.fine);
+    ctx.lineWidth = 1.4; ctx.stroke(paths.veins.main);
+    ctx.fillStyle = 'rgba(150, 92, 48, 0.16)';
+    ctx.fill(paths.pores);
+    ctx.restore();
+  }
+
+  function drawNet(ctx, a, b, key) {
     const paths = netPaths(key, a, b);
     ctx.save();
-    ctx.rotate(angle); // net is surface pattern: it tumbles with the fruit
     ctx.fillStyle = 'rgba(60, 40, 10, 0.09)';
     ctx.fill(paths.mottle);
     ctx.fillStyle = 'rgba(50, 32, 6, 0.10)';
     ctx.fill(paths.sutures);
     // Toward white, not cream: the ridges must survive the lit cap
     // (white contrasts with lit cream via saturation, not lightness).
-    ctx.fillStyle = 'rgba(255, 253, 245, 0.32)';
-    ctx.fill(paths.ridges);
+    ctx.strokeStyle = 'rgba(255, 253, 245, 0.32)';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.2; ctx.stroke(paths.ridges.fine);
+    ctx.lineWidth = 1.9; ctx.stroke(paths.ridges.mid);
+    ctx.lineWidth = 2.6; ctx.stroke(paths.ridges.bold);
     ctx.restore();
   }
 
