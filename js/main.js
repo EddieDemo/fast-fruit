@@ -68,7 +68,11 @@ function respawnRace() {
   const castSeed = window.FF.trackDefByName(modeName) ? window.FF.trackDefByName(modeName).seed : SEED;
 
   resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
-  resetBots(state, Math.max(0, GRID_SIZE - humans), SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0);
+  // A configured roster sets the field size; otherwise fill the grid.
+  const botCount = CONFIG.botRoster && CONFIG.botRoster.length
+    ? CONFIG.botRoster.length
+    : Math.max(0, GRID_SIZE - humans);
+  resetBots(state, botCount, SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0);
 
   window.FF.assignRosterNames(state, castSeed);
 
@@ -297,6 +301,16 @@ function frame(now) {
     window.FF.studio.frame(dtFrame, state.input.rawAxis);
     requestAnimationFrame(frame);
     return;
+  }
+
+  // The player wears the melon designed in the Shader Studio: species,
+  // base colour and rind pattern all follow the stage. Re-applied every
+  // frame so it survives respawns and track changes.
+  const design = window.FF.studio && window.FF.studio.design;
+  if (design && state.melon) {
+    if (design.color) state.melon.bodyColor = design.color;
+    if (design.patKey) state.melon.patKey = design.patKey;
+    if (design.fruit) state.melon.fruit = design.fruit;
   }
 
   const alpha = accumulator / stepDt;

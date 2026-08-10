@@ -584,7 +584,9 @@ function createRenderer(canvas) {
   // every effect parameter live in FF.shading.P, editable live by the
   // Shader Studio. This file only DRAWS what the rig solves.
   const RIG = window.FF.shading;
-  const litColor = (hex) => RIG.bandColor(hex, RIG.P.litDL);
+  // Lit tone for non-band consumers (ghosts, legacy call sites): the
+  // brightest ENABLED band's delta, so it follows the rig's band stack.
+  const litColor = (hex) => RIG.slotColor(hex, RIG.P.highlightFillSlot);
   const hslToRgb = RIG.hslToRgb;
 
   // ---- Respawn smoke: the cartoon poof ----
@@ -697,37 +699,114 @@ function createRenderer(canvas) {
     return c;
   }
 
+  // ---- Body outline: ellipse, or a TAPERED egg ----
+  // A species can declare `taper`: the half-height is scaled by
+  // (1 - taper * cos t), which narrows one end and fattens the other —
+  // a real egg profile rather than a symmetric ellipse. taper 0 traces
+  // the plain ellipse, so melons are unaffected.
+  // NOTE: the COLLIDER remains a true ellipse. At taper 0.26 the
+  // silhouette departs from it by a few px at the narrow end only;
+  // making the physics egg-shaped means new support, curvature and
+  // segment solvers, which is its own piece of work.
+  function bodyPath(ctx, a, b, angle, taper) {
+    if (!taper) { ctx.ellipse(0, 0, a, b, angle, 0, Math.PI * 2); return; }
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    const N = 72;
+    for (let i = 0; i <= N; i++) {
+      const t = (i / N) * Math.PI * 2;
+      const x = a * Math.cos(t);
+      const y = b * Math.sin(t) * (1 - taper * Math.cos(t));
+      const wx = x * ca - y * sa, wy = x * sa + y * ca;
+      if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+    }
+    ctx.closePath();
+  }
+
   function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit) {
     const TAU2 = Math.PI * 2;
+    // A species may bring its own palette curve (FRUITS[x].ramp) when
+    // the shared one can't serve it — e.g. a red star on orange.
+    const SP = (window.FF.FRUITS && window.FF.FRUITS[fruit]) || null;
+    const spRamp = SP && SP.ramp;
+    const taper = (SP && SP.taper) || 0;
     const B = RIG.bands();
     ctx.save();
     ctx.beginPath();
-    ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
-    // Darkest region first: core shadow (when on) else base.
-    const hasShadowBand = B.length && B[0].baseDL !== undefined;
-    ctx.fillStyle = hasShadowBand ? RIG.bandColor(baseColor, B[0].baseDL) : baseColor;
+    bodyPath(ctx, a, b, angle, taper);
+    ctx.fillStyle = RIG.slotColor(baseColor, RIG.P.baseFillSlot, spRamp);
     ctx.fill();
     ctx.clip();
 
     // Bands darkest -> brightest: each fills its solved iso region.
+    // SOFTNESS: at 0 that's one contour at full alpha (the hard cel
+    // edge). Above 0 the transition becomes a ramp — solve the outer
+    // and inner edges of the transition, then INTERPOLATE the steps
+    // between them geometrically (both solves share a spoke basis, so
+    // points correspond) and stack them at partial alpha. Overlapping
+    // fills accumulate, so the core reaches full colour while the
+    // outer edge fades: a smooth Lambert ramp for two solves, not N.
     for (const band of B) {
-      const fillCol = band.baseDL !== undefined
-        ? baseColor // the shadow band's iso region IS the base region
-        : RIG.bandColor(baseColor, band.dL);
-      const iso = RIG.isoContour(angle, a, b, band.tau);
-      if (!iso) continue;
-      ctx.fillStyle = fillCol;
-      ctx.beginPath();
-      if (iso.full) {
-        ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
-      } else {
-        for (let i = 0; i < iso.pts.length; i++) {
-          const p = iso.pts[i];
-          if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      // Ramp sampled by the band's THRESHOLD (not its index), so
+      // Every colour comes from a SLOT — one system, no overrides.
+      // Each melon resolves the same slot against its own seeded base.
+      ctx.fillStyle = RIG.slotColor(baseColor, band.fillSlot, spRamp);
+      // An INVERTED band owns the complement — everywhere DARKER than
+      // its threshold — drawn as the body ellipse minus the contour
+      // under the even-odd rule. That single flag is the whole
+      // difference between a lit band and a core shadow.
+      const inv = !!band.inv;
+      const paint = (pts, isFull) => {
+        ctx.beginPath();
+        if (inv) {
+          bodyPath(ctx, a, b, angle, taper);
+          if (!isFull && pts) {
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+            ctx.closePath();
+          }
+          ctx.fill('evenodd');
+        } else {
+          if (isFull || !pts) bodyPath(ctx, a, b, angle, taper);
+          else {
+            for (let i = 0; i < pts.length; i++) {
+              if (i === 0) ctx.moveTo(pts[i][0], pts[i][1]); else ctx.lineTo(pts[i][0], pts[i][1]);
+            }
+            ctx.closePath();
+          }
+          ctx.fill();
         }
-        ctx.closePath();
+      };
+      const soft = Math.max(0, Math.min(100, band.soft || 0)) / 100;
+      if (soft <= 0.001) {
+        const iso = RIG.isoContour(angle, a, b, band.tau);
+        // No contour at all: nothing is above the threshold, so an
+        // inverted band covers the whole face and a lit band draws none.
+        if (!iso) { if (inv) paint(null, true); continue; }
+        paint(iso.pts, !!iso.full);
+        continue;
       }
-      ctx.fill();
+      const w = soft * 0.3; // transition half-width in diffuse units
+      const outer = RIG.isoContour(angle, a, b, band.tau - w);
+      const inner = RIG.isoContour(angle, a, b, Math.min(0.995, band.tau + w));
+      if (!outer) { if (inv) paint(null, true); continue; }
+      const STEPS = 7;
+      const stepAlpha = 1 - Math.pow(0.06, 1 / STEPS); // core ~94% opaque
+      ctx.save();
+      ctx.globalAlpha = stepAlpha;
+      // Inverted bands ramp the other way: densest at the dark end.
+      for (let k = 0; k < STEPS; k++) {
+        const t0 = k / (STEPS - 1);
+        const t = inv ? 1 - t0 : t0;
+        if (outer.full || !inner || inner.full) paint(null, true);
+        else {
+          const pts = outer.pts.map((p, i) => {
+            const q = inner.pts[i] || p;
+            return [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+          });
+          paint(pts, false);
+        }
+      }
+      ctx.restore();
     }
 
     // ---- The rind raster: wrap-once, rotate-forever ----
@@ -741,12 +820,87 @@ function createRenderer(canvas) {
     // the pattern rides on top, translucent over base AND lit alike.
     // This is also the future texture pipe: a hand-painted rind map is
     // just another way to fill the offscreen.
+    // ---- The rind pattern, per band ----
+    // The raster is an alpha MASK; each region paints it in its own
+    // pattern colour, clipped to that region. So the marble darkens
+    // inside a shadow band and glows inside a highlight band — eight
+    // to ten independently addressable colours, all still DERIVED from
+    // this melon's own seeded base unless a hex override says otherwise.
     const raster = RIG.P.showPattern ? patternRaster(seedKey || baseColor, fruit, a, b) : null;
+    let stamp = null; // set below; the rim region uses it too
     if (raster) {
+      // No global alpha: pattern visibility comes from the colour
+      // distance between a region's fill slot and its pattern slot.
+      stamp = (col) => {
+        ctx.save();
+        ctx.rotate(angle);
+        ctx.drawImage(tintedPattern(raster, col), -raster.w / 2, -raster.h / 2, raster.w, raster.h);
+        ctx.restore();
+      };
+      // Base region first (everything not covered by a band).
+      // The base stamp must cover ONLY the base region — not the whole
+      // body. Stamping it everywhere and then stamping a band's colour
+      // on top leaves residue wherever the mask is partially
+      // transparent: two blends of different colours never resolve to
+      // the second colour, so pattern EDGES stayed visible even when
+      // every slot resolved to the same hex. Clip to the complement of
+      // every band's region so each pixel is stamped exactly once.
       ctx.save();
-      ctx.rotate(angle);
-      ctx.drawImage(raster.canvas, -raster.w / 2, -raster.h / 2, raster.w, raster.h);
+      for (const band of B) {
+        const iso = RIG.isoContour(angle, a, b, band.tau);
+        if (!iso) continue;
+        ctx.beginPath();
+        if (band.inv) {
+          // Inverted band owns OUTSIDE its contour -> base keeps inside.
+          if (iso.full) { bodyPath(ctx, a, b, angle, taper); ctx.clip(); continue; }
+          for (let i = 0; i < iso.pts.length; i++) {
+            const p = iso.pts[i];
+            if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+          }
+          ctx.closePath();
+          ctx.clip();
+        } else {
+          // Normal band owns INSIDE -> base keeps the outside.
+          bodyPath(ctx, a, b, angle, taper);
+          if (!iso.full) {
+            ctx.moveTo(iso.pts[0][0], iso.pts[0][1]);
+            for (let i = 1; i < iso.pts.length; i++) ctx.lineTo(iso.pts[i][0], iso.pts[i][1]);
+            ctx.closePath();
+          }
+          ctx.clip('evenodd');
+        }
+      }
+      stamp(RIG.slotColor(baseColor, RIG.P.basePatSlot, spRamp));
       ctx.restore();
+      // Then each band's region, clipped, in that band's pattern colour.
+      for (const band of B) {
+        const iso = RIG.isoContour(angle, a, b, band.tau);
+        const col = RIG.slotColor(baseColor, band.patSlot, spRamp);
+        ctx.save();
+        ctx.beginPath();
+        if (band.inv) {
+          bodyPath(ctx, a, b, angle, taper);
+          if (iso && !iso.full) {
+            ctx.moveTo(iso.pts[0][0], iso.pts[0][1]);
+            for (let i = 1; i < iso.pts.length; i++) ctx.lineTo(iso.pts[i][0], iso.pts[i][1]);
+            ctx.closePath();
+          }
+          ctx.clip('evenodd');
+        } else {
+          if (!iso) { ctx.restore(); continue; }
+          if (iso.full) bodyPath(ctx, a, b, angle, taper);
+          else {
+            for (let i = 0; i < iso.pts.length; i++) {
+              const p = iso.pts[i];
+              if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+            }
+            ctx.closePath();
+          }
+          ctx.clip();
+        }
+        stamp(col);
+        ctx.restore();
+      }
     }
 
     // ---- Rim light: bright crescent hugging the anti-sun silhouette ----
@@ -754,6 +908,34 @@ function createRenderer(canvas) {
       const { tPeak, halfSpan } = RIG.rimArc(angle, a, b);
       const w = RIG.P.rimWidth;
       const caA = Math.cos(angle), saA = Math.sin(angle);
+      // MASKING: clip the rim against a band's region so the form's own
+      // shadow eats it, instead of a ring sitting on top of everything.
+      const mask = RIG.rimMaskRegion();
+      let masked = false;
+      if (mask) {
+        const miso = RIG.isoContour(angle, a, b, mask.tau);
+        if (miso && !miso.full) {
+          ctx.save();
+          masked = true;
+          ctx.beginPath();
+          if (mask.inside) {
+            // Show only inside the contour: a plain clip.
+            for (let i = 0; i < miso.pts.length; i++) {
+              const p = miso.pts[i];
+              if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+            }
+            ctx.closePath();
+          } else {
+            // Show only OUTSIDE it: body ellipse minus the contour,
+            // via the even-odd rule on a two-subpath clip.
+            bodyPath(ctx, a, b, angle, taper);
+            ctx.moveTo(miso.pts[0][0], miso.pts[0][1]);
+            for (let i = 1; i < miso.pts.length; i++) ctx.lineTo(miso.pts[i][0], miso.pts[i][1]);
+            ctx.closePath();
+          }
+          ctx.clip(mask.inside ? 'nonzero' : 'evenodd');
+        }
+      }
       ctx.beginPath();
       const N = 26;
       for (let i = 0; i <= N; i++) {
@@ -768,53 +950,15 @@ function createRenderer(canvas) {
         ctx.lineTo(x * caA - y * saA, x * saA + y * caA);
       }
       ctx.closePath();
-      ctx.fillStyle = RIG.bandColor(baseColor, RIG.P.rimDL);
-      ctx.fill();
-    }
-
-    // ---- Specular ping: a glint only when the pose aligns ----
-    if (RIG.P.specular) {
-      const sp = RIG.specPoint(angle, a, b);
-      if (sp.peak > RIG.P.specTau && sp.z > 0) {
-        const r0 = b * RIG.P.specSize
-          * Math.min(1, (sp.peak - RIG.P.specTau) / (1 - RIG.P.specTau) + 0.35);
-        ctx.beginPath();
-        ctx.arc(sp.x, sp.y, r0, 0, TAU2);
-        ctx.fillStyle = RIG.bandColor(baseColor, RIG.P.specDL);
-        ctx.fill();
-      }
-    }
-
-    // ---- Ink: strictly INTERIOR. Drawn inside the body clip at
-    // DOUBLE width — the clip shaves the outer half, leaving a full-
-    // width line that never hangs past the silhouette.
-    if (RIG.P.inkMode !== 'none') {
-      ctx.strokeStyle = RIG.shadeHex(baseColor, RIG.P.inkDarkK);
-      ctx.lineCap = 'round';
-      if (RIG.P.inkMode === 'silhouette') {
-        ctx.lineWidth = RIG.P.inkWidth * 2;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
-        ctx.stroke();
-      } else {
-        const { tPeak, halfSpan } = RIG.rimArc(angle, a, b);
-        const caA = Math.cos(angle), saA = Math.sin(angle);
-        const seg = (t0, t1, w2) => {
-          ctx.lineWidth = w2 * 2;
-          ctx.beginPath();
-          const N = 30;
-          for (let i = 0; i <= N; i++) {
-            const t = t0 + (i / N) * (t1 - t0);
-            const x = a * Math.cos(t), y = b * Math.sin(t);
-            const wx = x * caA - y * saA, wy = x * saA + y * caA;
-            if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
-          }
-          ctx.stroke();
-        };
-        const span = Math.max(halfSpan, 0.6);
-        seg(tPeak - span, tPeak + span, RIG.P.inkWidth);
-        seg(tPeak + span, tPeak + 2 * Math.PI - span, RIG.P.inkWidth * 0.4);
-      }
+      // The rim is a REGION: its own fill slot, and its own pattern
+      // stamped inside it — same treatment as base/shadow/highlight.
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = RIG.slotColor(baseColor, RIG.P.rimFillSlot, spRamp);
+      ctx.fillRect(-a * 2, -a * 2, a * 4, a * 4);
+      if (stamp) stamp(RIG.slotColor(baseColor, RIG.P.rimPatSlot, spRamp));
+      ctx.restore();
+      if (masked) ctx.restore();
     }
 
     ctx.restore(); // body clip ends here
@@ -856,6 +1000,27 @@ function createRenderer(canvas) {
     return { noise, fbm };
   }
 
+  // Tint a pattern MASK with a colour, cached per (mask, colour). The
+  // mask's alpha becomes the coverage; 'source-in' paints the colour
+  // through it. This is what gives every band its own pattern colour.
+  const tintCache = new Map();
+  function tintedPattern(raster, color) {
+    const ck = raster.id + '|' + color;
+    let t = tintCache.get(ck);
+    if (t) return t;
+    const cv = document.createElement('canvas');
+    cv.width = raster.canvas.width; cv.height = raster.canvas.height;
+    const c = cv.getContext('2d');
+    c.drawImage(raster.canvas, 0, 0);
+    c.globalCompositeOperation = 'source-in';
+    c.fillStyle = color;
+    c.fillRect(0, 0, cv.width, cv.height);
+    t = cv;
+    if (tintCache.size > 400) tintCache.clear(); // bounded
+    tintCache.set(ck, t);
+    return t;
+  }
+
   // Build (and cache) a racer's pattern layer as an offscreen raster.
   const RSCALE = 2; // supersample factor
   const rasterCache = new Map();
@@ -872,10 +1037,12 @@ function createRenderer(canvas) {
     const octx = cv.getContext('2d');
     octx.scale(RSCALE, RSCALE);
     octx.translate(w / 2, h / 2);
-    if (species === 'cantaloupe') drawNet(octx, a, b, key);
+    if (species === 'dragonBall') drawStar(octx, a, b);
+    else if (species === 'yoshiEgg') drawSpots(octx, a, b, key);
+    else if (species === 'cantaloupe') drawNet(octx, a, b, key);
     else if (species === 'honeydew') drawCrackle(octx, a, b, key);
     else buildMarbleStripes(octx, cv, a, b, key, w, h);
-    rst = { canvas: cv, w, h };
+    rst = { canvas: cv, w, h, id: ck };
     rasterCache.set(ck, rst);
     return rst;
   }
@@ -906,7 +1073,6 @@ function createRenderer(canvas) {
     const tearA = 1.0 + rng() * 0.3;    // STRONG tears: bands pinch clean apart
     const fU = 0.55 + rng() * 0.3, fP = 0.5 + rng() * 0.25; // warp frequencies
     const off1 = rng() * 40, off2 = rng() * 40, off3 = rng() * 40, off4 = rng() * 40;
-    const alpha = Math.round(255 * 0.30);
 
     const img = octx.createImageData(cv.width, cv.height);
     const data = img.data;
@@ -938,8 +1104,10 @@ function createRenderer(canvas) {
         }
         if (paint) {
           const idx = (py * cv.width + px) * 4;
-          data[idx] = 255; data[idx + 1] = 252; data[idx + 2] = 235; // pale warm cream
-          data[idx + 3] = alpha;
+          // MASK, not colour: the raster records WHERE the pattern is;
+          // each band tints it with its own pattern colour at draw time.
+          data[idx] = 255; data[idx + 1] = 255; data[idx + 2] = 255;
+          data[idx + 3] = 255;
         }
       }
     }
@@ -1153,28 +1321,98 @@ function createRenderer(canvas) {
   function drawCrackle(ctx, a, b, key) {
     const paths = cracklePaths(key, a, b);
     ctx.save();
-    ctx.fillStyle = 'rgba(140, 100, 30, 0.05)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
     ctx.fill(paths.faint);
-    ctx.strokeStyle = 'rgba(150, 92, 48, 0.18)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.56)';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.lineWidth = 0.8; ctx.stroke(paths.veins.fine);
     ctx.lineWidth = 1.4; ctx.stroke(paths.veins.main);
-    ctx.fillStyle = 'rgba(150, 92, 48, 0.16)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.fill(paths.pores);
     ctx.restore();
+  }
+
+  // ---- Dragon ball: one four-pointed star, centred ----
+  // Drawn into the same alpha MASK as every other pattern, so it picks
+  // up its colour from the region's pattern slot like anything else —
+  // the red comes from the species ramp, not a hard-coded hex. Concave
+  // sides via quadratic curves through an inner control radius.
+  function drawStar(ctx, a, b) {
+    const R = Math.min(a, b) * 0.34;   // outer radius
+    const inner = R * 0.34;            // control radius: side concavity
+    ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const t0 = -Math.PI / 2 + i * Math.PI / 2;
+      const tm = t0 + Math.PI / 4;
+      const t2 = t0 + Math.PI / 2;
+      const ox = Math.cos(t0) * R, oy = Math.sin(t0) * R;
+      if (i === 0) ctx.moveTo(ox, oy); else ctx.lineTo(ox, oy);
+      ctx.quadraticCurveTo(Math.cos(tm) * inner, Math.sin(tm) * inner,
+        Math.cos(t2) * R, Math.sin(t2) * R);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // ---- Yoshi egg: seeded rounded spots ----
+  // Same alpha-mask contract as every other pattern, so the green
+  // comes from the region's pattern slot. Placed in SURFACE space
+  // (u, phi) so they foreshorten toward the rim like real markings,
+  // with a few large blobs and a scatter of small ones; each spot is
+  // a smooth closed curve, seeded per identity.
+  function drawSpots(ctx, a, b, key) {
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const rng = window.FF.mulberry32(h >>> 0);
+    const surf = (u, phi) => [a * Math.cos(u), b * Math.sin(u) * Math.cos(phi)];
+    ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+    const n = 7 + (rng() * 4 | 0);
+    for (let i = 0; i < n; i++) {
+      const u = 0.35 + rng() * (Math.PI - 0.7);
+      // phi = PI/2 is the CENTRE of the visible face (y = 0); phi -> 0
+      // or PI is the silhouette. Centre the scatter on the face, or the
+      // spots all pile onto the rim.
+      const phi = 0.5 + rng() * (Math.PI - 1.0);
+      // Power-law sizes: mostly mid, the occasional big one.
+      const rr = (0.14 + Math.pow(rng(), 1.6) * 0.26) * Math.min(a, b);
+      // Rounder spots: near-circular aspect, only a whisper of wobble.
+      const sq = 0.94 + rng() * 0.12;
+      const wob = 0.04 + rng() * 0.05;
+      const ph = rng() * 6.28;
+      const c = surf(u, phi);
+      const pts = [];
+      const STEPS = 14;
+      for (let j = 0; j < STEPS; j++) {
+        const t = (j / STEPS) * Math.PI * 2;
+        const rad = rr * (1 + wob * Math.sin(3 * t + ph));
+        // Offset in surface space so the spot squashes toward the rim.
+        const du = (rad / a) * Math.cos(t);
+        const dphi = (rad * sq / b) * Math.sin(t) / Math.max(0.35, Math.sin(u) * Math.sin(phi));
+        pts.push(surf(Math.max(0.05, Math.min(Math.PI - 0.05, u + du)), phi + dphi));
+      }
+      ctx.beginPath();
+      ctx.moveTo((pts[0][0] + pts[STEPS - 1][0]) / 2, (pts[0][1] + pts[STEPS - 1][1]) / 2);
+      for (let j = 0; j < STEPS; j++) {
+        const nx = pts[(j + 1) % STEPS];
+        ctx.quadraticCurveTo(pts[j][0], pts[j][1], (pts[j][0] + nx[0]) / 2, (pts[j][1] + nx[1]) / 2);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   function drawNet(ctx, a, b, key) {
     const paths = netPaths(key, a, b);
     ctx.save();
-    ctx.fillStyle = 'rgba(60, 40, 10, 0.09)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
     ctx.fill(paths.mottle);
-    ctx.fillStyle = 'rgba(50, 32, 6, 0.10)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.31)';
     ctx.fill(paths.sutures);
     // Toward white, not cream: the ridges must survive the lit cap
     // (white contrasts with lit cream via saturation, not lightness).
-    ctx.strokeStyle = 'rgba(255, 253, 245, 0.32)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 1)';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.lineWidth = 1.2; ctx.stroke(paths.ridges.fine);

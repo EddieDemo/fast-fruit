@@ -146,6 +146,9 @@ const PRESETS = Object.freeze({
   // in netplay all peers must share these values or bodies desync.
   botCantaloupe: false,
   botHoneydew: false,
+  // An explicit field roster: one entry per bot, naming registry
+  // species outright. null = the normal seeded deal (11 melons).
+  botRoster: ['dragonBall', 'yoshiEgg'],
   // The LAWS OF MELON NATURE — uniform physical rules across the size
   // family, tuned so distinct characters equalize in WIN RATE without
   // ever fudging an individual or an outcome:

@@ -20,41 +20,64 @@
 // ---- The live parameter state (defaults = the current shipped look) ----
 const P = {
   // Sun
-  sunAngleDeg: 233,      // atan2(-0.8,-0.6) ~ 233deg: upper-left (y-down)
-  sunLz: 0.42,           // elevation toward the viewer
+  // Sun as SPHERICAL ANGLES — the same 3D direction as before, in
+  // coordinates a person can picture. Bearing is where the light comes
+  // from around the clock (screen plane); elevation lifts it out of
+  // the screen toward the viewer: 0deg = grazing/rim-lit, 90deg = flat
+  // frontal light. Converted to a unit vector internally.
+  sunBearingDeg: 260,    // was sunAngleDeg: upper-left in a y-down world
+  sunElevationDeg: 45,   // spherical: 0 = grazing/rim-lit, 90 = flat frontal
   shadeEcc: 1.0,         // shading-normal eccentricity boost (1 = honest)
-  // Bands (multi-band cel). Regions evaluated darkest -> brightest.
-  shadowBand: false,     // core-shadow band on the dark side
-  shadowTau: 0.08,       // diffuse below this = core shadow
-  shadowDL: -8,          // its L* delta
-  litTau: 0.52,          // main lit band threshold
-  litDL: 11,             // its L* delta
-  band2: false,          // second, brighter lit band
-  band2Tau: 0.78,
-  band2DL: 18,
-  // Specular ping
-  specular: false,
-  specTau: 0.965,        // appears only when the pose aligns this well
-  specSize: 0.16,        // radius as fraction of minor axis
-  specDL: 30,
-  // Rim light (bright crescent hugging the silhouette opposite the sun)
+  // ---- Four uniform bands ----
+  // Every band has the SAME three controls: on/off, threshold, and
+  // lightness delta. They stack darkest -> brightest over the base
+  // fill; thresholds are clamped into ascending order at read time so
+  // a band can never paint over a brighter one. Band 1 defaults on
+  // (it is the classic single lit cap); the rest default off.
+  // Softness: 0 = hard cel edge (a step at the threshold), 100 = fully
+  // diffuse (a smooth Lambert ramp). Implemented as nested iso-contours
+  // across the transition with graduated alpha — the same solver, just
+  // asked for several thresholds instead of one. Per band, so band 1
+  // can stay razor-hard while band 3 blooms.
+  // ---- The colour palette: two ramps of three ----
+  // Ramp A is start/end OFFSETS from the melon's own seeded colour,
+  // interpolated in perceptual space into A1/A2/A3. Ramp B is A plus a
+  // three-channel offset, so tuning A drags B along. Regions name a
+  // SLOT ('A2'), never a hex — which is what keeps every melon's
+  // palette its own while the assignment holds across the cast.
+  rampLoDL: -30, rampLoDH: -30, rampLoDS: -45, // A start (shadow end)
+  rampHiDL: 20,  rampHiDH: -20, rampHiDS: -50, // A end (highlight end)
+  rampBDL: -15,  rampBDH: 25,  rampBDS: 0,     // B = A + this offset
+
+  // ---- Three roles: SHADOW, BASE, HIGHLIGHT ----
+  // The melon has exactly three lighting regions, and the palette has
+  // exactly three slots per ramp — so A1/A2/A3 are the shadow/base/
+  // highlight fills and B1/B2/B3 their pattern colours. Base is the
+  // body fill (no threshold); shadow owns everywhere DARKER than its
+  // threshold, highlight everywhere brighter. There is no second
+  // colour system: slots decide every colour, always.
+  shadowOn: true,   shadowTau: 0.20, shadowSoft: 0,
+  highlightOn: true, highlightTau: 0.98, highlightSoft: 0,
+  // Slot assignments (a slot name like 'A2', never a hex).
+  baseFillSlot: 'A2',      basePatSlot: 'B2',
+  shadowFillSlot: 'A1',    shadowPatSlot: 'B1',
+  highlightFillSlot: 'A3', highlightPatSlot: 'B3',
+  // ---- Rim: a fourth REGION, with its own fill and pattern slots ----
+  // Masked by the shadow so the form's own darkness eats it: visible
+  // over base and highlight, gone where the shadow begins.
   rim: false,
   rimWidth: 3.5,         // world px
-  rimCutoff: 0.35,       // how far around the dark side it wraps (0..1)
-  rimDL: 14,
-  // Contact shadow (body darkens near its ground touch)
-  contactShadow: false,
-  contactFrac: 0.22,     // band height as fraction of minor axis
-  contactAlpha: 0.18,
-  contactMaxM: 0.6,      // fades out beyond this many metres off the ground
-  // Cast shadow (ellipse projected onto the terrain)
-  castShadow: false,
-  castAlpha: 0.22,
-  castStretch: 1.0,      // extra along-slope elongation on the true footprint
-  castFlat: 0.3,         // shadow thickness as fraction of its length
-  castSoft: false,       // penumbra ring at half alpha
-  castMaxM: 3.5,         // fades with height, gone beyond this
-  // Pattern
+  rimCutoff: 1,          // how far it wraps (0..1; 1 = the full silhouette)
+  rimOffsetDeg: 0,       // slide it off the anti-sun point
+  rimMask: 'shadow',     // 'none' | 'shadow' | 'highlight'
+  rimFillSlot: 'A3', rimPatSlot: 'B3',
+
+  // Pattern visibility now comes from the COLOUR DISTANCE between a
+  // region's fill slot and its pattern slot — as in real cel painting
+  // — so there is no global alpha to accidentally zero. Each mask
+  // carries its own internal subtlety (net mottle ~0.3 coverage,
+  // crackle streaks ~0.16, veins ~0.56), so full opacity still reads
+  // as delicate.
   showPattern: true,     // rind pattern layer (stripes / net / crackle)
   // Ink
   inkMode: 'none',       // 'none' | 'silhouette' | 'weighted'
@@ -72,52 +95,85 @@ const P = {
 
 // ---- The schema: the studio builds its UI from this ----
 const SCHEMA = [
-  { group: 'Sun', key: 'sunAngleDeg', label: 'sun angle', type: 'range', min: 0, max: 360, step: 1 },
-  { group: 'Sun', key: 'sunLz', label: 'sun elevation', type: 'range', min: 0.05, max: 1, step: 0.01 },
-  { group: 'Sun', key: 'shadeEcc', label: 'shading ecc', type: 'range', min: 1, max: 3, step: 0.05 },
-  { group: 'Bands', key: 'shadowBand', label: 'core shadow', type: 'bool' },
-  { group: 'Bands', key: 'shadowTau', label: 'shadow tau', type: 'range', min: -0.4, max: 0.4, step: 0.01 },
-  { group: 'Bands', key: 'shadowDL', label: 'shadow dL*', type: 'range', min: -25, max: 0, step: 1 },
-  { group: 'Bands', key: 'litTau', label: 'lit tau', type: 'range', min: 0.1, max: 0.9, step: 0.01 },
-  { group: 'Bands', key: 'litDL', label: 'lit dL*', type: 'range', min: 2, max: 30, step: 1 },
-  { group: 'Bands', key: 'band2', label: '2nd lit band', type: 'bool' },
-  { group: 'Bands', key: 'band2Tau', label: 'band2 tau', type: 'range', min: 0.5, max: 0.98, step: 0.01 },
-  { group: 'Bands', key: 'band2DL', label: 'band2 dL*', type: 'range', min: 5, max: 40, step: 1 },
-  { group: 'Highlights', key: 'specular', label: 'specular ping', type: 'bool' },
-  { group: 'Highlights', key: 'specTau', label: 'spec align', type: 'range', min: 0.85, max: 0.999, step: 0.001 },
-  { group: 'Highlights', key: 'specSize', label: 'spec size', type: 'range', min: 0.05, max: 0.4, step: 0.01 },
-  { group: 'Highlights', key: 'specDL', label: 'spec dL*', type: 'range', min: 10, max: 45, step: 1 },
-  { group: 'Highlights', key: 'rim', label: 'rim light', type: 'bool' },
-  { group: 'Highlights', key: 'rimWidth', label: 'rim width', type: 'range', min: 1, max: 9, step: 0.5 },
-  { group: 'Highlights', key: 'rimCutoff', label: 'rim wrap', type: 'range', min: 0.05, max: 0.9, step: 0.01 },
-  { group: 'Highlights', key: 'rimDL', label: 'rim dL*', type: 'range', min: 4, max: 30, step: 1 },
-  { group: 'Shadows', key: 'contactShadow', label: 'contact shadow', type: 'bool' },
-  { group: 'Shadows', key: 'contactFrac', label: 'contact height', type: 'range', min: 0.08, max: 0.5, step: 0.01 },
-  { group: 'Shadows', key: 'contactAlpha', label: 'contact alpha', type: 'range', min: 0.05, max: 0.5, step: 0.01 },
-  { group: 'Shadows', key: 'contactMaxM', label: 'contact range m', type: 'range', min: 0.1, max: 2, step: 0.05 },
-  { group: 'Shadows', key: 'castShadow', label: 'cast shadow', type: 'bool' },
-  { group: 'Shadows', key: 'castAlpha', label: 'cast alpha', type: 'range', min: 0.05, max: 0.5, step: 0.01 },
-  { group: 'Shadows', key: 'castStretch', label: 'cast stretch', type: 'range', min: 0.6, max: 2.5, step: 0.05 },
-  { group: 'Shadows', key: 'castFlat', label: 'cast thickness', type: 'range', min: 0.1, max: 0.7, step: 0.01 },
-  { group: 'Shadows', key: 'castSoft', label: 'cast penumbra', type: 'bool' },
-  { group: 'Shadows', key: 'castMaxM', label: 'cast range m', type: 'range', min: 1, max: 8, step: 0.25 },
-  { group: 'Pattern', key: 'showPattern', label: 'rind pattern', type: 'bool' },
-  { group: 'Ink', key: 'inkMode', label: 'ink', type: 'select', options: ['none', 'silhouette', 'weighted'] },
-  { group: 'Ink', key: 'inkWidth', label: 'ink width', type: 'range', min: 0.5, max: 6, step: 0.25 },
-  { group: 'Ink', key: 'inkDarkK', label: 'ink darkness', type: 'range', min: 0.2, max: 0.85, step: 0.01 },
-  { group: 'Motion', key: 'smear', label: 'speed smear', type: 'bool' },
-  { group: 'Motion', key: 'smearThresh', label: 'smear at px/s', type: 'range', min: 600, max: 2600, step: 50 },
-  { group: 'Motion', key: 'smearAmount', label: 'smear amount', type: 'range', min: 0.05, max: 0.4, step: 0.01 },
-  { group: 'Motion', key: 'speedLines', label: 'speed lines', type: 'bool' },
-  { group: 'Motion', key: 'speedThresh', label: 'lines at px/s', type: 'range', min: 800, max: 3000, step: 50 },
-  { group: 'Motion', key: 'impactStar', label: 'impact star', type: 'bool' },
-  { group: 'Motion', key: 'impactSize', label: 'star size', type: 'range', min: 0.8, max: 3, step: 0.1 },
+  // panel: 'left' = colour generation, 'right' = assignment & lighting.
+  // Symmetric ranges, and each channel is ONE bar with two handles:
+  // A start and A end on the same scale, so the span is visible rather
+  // than inferred. The handles may cross — an inverted ramp (lighter
+  // shadow than highlight) is a legitimate look, not an error.
+  { panel: 'left', group: 'Palette', label: 'dL*  shadow / highlight', type: 'dual',
+    lo: 'rampLoDL', hi: 'rampHiDL', min: -50, max: 50, step: 1 },
+  { panel: 'left', group: 'Palette', label: 'dHue shadow / highlight', type: 'dual',
+    lo: 'rampLoDH', hi: 'rampHiDH', min: -180, max: 180, step: 1 },
+  { panel: 'left', group: 'Palette', label: 'dSat shadow / highlight', type: 'dual',
+    lo: 'rampLoDS', hi: 'rampHiDS', min: -100, max: 100, step: 1 },
+  { panel: 'left', group: 'Palette', key: 'rampBDL', label: 'B offset dL*', type: 'range', min: -50, max: 50, step: 1 },
+  { panel: 'left', group: 'Palette', key: 'rampBDH', label: 'B offset dHue', type: 'range', min: -180, max: 180, step: 1 },
+  { panel: 'left', group: 'Palette', key: 'rampBDS', label: 'B offset dSat', type: 'range', min: -100, max: 100, step: 1 },
+  { panel: 'left', group: 'Palette', key: '__assign', label: 'click assigns to', type: 'assign' },
+  { panel: 'left', group: 'Palette', key: '__palette', label: '', type: 'palette' },
+
+  { panel: 'right', group: 'Sun', key: 'sunBearingDeg', label: 'sun bearing', type: 'range', min: 0, max: 360, step: 1 },
+  { panel: 'right', group: 'Sun', key: 'sunElevationDeg', label: 'sun elevation', type: 'range', min: 0, max: 90, step: 1 },
+  { panel: 'right', group: 'Sun', key: 'shadeEcc', label: 'shading ecc', type: 'range', min: 1, max: 3, step: 0.05 },
+
+  { panel: 'right', group: 'Base', key: 'baseFillSlot', label: 'fill', type: 'slot' },
+  { panel: 'right', group: 'Base', key: 'basePatSlot', label: 'pattern', type: 'slot' },
+
+  { panel: 'right', group: 'Shadow', key: 'shadowOn', label: 'enabled', type: 'bool' },
+  { panel: 'right', group: 'Shadow', key: 'shadowTau', label: 'threshold', type: 'range', min: 0.02, max: 0.9, step: 0.01 },
+  { panel: 'right', group: 'Shadow', key: 'shadowSoft', label: 'softness', type: 'range', min: 0, max: 100, step: 1 },
+  { panel: 'right', group: 'Shadow', key: 'shadowFillSlot', label: 'fill', type: 'slot' },
+  { panel: 'right', group: 'Shadow', key: 'shadowPatSlot', label: 'pattern', type: 'slot' },
+
+  { panel: 'right', group: 'Highlight', key: 'highlightOn', label: 'enabled', type: 'bool' },
+  { panel: 'right', group: 'Highlight', key: 'highlightTau', label: 'threshold', type: 'range', min: 0.1, max: 0.98, step: 0.01 },
+  { panel: 'right', group: 'Highlight', key: 'highlightSoft', label: 'softness', type: 'range', min: 0, max: 100, step: 1 },
+  { panel: 'right', group: 'Highlight', key: 'highlightFillSlot', label: 'fill', type: 'slot' },
+  { panel: 'right', group: 'Highlight', key: 'highlightPatSlot', label: 'pattern', type: 'slot' },
+
+  { panel: 'right', group: 'Rim', key: 'rim', label: 'rim light', type: 'bool' },
+  { panel: 'right', group: 'Rim', key: 'rimWidth', label: 'width', type: 'range', min: 1, max: 9, step: 0.5 },
+  { panel: 'right', group: 'Rim', key: 'rimCutoff', label: 'wrap', type: 'range', min: 0.05, max: 1, step: 0.01 },
+  { panel: 'right', group: 'Rim', key: 'rimOffsetDeg', label: 'rotate', type: 'range', min: -180, max: 180, step: 1 },
+  { panel: 'right', group: 'Rim', key: 'rimFillSlot', label: 'fill', type: 'slot' },
+  { panel: 'right', group: 'Rim', key: 'rimPatSlot', label: 'pattern', type: 'slot' },
+  { panel: 'right', group: 'Rim', key: 'rimMask', label: 'mask', type: 'select', options: ['none', 'shadow', 'highlight'] },
+
+  { panel: 'right', group: 'Shadows', key: 'contactShadow', label: 'contact shadow', type: 'bool' },
+  { panel: 'right', group: 'Shadows', key: 'contactFrac', label: 'contact height', type: 'range', min: 0.08, max: 0.5, step: 0.01 },
+  { panel: 'right', group: 'Shadows', key: 'contactAlpha', label: 'contact alpha', type: 'range', min: 0.05, max: 0.5, step: 0.01 },
+  { panel: 'right', group: 'Shadows', key: 'contactMaxM', label: 'contact range m', type: 'range', min: 0.1, max: 2, step: 0.05 },
+  { panel: 'right', group: 'Shadows', key: 'castShadow', label: 'cast shadow', type: 'bool' },
+  { panel: 'right', group: 'Shadows', key: 'castAlpha', label: 'cast alpha', type: 'range', min: 0.05, max: 0.5, step: 0.01 },
+  { panel: 'right', group: 'Shadows', key: 'castStretch', label: 'cast stretch', type: 'range', min: 0.6, max: 2.5, step: 0.05 },
+  { panel: 'right', group: 'Shadows', key: 'castFlat', label: 'cast thickness', type: 'range', min: 0.1, max: 0.7, step: 0.01 },
+  { panel: 'right', group: 'Shadows', key: 'castSoft', label: 'cast penumbra', type: 'bool' },
+  { panel: 'right', group: 'Shadows', key: 'castMaxM', label: 'cast range m', type: 'range', min: 1, max: 8, step: 0.25 },
+
+  { panel: 'right', group: 'Pattern', key: 'showPattern', label: 'rind pattern', type: 'bool' },
+
+  { panel: 'right', group: 'Ink', key: 'inkMode', label: 'ink', type: 'select', options: ['none', 'silhouette', 'weighted'] },
+  { panel: 'right', group: 'Ink', key: 'inkWidth', label: 'ink width', type: 'range', min: 0.5, max: 6, step: 0.25 },
+  { panel: 'right', group: 'Ink', key: 'inkDarkK', label: 'ink darkness', type: 'range', min: 0.2, max: 0.85, step: 0.01 },
+
+  { panel: 'right', group: 'Motion', key: 'smear', label: 'speed smear', type: 'bool' },
+  { panel: 'right', group: 'Motion', key: 'smearThresh', label: 'smear at px/s', type: 'range', min: 600, max: 2600, step: 50 },
+  { panel: 'right', group: 'Motion', key: 'smearAmount', label: 'smear amount', type: 'range', min: 0.05, max: 0.4, step: 0.01 },
+  { panel: 'right', group: 'Motion', key: 'speedLines', label: 'speed lines', type: 'bool' },
+  { panel: 'right', group: 'Motion', key: 'speedThresh', label: 'lines at px/s', type: 'range', min: 800, max: 3000, step: 50 },
+  { panel: 'right', group: 'Motion', key: 'impactStar', label: 'impact star', type: 'bool' },
+  { panel: 'right', group: 'Motion', key: 'impactSize', label: 'star size', type: 'range', min: 0.8, max: 3, step: 0.1 },
 ];
 
 // ---- Derived sun (recomputed on read; cheap) ----
 function sun() {
-  const a = P.sunAngleDeg * Math.PI / 180;
-  return { x: Math.cos(a), y: Math.sin(a), lz: P.sunLz, angle: a };
+  // Spherical -> unit vector. The screen-plane component shrinks by
+  // cos(elevation) as the light lifts toward the viewer, so the total
+  // direction stays normalized without any extra bookkeeping.
+  const a = P.sunBearingDeg * Math.PI / 180;
+  const e = P.sunElevationDeg * Math.PI / 180;
+  const ce = Math.cos(e);
+  return { x: Math.cos(a) * ce, y: Math.sin(a) * ce, lz: Math.sin(e), angle: a };
 }
 
 // ---- Perceptual color solvers ----
@@ -186,7 +242,72 @@ function bandColor(hex, dL) {
   return c;
 }
 
-// Multiplicative darken (debris rind tints, ink)
+// Offset a colour by (dL* , dHue, dSat-points), solving lightness in
+// CIE L* so steps stay perceptually even across hues. Cached.
+const offsetCache = new Map();
+function offsetColor(hex, dL, dH, dS) {
+  const ck = hex + '|' + dL.toFixed(1) + '|' + dH.toFixed(1) + '|' + dS.toFixed(1);
+  let c = offsetCache.get(ck);
+  if (c) return c;
+  const [r0, g0, b0] = hexRgb(hex);
+  const Lb = lstarOf(r0, g0, b0);
+  let [h, sat] = rgbToHsl(r0, g0, b0);
+  h = ((h + dH) % 360 + 360) % 360;
+  sat = Math.max(0, Math.min(1, sat + dS / 100));
+  const Lt = Math.max(4, Math.min(96, Lb + dL));
+  let lo = 0.02, hi = 0.98;
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2;
+    const rgb = hslToRgb(h, sat, mid);
+    if (lstarOf(rgb[0], rgb[1], rgb[2]) < Lt) lo = mid; else hi = mid;
+  }
+  c = rgbHex(hslToRgb(h, sat, (lo + hi) / 2));
+  if (offsetCache.size > 2000) offsetCache.clear();
+  offsetCache.set(ck, c);
+  return c;
+}
+
+// Build this melon's full palette: both ramps, every slot, keyed by
+// 'A1'..'An' / 'B1'..'Bn'. Cached per (base colour + ramp settings) so
+// a race of twelve melons solves twelve palettes, not twelve per frame.
+const paletteCache = new Map();
+function palette(hex, ramp) {
+  const n = 3; // three roles, three slots: shadow / base / highlight
+  // `ramp` is an optional per-species override (FRUITS[x].ramp): a
+  // species whose look can't be served by the shared curve brings its
+  // own, without any other part of the system needing to know.
+  const R = ramp || P;
+  const ck = [hex, R.rampLoDL, R.rampLoDH, R.rampLoDS,
+    R.rampHiDL, R.rampHiDH, R.rampHiDS, R.rampBDL, R.rampBDH, R.rampBDS].join(',');
+  let pal = paletteCache.get(ck);
+  if (pal) return pal;
+  pal = { slots: [], n };
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0 : i / (n - 1);
+    const dL = R.rampLoDL + (R.rampHiDL - R.rampLoDL) * t;
+    const dH = R.rampLoDH + (R.rampHiDH - R.rampLoDH) * t;
+    const dS = R.rampLoDS + (R.rampHiDS - R.rampLoDS) * t;
+    pal['A' + (i + 1)] = offsetColor(hex, dL, dH, dS);
+    pal['B' + (i + 1)] = offsetColor(hex, dL + R.rampBDL, dH + R.rampBDH, dS + R.rampBDS);
+    pal.slots.push('A' + (i + 1));
+  }
+  for (let i = 0; i < n; i++) pal.slots.push('B' + (i + 1));
+  if (paletteCache.size > 200) paletteCache.clear();
+  paletteCache.set(ck, pal);
+  return pal;
+}
+
+// Resolve a slot name against a melon's palette, clamping gracefully
+// when the step count shrinks below a stored assignment.
+function slotColor(hex, slot, ramp) {
+  const pal = palette(hex, ramp);
+  if (pal[slot]) return pal[slot];
+  const letter = (slot && slot[0] === 'B') ? 'B' : 'A';
+  const idx = Math.max(1, Math.min(pal.n, parseInt((slot || 'A1').slice(1), 10) || 1));
+  return pal[letter + idx];
+}
+
+// Multiplicative darken (debris rind tints, ink)// Multiplicative darken (debris rind tints, ink)
 function shadeHex(hex, k) {
   const [r, g, b] = hexRgb(hex);
   return rgbHex([Math.round(r * k), Math.round(g * k), Math.round(b * k)]);
@@ -194,10 +315,17 @@ function shadeHex(hex, k) {
 
 // The active band list, darkest -> brightest, derived from P.
 function bands() {
+  // Shadow first (it owns the dark complement and sits beneath), then
+  // highlight. Base isn't a band — it's the body fill.
   const out = [];
-  if (P.shadowBand) out.push({ tau: P.shadowTau, dL: 0, baseDL: P.shadowDL });
-  out.push({ tau: P.litTau, dL: P.litDL });
-  if (P.band2) out.push({ tau: Math.max(P.band2Tau, P.litTau + 0.02), dL: P.band2DL });
+  if (P.shadowOn) {
+    out.push({ key: 'shadow', tau: P.shadowTau, soft: P.shadowSoft, inv: true,
+      fillSlot: P.shadowFillSlot, patSlot: P.shadowPatSlot });
+  }
+  if (P.highlightOn) {
+    out.push({ key: 'highlight', tau: P.highlightTau, soft: P.highlightSoft, inv: false,
+      fillSlot: P.highlightFillSlot, patSlot: P.highlightPatSlot });
+  }
   return out;
 }
 
@@ -266,19 +394,6 @@ function isoContour(angle, a, b, tau, spokes) {
   return { pts };
 }
 
-// Brightest point projected to the world frame (specular anchor) plus
-// its alignment quality (peak diffuse).
-function specPoint(angle, a, b) {
-  const { Lx, Ly, Lz, ca, sa } = bodyLight(angle);
-  const aS = a * P.shadeEcc;
-  let ux = aS * Lx, uy = b * Ly, uz = b * Lz;
-  const un = Math.sqrt(ux * ux + uy * uy + uz * uz);
-  ux /= un; uy /= un; uz /= un;
-  const nx = ux / aS, ny = uy / b, nz = uz / b;
-  const peak = (nx * Lx + ny * Ly + nz * Lz) / Math.sqrt(nx * nx + ny * ny + nz * nz);
-  const px = a * ux, py = b * uy;
-  return { x: px * ca - py * sa, y: px * sa + py * ca, z: b * uz, peak };
-}
 
 // Rim arcs: perimeter angles (ellipse parameter t) where the outward
 // 2D normal faces AWAY from the sun beyond the cutoff. Returns [t0,t1]
@@ -290,7 +405,7 @@ function rimArc(angle, a, b) {
   const dx = -(s.x * ca + s.y * sa), dy = -(-s.x * sa + s.y * ca);
   // Normal at parameter t is (cos t / a, sin t / b) normalized; find
   // the t of maximum alignment and wrap by cutoff.
-  const tPeak = Math.atan2(dy * b, dx * a);
+  const tPeak = Math.atan2(dy * b, dx * a) + P.rimOffsetDeg * Math.PI / 180;
   const halfSpan = P.rimCutoff * Math.PI;
   return { tPeak, halfSpan, ca, sa };
 }
@@ -345,10 +460,35 @@ function castFootprint(cx, cy, angle, a, b, groundYAt) {
   return { x: mx, y: (h1.y + h2.y) / 2, half, slope };
 }
 
+// Resolve P.rimMask into { tau, inside } or null.
+//   inside:true  -> rim shows only INSIDE that contour (lit bands)
+//   inside:false -> rim shows only OUTSIDE it (core shadow's dark region)
+// Falls back to null when the chosen band is disabled, so a mask can
+// never silently reference a region that isn't being drawn.
+function rimMaskRegion() {
+  const m = P.rimMask;
+  if (m === 'shadow' && P.shadowOn) return { tau: P.shadowTau, inside: true };
+  if (m === 'highlight' && P.highlightOn) return { tau: P.highlightTau, inside: false };
+  return null;
+}
+
+// The shipped colour defaults, kept as data so the studio's reset
+// button and the boot values can never disagree.
+const PALETTE_DEFAULTS = {
+  rampLoDL: -30, rampLoDH: -30, rampLoDS: -45,
+  rampHiDL: 20,  rampHiDH: -20, rampHiDS: -50,
+  rampBDL: -15,  rampBDH: 25,  rampBDS: 0,
+};
+function resetPalette() {
+  for (const k in PALETTE_DEFAULTS) P[k] = PALETTE_DEFAULTS[k];
+}
+
 window.FF.shading = {
+  PALETTE_DEFAULTS, resetPalette,
+  rimMaskRegion, palette, slotColor, offsetColor,
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf,
-  bodyLight, isoContour, specPoint, rimArc,
+  bodyLight, isoContour, rimArc,
 };
 
 })();

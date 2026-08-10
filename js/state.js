@@ -100,8 +100,16 @@ function createState() {
   return state;
 }
 
-function createBody(x, y, scale) {
+// Shape lookup: b/a for a species, defaulting to the CONFIG ellipse.
+const REF_VOL = CONFIG.semiMajor * CONFIG.semiMinor * CONFIG.semiMinor;
+function fruitAspect(species) {
+  const F = window.FF.FRUITS;
+  return (F && F[species] && F[species].aspect) || (CONFIG.semiMinor / CONFIG.semiMajor);
+}
+
+function createBody(x, y, scale, fruit) {
   const sc = scale || 1;
+  const species = fruit || 'watermelon';
   // ---- Per-body mass & inertia: the fruit-roster foundation, done ----
   // Density normalized so the scale-1.0 player has EXACTLY the tuned
   // mass (CONFIG.mass): every existing number stays calibrated for
@@ -110,13 +118,20 @@ function createBody(x, y, scale) {
   // square-cube law is EMBRACED: impulses scale with mass against a
   // fixed smash threshold, so bigger melons are pack-dominant but
   // land-fragile — ants survive falls, elephants don't.
+  // SHAPE comes from the registry: melons inherit the CONFIG ellipse,
+  // a dragon ball is a sphere. Everything downstream (collider,
+  // curvature, mass, inertia, debris, renderer) already reads a/b per
+  // body, so a new shape needs no changes anywhere else.
+  const aspect = fruitAspect(species);
   const a = CONFIG.semiMajor * sc;
-  const b = CONFIG.semiMinor * sc;
-  const mass = CONFIG.mass * sc * sc * sc;
+  const b = a * aspect;
+  // Density-normalized against the reference ellipse, so mass still
+  // follows real volume (a*b^2) whatever the shape.
+  const mass = CONFIG.mass * (a * b * b) / REF_VOL;
   const inertia = mass * (a * a + b * b) / 4;
   return {
     a, b,
-    fruit: 'watermelon', // species tag: aesthetics look up through FRUITS
+    fruit: species,      // registry tag: shape, palette and pulp
     squash: 0,           // per-body deformation (strain), presentation-tier
     squashAngle: 0,      // world angle of the deforming contact normal
     invM: 1 / mass,
@@ -200,7 +215,13 @@ function resetBots(state, count, x, y, sizeSeed) {
     // 30% honeydew, identical on every peer, per-daily casting.
     // Legacy (seedless) grids stay all-watermelon for suite stability.
     let fruit = 'watermelon';
-    if (sizeSeed !== undefined) {
+    // An explicit CONFIG.botRoster names the field outright — one entry
+    // per bot — bypassing the seeded species deal. Scalable: any future
+    // "the grid is X, Y and three Zs" is a one-line config change.
+    const roster = CONFIG.botRoster;
+    if (roster && roster.length) {
+      fruit = roster[i % roster.length];
+    } else if (sizeSeed !== undefined) {
       const rSp = srng(); // always drawn: stream position is sacred
       fruit = rSp < 0.3 ? 'cantaloupe' : rSp < 0.6 ? 'honeydew' : 'watermelon';
       if (fruit === 'cantaloupe' && !CONFIG.botCantaloupe) fruit = 'watermelon';
@@ -209,8 +230,7 @@ function resetBots(state, count, x, y, sizeSeed) {
     const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
     const F = window.FF.FRUITS;
     const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
-    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), (0.85 + u * 0.33) * mult);
-    melon.fruit = fruit;
+    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), (0.85 + u * 0.33) * mult, fruit);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,
@@ -239,8 +259,8 @@ function snapshotPrev(state) {
 function setBodyScale(m, scale) {
   const sc = scale || 1;
   m.a = CONFIG.semiMajor * sc;
-  m.b = CONFIG.semiMinor * sc;
-  const mass = CONFIG.mass * sc * sc * sc;
+  m.b = m.a * fruitAspect(m.fruit);
+  const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL;
   m.invM = 1 / mass;
   m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
 }
