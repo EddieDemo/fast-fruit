@@ -8,8 +8,11 @@
 // but every lap is geometrically identical — a wrapping circuit the
 // player can memorize, while physics keeps honest downhill gravity.
 //
-// The template starts AND ends with a 300px flat, so each seam is a
-// 600px start/finish straight with perfect slope continuity. Nothing
+// The template opens with a 300px flat and CLOSES with a 1300px one,
+// so each seam is a 1600px start straight with perfect slope
+// continuity — the closing flat is the STARTING GRID's apron: 12 m of
+// guaranteed flat immediately before the line (which sits 120px into
+// the opening flat), one spawn metre per racer, plus body-width slack. Nothing
 // ever teleports: all bodies live in absolute coordinates; only the
 // terrain repeats. Melon-vs-melon "lapping" is handled in physics via
 // the minimum-image convention (see physics.js).
@@ -51,7 +54,7 @@ function buildLapTemplate(seed, L, D) {
 
   // Chunk sizes are capped (<~1200px) so the reserved closing zone can
   // never be squeezed into a steep correction.
-  const RESERVE = 2600;
+  const RESERVE = 3600; // room for the closing correction + the 1300px apron
   while (x < L - RESERVE) {
     const drift = y - (x / L) * D; // + = dropped too much, - = not enough
     if (drift > 250) {
@@ -83,12 +86,13 @@ function buildLapTemplate(seed, L, D) {
     }
   }
 
-  // Closing: one gentle correction slope onto the finish straight, then
-  // FORCE exact (L, D) so tiling is bit-perfect across periods.
-  slope((L - 300) - x, D - y);
-  x = L - 300; y = D;
+  // Closing: one gentle correction slope onto the finish straight,
+  // then the GRID APRON (1300px flat), FORCING exact (L, D) so tiling
+  // is bit-perfect across periods.
+  slope((L - 1300) - x, D - y);
+  x = L - 1300; y = D;
   pts[pts.length - 1] = { x, y };
-  flat(300);
+  flat(1300);
   pts[pts.length - 1] = { x: L, y: D };
 
   return pts;

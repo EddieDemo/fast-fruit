@@ -188,15 +188,36 @@ function createBody(x, y, scale, fruit) {
   };
 }
 
-// Set up `count` human players in canonical slot order. Slot 0 spawns
-// at (x, y); further slots cascade up-and-behind like bots. localSlot
-// picks which player this machine controls; aliasLocalInput wires the
-// UI input object straight into that player (solo/back-compat path) —
-// netplay passes false and feeds ALL inputs from the lockstep buffer.
+// ---- THE STARTING GRID (Eddie's spec, 2026-08-10) ----
+// Every track carries 12 m of flat apron just before the start line;
+// each METRE of it is one racer's spawn box. Racer n (players first
+// in canonical slot order, then bots) spawns centred in the n-th
+// metre before the line, body bottom 2 m above the surface, angle 0,
+// at rest — twelve racers drop onto the apron side by side and the
+// race starts when they cross the line. Placement is a pure function
+// of grid index and terrain, identical on every lockstep peer.
+const METRE = 100;      // world px per metre
+const GRID_DROP = 200;  // spawn height: body bottom 2 m above ground
+
+function gridPlace(state, melon, gridIndex, lineX, fallbackY) {
+  const gx = lineX - (gridIndex + 0.5) * METRE; // centre of the metre
+  melon.x = gx;
+  const gy = window.FF.terrainYAt(state.terrain, gx);
+  // No terrain yet (boot-time createState): keep the caller's y.
+  melon.y = gy === null ? fallbackY : gy - melon.b - GRID_DROP;
+}
+
+// Set up `count` human players in canonical slot order on the grid:
+// slot 0 takes the first metre before the LINE at x, slot 1 the
+// second, and so on. localSlot picks which player this machine
+// controls; aliasLocalInput wires the UI input object straight into
+// that player (solo/back-compat path) — netplay passes false and
+// feeds ALL inputs from the lockstep buffer.
 function resetPlayers(state, count, localSlot, x, y, aliasLocalInput) {
   state.players.length = 0;
   for (let i = 0; i < count; i++) {
-    const melon = createBody(x - 46 * i, y - 92 * i);
+    const melon = createBody(x, y);
+    gridPlace(state, melon, i, x, y);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.players.push({
       melon,
@@ -219,15 +240,12 @@ function resetMelon(state, x, y) {
   resetPlayers(state, 1, 0, x, y, true);
 }
 
-// Spawn `count` bots in a diagonal cascade up-and-behind the player
-// spawn: spaced so no pair overlaps at rest, clear of the back wall,
-// and they tumble down onto the runway as the race starts.
-function resetBots(state, count, x, y, sizeSeed) {
+// Spawn `count` bots on the grid, continuing where the humans end:
+// bot i takes metre (gridStart + i + 1) before the line at x.
+// gridStart defaults to 1 (one human) for legacy callers.
+function resetBots(state, count, x, y, sizeSeed, gridStart) {
   state.bots.length = 0;
-  // Horizontal spacing adapts to the pack size: the endless-mode wall
-  // face sits ~420px behind spawn, and every bot must land in front of
-  // it. Diagonal spacing stays >= ~95px so no pair overlaps at rest.
-  const dx = Math.min(60, 370 / Math.max(count, 1));
+  const g0 = gridStart === undefined ? 1 : gridStart;
   for (let i = 0; i < count; i++) {
     // Seeded size variety, keyed to the grid slot (identical on every
     // peer; bot #4 is always bot #4's size). Triangular distribution
@@ -263,7 +281,8 @@ function resetBots(state, count, x, y, sizeSeed) {
     const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
     const F = window.FF.FRUITS;
     const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
-    const melon = createBody(x - dx * (i + 1), y - 90 * (i + 1), (0.85 + u * 0.33) * mult, fruit);
+    const melon = createBody(x, y, (0.85 + u * 0.33) * mult, fruit);
+    gridPlace(state, melon, g0 + i, x, y);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,

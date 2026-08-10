@@ -22,15 +22,17 @@ const COLORS = {
 };
 
 const GRID_SPACING = 100; // world px between grid lines
-// ---- Grid hierarchy: 1 / 25 / 50 / 100 / 200 m ----
-// DISTANCE ONLY (elevation stays a uniform ruler). The 100m tier is a QUARTER LAP and
-// 200m is HALF, so the heavy lines double as lap-structure markers.
-// Lines stay deliberately subtle (weight + alpha only, no tint); the
-// NUMBERS carry the readable hierarchy through size alone.
-const TIER_M = [200, 100, 50, 25];             // metres, descending
-const TIER_ALPHA = [0.20, 0.16, 0.12, 0.09];   // line alpha per tier
-const TIER_WIDTH = [2, 2, 1.5, 1];             // line width per tier
-const TIER_FONT = [22, 18, 15, 13];            // label px per tier
+// ---- Grid hierarchy: 1 / 50 / 100 / 200 m ----
+// (the 25m tier retired per Eddie, 2026-08-10 — one fewer band of
+// visual noise). DISTANCE ONLY (elevation stays a uniform ruler). The
+// 100m tier is a QUARTER LAP and 200m is HALF, so the heavy lines
+// double as lap-structure markers. Lines stay deliberately subtle
+// (weight + alpha only, no tint); the NUMBERS carry the readable
+// hierarchy through size alone.
+const TIER_M = [200, 100, 50];                 // metres, descending
+const TIER_ALPHA = [0.20, 0.16, 0.12];         // line alpha per tier
+const TIER_WIDTH = [2, 2, 1.5];                // line width per tier
+const TIER_FONT = [22, 18, 15];                // label px per tier
 const BASE_ALPHA = 0.06, BASE_FONT = 11;
 // Tier index for a world-metre value: 0..3, or -1 for a plain line.
 function tierOf(m) {
@@ -1566,7 +1568,7 @@ function createRenderer(canvas) {
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
 
   function drawTerrainGrid(ctx, cam, w, h, groundY, zoom) {
-    // Same 1/25/50/100/200 banding as the background, so emphasis
+    // Same 1/50/100/200 banding as the background, so emphasis
     // lines read continuously where they cross the ground line.
     const span = (w / 2) / zoom;
     const firstX = Math.floor((cam.x - span) / TERRAIN_GRID_SPACING) * TERRAIN_GRID_SPACING;
@@ -1646,30 +1648,30 @@ function createRenderer(canvas) {
     const first = Math.floor((camX - span) / SPACING) * SPACING;
     ctx.fillStyle = COLORS.marker;
     ctx.textAlign = 'center';
+    // In TRACK mode the numbers are LAP POSITION, not odometer: they
+    // wrap every lap length, so the start line reads 0 on every lap
+    // and the apron behind it counts down the closing metres (398,
+    // 396...) — the line is always 0 (Eddie, 2026-08-10). Endless has
+    // no laps, so it keeps the absolute ruler.
+    const lapPx = (state.race.mode === 'track' && state.period) ? state.period.L : 0;
+    const labelM = (wx) => {
+      if (!lapPx) return wx / 100 | 0;
+      const rel = ((wx - state.raceStartX) % lapPx + lapPx) % lapPx;
+      return rel / 100 | 0;
+    };
     // Labels stay screen-sized: they're UI, not world objects. SIZE
     // carries the hierarchy — the numbers are the readable layer, so
     // milestones grow (and take an 'm' suffix) rather than brighten.
     for (let wx = first; wx < camX + span + SPACING; wx += SPACING) {
       const wy = terrainYAt(state.terrain, wx);
       if (wy === null) continue;
-      const m = wx / 100 | 0;
+      const m = labelM(wx);
       const t = tierOf(m);
       ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
       ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
     }
-    // 25m milestones fall between the 2m label stops: draw them too.
-    const M25 = 2500;
-    const f25 = Math.floor((camX - span) / M25) * M25;
-    for (let wx = f25; wx < camX + span + M25; wx += M25) {
-      if (wx % SPACING === 0) continue; // already drawn above
-      const wy = terrainYAt(state.terrain, wx);
-      if (wy === null) continue;
-      const m = wx / 100 | 0;
-      const t = tierOf(m);
-      if (t < 0) continue;
-      ctx.font = `${TIER_FONT[t]}px ui-monospace, monospace`;
-      ctx.fillText(`${m}m`, toScreenX(wx), toScreenY(wy) + 16);
-    }
+    // (The 25m catcher block retired with the 25m tier: every
+    // surviving milestone lands on the 2m label stops above.)
   }
 
   return { render, resize };

@@ -47,12 +47,12 @@ function createTerrainGen(seed) {
 
     reset() {
       this.rng = mulberry32(this.seed);
-      this.x = -300;
+      this.x = -1300;
       this.y = 0;
       this.pts.length = 0;
-      this.pts.push({ x: -380, y: -2600 }); // wall sentinel
+      this.pts.push({ x: -1380, y: -2600 }); // wall sentinel
       this.pts.push({ x: this.x, y: this.y });
-      this.flat(900); // spawn runway: always fixed, never random
+      this.flat(1900); // runway: the 12 m grid apron + launch straight
     },
 
     // ---- primitive vocabulary (same shapes as the old test track) ----

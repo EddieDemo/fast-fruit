@@ -23,7 +23,8 @@ const GRID_SIZE = 12;    // total racers; bots fill whatever humans don't
 const NET_DELAY = 6;     // lockstep input delay in ticks (~50ms at 120Hz)
 const GEN_AHEAD = 3600;  // terrain kept generated in front of the leaders
 const KEEP_BEHIND = 2600; // and behind the backmarkers
-const SPAWN = { x: 120 };
+const SPAWN = { x: 0 }; // the start LINE is world position 0: the lap
+// seam, the "0" distance marker, and the flag are all the same place.
 const MIN_LAP_TICKS = 240; // ignore "laps" under 2s (line back-and-forth)
 const FINISH_RESTART_TICKS = 360; // 3s to read the finish time, then a fresh race
 
@@ -67,12 +68,14 @@ function respawnRace() {
   // Just Dave's doom), identically on every peer.
   const castSeed = window.FF.trackDefByName(modeName) ? window.FF.trackDefByName(modeName).seed : SEED;
 
+  // THE GRID: SPAWN.x is the start LINE; humans take the first metres
+  // of the flat apron behind it, bots continue from metre humans+1.
   resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
   // A configured roster sets the field size; otherwise fill the grid.
   const botCount = CONFIG.botRoster && CONFIG.botRoster.length
     ? CONFIG.botRoster.length
     : Math.max(0, GRID_SIZE - humans);
-  resetBots(state, botCount, SPAWN.x - 46 * humans, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0);
+  resetBots(state, botCount, SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans);
 
   window.FF.assignRosterNames(state, castSeed);
 
@@ -223,7 +226,9 @@ function checkLapCrossings() {
     for (let l = race.lapIndex; l < Math.min(lap, race.laps); l++) {
       const t = state.tick - race.lapStartTick;
       race.lapStartTick = state.tick;
-      if (t >= MIN_LAP_TICKS) {
+      // l < 0 is the FIRST crossing of the start line (the grid spawns
+      // racers behind it): reset the lap clock, record nothing.
+      if (l >= 0 && t >= MIN_LAP_TICKS) {
         race.splits.push(t);
         if (race.bestLapTicks === null || t < race.bestLapTicks) race.bestLapTicks = t;
       }
