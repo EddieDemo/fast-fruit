@@ -106,6 +106,32 @@ function fruitAspect(species) {
   const F = window.FF.FRUITS;
   return (F && F[species] && F[species].aspect) || (CONFIG.semiMinor / CONFIG.semiMajor);
 }
+function fruitTaper(species) {
+  const F = window.FF.FRUITS;
+  return (F && F[species] && F[species].taper) || 0;
+}
+
+// Tapered-body physique (the egg). Uniform density over the profile
+// y = ±b·(1−τ·x/a)·sqrt(1−(x/a)²) gives closed forms (odd terms
+// vanish under the symmetric integrals):
+//   area   = πab (EXACTLY the ellipse's — the taper moves area, it
+//            doesn't add any)
+//   COM    = −aτ/4 along the major axis (toward the fat end). The
+//            body origin IS the COM — the impulse solver's lever arms
+//            and invI are only honest about the mass center — so the
+//            boundary lives at +aτ/4 in body frame (m.sh).
+//   volume = (4/3)πab²·(1+τ²/5): mass keeps the volume law with the
+//            taper correction
+//   I_com  = m·[(a² + b²(1+τ²/2))/4 − (aτ/4)²] (lamina, parallel-axis)
+// Convention note: 2D dynamics (COM, inertia) follow the LAMINA and
+// mass magnitude follows the VOLUME law — the same mixed convention
+// the ellipse bodies already use (volume mass, lamina inertia).
+function taperedMassInertia(a, b, taper) {
+  const mass = CONFIG.mass * (a * b * b) / REF_VOL * (1 + taper * taper / 5);
+  const sh = a * taper / 4;
+  const inertia = mass * ((a * a + b * b * (1 + taper * taper / 2)) / 4 - sh * sh);
+  return { mass, inertia, sh };
+}
 
 function createBody(x, y, scale, fruit) {
   const sc = scale || 1;
@@ -119,19 +145,26 @@ function createBody(x, y, scale, fruit) {
   // fixed smash threshold, so bigger melons are pack-dominant but
   // land-fragile — ants survive falls, elephants don't.
   // SHAPE comes from the registry: melons inherit the CONFIG ellipse,
-  // a dragon ball is a sphere. Everything downstream (collider,
-  // curvature, mass, inertia, debris, renderer) already reads a/b per
-  // body, so a new shape needs no changes anywhere else.
+  // a dragon ball is a sphere, an egg brings `taper` and with it the
+  // tapered physique above. taper = 0 takes the ORIGINAL expressions
+  // verbatim, so every melon's mass and inertia are bit-identical.
   const aspect = fruitAspect(species);
+  const taper = fruitTaper(species);
   const a = CONFIG.semiMajor * sc;
   const b = a * aspect;
-  // Density-normalized against the reference ellipse, so mass still
-  // follows real volume (a*b^2) whatever the shape.
-  const mass = CONFIG.mass * (a * b * b) / REF_VOL;
-  const inertia = mass * (a * a + b * b) / 4;
+  let mass, inertia, sh;
+  if (taper) {
+    ({ mass, inertia, sh } = taperedMassInertia(a, b, taper));
+  } else {
+    mass = CONFIG.mass * (a * b * b) / REF_VOL;
+    inertia = mass * (a * a + b * b) / 4;
+    sh = 0;
+  }
   return {
     a, b,
     fruit: species,      // registry tag: shape, palette and pulp
+    taper,               // 0 = ellipse (exact legacy path everywhere)
+    sh,                  // geometric center's offset in the COM frame
     squash: 0,           // per-body deformation (strain), presentation-tier
     squashAngle: 0,      // world angle of the deforming contact normal
     invM: 1 / mass,
@@ -254,15 +287,26 @@ function snapshotPrev(state) {
 }
 
 // Re-derive a body's physique at a given scale — the same laws
-// createBody applies (volume mass, lamina inertia). Used to dress the
-// player in their persistent melon's spec.
+// createBody applies (volume mass, lamina inertia, tapered when the
+// species tapers). Used to dress the player in their persistent
+// melon's spec.
 function setBodyScale(m, scale) {
   const sc = scale || 1;
   m.a = CONFIG.semiMajor * sc;
   m.b = m.a * fruitAspect(m.fruit);
-  const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL;
-  m.invM = 1 / mass;
-  m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
+  const taper = fruitTaper(m.fruit);
+  m.taper = taper;
+  if (taper) {
+    const { mass, inertia, sh } = taperedMassInertia(m.a, m.b, taper);
+    m.sh = sh;
+    m.invM = 1 / mass;
+    m.invI = 1 / inertia;
+  } else {
+    m.sh = 0;
+    const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL;
+    m.invM = 1 / mass;
+    m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
+  }
 }
 
 Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale });

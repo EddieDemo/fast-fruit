@@ -310,7 +310,21 @@ function frame(now) {
   if (design && state.melon) {
     if (design.color) state.melon.bodyColor = design.color;
     if (design.patKey) state.melon.patKey = design.patKey;
-    if (design.fruit) state.melon.fruit = design.fruit;
+    // Wearing a species means wearing its BODY, not just its paint:
+    // aspect, taper, sizeMult, mass, inertia, collider path. Without
+    // this the player raced a melon ellipse in dragon-ball paint —
+    // wrong silhouette, wrong shading geometry (bands solve on the
+    // actual body, so an ellipse catches the sun differently than a
+    // sphere), and wrong physics (tips that can smash on a "ball").
+    // Solo only: in a lockstep race a local body change is a desync.
+    if (design.fruit && design.fruit !== state.melon.fruit && !netSession) {
+      state.melon.fruit = design.fruit;
+      const spec = window.FF.melon.active();
+      const d = window.FF.melon.derive(spec.seed);
+      const mult = (window.FF.FRUITS[design.fruit] && window.FF.FRUITS[design.fruit].sizeMult) || 1;
+      // Same law as the bots: persistent physique scale x species mult.
+      window.FF.setBodyScale(state.melon, d.scale * mult);
+    }
   }
 
   const alpha = accumulator / stepDt;

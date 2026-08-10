@@ -15,6 +15,10 @@
 //  * Segment ENDPOINTS are covered by the same closest-point test
 //    (t is clamped to [0,1]), so terrain vertices are handled and
 //    the pointy ends of the ellipse can't slip through corners.
+//  * TAPERED bodies (the egg) cannot use the circle trick — no affine
+//    map circles a taper — so they take their own support-function
+//    contact path (see TAPERED BODIES below), dispatched on m.taper.
+//    tau = 0 bodies run the original code byte-for-byte.
 //  * Contact resolution is sequential impulses with Coulomb friction
 //    plus direct positional correction. Friction at the contact's
 //    lever arm is what converts spin into forward motion — rolling
@@ -184,6 +188,15 @@ function supportRadius(m, nx, ny) {
   const bx = nx * c + ny * s;   // direction component along major axis
   const by = -nx * s + ny * c;  // along minor axis
   const a = m.a, b = m.b;
+  if (m.taper) {
+    // Tapered radial distance from the COM — NOT symmetric: the fat
+    // end reaches less far than the point (COM sits nearer the fat
+    // end). Callers must pass each body's true outward direction.
+    const t = eggRadialT(m, bx, by);
+    const ct = dcos(t), st = dsin(t);
+    const qx = eggQx(m, ct), qy = eggQy(m, ct, st);
+    return Math.sqrt(qx * qx + qy * qy);
+  }
   return (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
 }
 
@@ -194,6 +207,10 @@ function curvAtDirection(m, nx, ny) {
   const bx = nx * c + ny * s;
   const by = -nx * s + ny * c;
   const a = m.a, b = m.b;
+  if (m.taper) {
+    const t = eggRadialT(m, bx, by);
+    return eggCurvR(m, dcos(t), dsin(t));
+  }
   const r = (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
   const u = (r * bx) / a;   // cos t at the surface point
   const v = (r * by) / b;   // sin t
@@ -229,7 +246,10 @@ function resolveMelonPair(A, B, period) {
   const nx = dx / dist, ny = dy / dist;
 
   const rA = supportRadius(A, nx, ny);
-  const rB = supportRadius(B, nx, ny); // ellipse is symmetric: r(-d)=r(d)
+  // B's radius along B's TRUE outward direction (toward A). For an
+  // ellipse this is bit-identical to +n (r depends only on squared
+  // components); for a tapered body the asymmetry is real.
+  const rB = supportRadius(B, -nx, -ny);
   const pen = rA + rB - dist;
   if (pen <= 0) return;
 
@@ -369,7 +389,8 @@ function stepBody(m, inp, terrain, dt, sink) {
         const A = poly[i], B = poly[i + 1];
         if (A.x > m.x + cullR) break;
         if (B.x < m.x - cullR) continue;
-        ellipseVsSegment(m, A, B, contact);
+        if (m.taper) eggVsSegment(m, A, B, contact);
+        else ellipseVsSegment(m, A, B, contact);
         if (!contact.hit) continue;
         grounded = true;
 
@@ -437,6 +458,251 @@ function stepBody(m, inp, terrain, dt, sink) {
 
   // (Squash now lives per-body as m.squash — written above for every
   // melon, player and bot alike — so state.fx no longer carries it.)
+}
+
+// ------------------------------------------------------------
+// TAPERED BODIES (the egg): boundary geometry for τ ≠ 0.
+//
+// The circle-scaling trick above is structurally dead for a taper —
+// no affine map turns an egg into a circle — so tapered bodies take
+// their own contact path, dispatched on m.taper, and MELONS NEVER
+// ENTER IT: τ = 0 bodies run the original code byte-for-byte, which
+// is what carries the tournament balance over by construction.
+//
+// Boundary in the COM frame (the body origin IS the mass center;
+// m.sh = aτ/4 is where the geometric center sits):
+//   q(t) = (a·cos t + sh,  b·sin t·g),  g = 1 − τ·cos t
+// Derivatives (used for normals, support and curvature — all closed
+// form, no inverse trig anywhere; the sim may not touch atan2/acos):
+//   q'(t) = (−a·sin t,  b·(cos t + τ − 2τ·cos²t))
+//   curvature radius R(t) = (qx'² + qy'²)^{3/2} / (ab·(1 + τc(2c²−3)))
+// which lands exactly on the ellipse forms at τ = 0 and gives the
+// honest asymmetry at the ends: R_tip = b²(1−τ)²/a (sharper, more
+// fragile under the smash law), R_blunt = b²(1+τ)²/a (tougher). The
+// profile is convex for τ up to ~0.38 (1 + τc(2c²−3) > 0), well
+// clear of the egg's 0.26.
+//
+// DETERMINISM: dsin/dcos only, a FIXED coarse grid (trig precomputed
+// once below), and refinement loops with FIXED iteration counts —
+// identical arithmetic on every peer, no tolerance-dependent exits.
+// ------------------------------------------------------------
+
+// Fixed 16-point parameter grid for coarse scans (pinned constants).
+const EGG_N = 16;
+const EGG_C = new Float64Array(EGG_N), EGG_S = new Float64Array(EGG_N);
+for (let i = 0; i < EGG_N; i++) {
+  const t = (i / EGG_N) * 6.283185307179586;
+  EGG_C[i] = dcos(t); EGG_S[i] = dsin(t);
+}
+const EGG_DT = 6.283185307179586 / EGG_N;
+const GOLD = 0.6180339887498949;
+
+// Boundary point in the COM frame from (cos t, sin t).
+function eggQx(m, c) { return m.a * c + m.sh; }
+function eggQy(m, c, s) { return m.b * s * (1 - m.taper * c); }
+
+// Curvature radius at (cos t, sin t) — closed form, pinned ops.
+function eggCurvR(m, c, s) {
+  const a = m.a, b = m.b, T = m.taper;
+  const dx = -a * s;
+  const dy = b * (c + T - 2 * T * c * c);
+  const num = a * b * (1 + T * c * (2 * c * c - 3));
+  const sp2 = dx * dx + dy * dy;
+  return (sp2 * Math.sqrt(sp2)) / num;
+}
+
+// Maximize f(t) = dx·qx(t) + dy·qy(t) (the support parameter in
+// direction (dx,dy), COM frame). Coarse grid then fixed golden-section
+// refinement. Returns t.
+function eggSupportT(m, dx, dy) {
+  let bi = 0, bv = -Infinity;
+  for (let i = 0; i < EGG_N; i++) {
+    const v = dx * eggQx(m, EGG_C[i]) + dy * eggQy(m, EGG_C[i], EGG_S[i]);
+    if (v > bv) { bv = v; bi = i; }
+  }
+  let lo = bi * EGG_DT - EGG_DT, hi = bi * EGG_DT + EGG_DT;
+  let m1 = hi - GOLD * (hi - lo), m2 = lo + GOLD * (hi - lo);
+  let f1 = eggDot(m, dx, dy, m1), f2 = eggDot(m, dx, dy, m2);
+  for (let k = 0; k < 18; k++) {
+    if (f1 < f2) {
+      lo = m1; m1 = m2; f1 = f2;
+      m2 = lo + GOLD * (hi - lo); f2 = eggDot(m, dx, dy, m2);
+    } else {
+      hi = m2; m2 = m1; f2 = f1;
+      m1 = hi - GOLD * (hi - lo); f1 = eggDot(m, dx, dy, m1);
+    }
+  }
+  return (lo + hi) / 2;
+}
+function eggDot(m, dx, dy, t) {
+  const c = dcos(t), s = dsin(t);
+  return dx * eggQx(m, c) + dy * eggQy(m, c, s);
+}
+
+// Minimize |q(t) − (px,py)|² — the closest boundary parameter to a
+// point (COM frame). Same coarse + fixed golden scaffold.
+function eggClosestT(m, px, py) {
+  let bi = 0, bv = Infinity;
+  for (let i = 0; i < EGG_N; i++) {
+    const ex = eggQx(m, EGG_C[i]) - px, ey = eggQy(m, EGG_C[i], EGG_S[i]) - py;
+    const v = ex * ex + ey * ey;
+    if (v < bv) { bv = v; bi = i; }
+  }
+  let lo = bi * EGG_DT - EGG_DT, hi = bi * EGG_DT + EGG_DT;
+  let m1 = hi - GOLD * (hi - lo), m2 = lo + GOLD * (hi - lo);
+  let f1 = eggD2(m, px, py, m1), f2 = eggD2(m, px, py, m2);
+  for (let k = 0; k < 18; k++) {
+    if (f1 > f2) {
+      lo = m1; m1 = m2; f1 = f2;
+      m2 = lo + GOLD * (hi - lo); f2 = eggD2(m, px, py, m2);
+    } else {
+      hi = m2; m2 = m1; f2 = f1;
+      m1 = hi - GOLD * (hi - lo); f1 = eggD2(m, px, py, m1);
+    }
+  }
+  return (lo + hi) / 2;
+}
+function eggD2(m, px, py, t) {
+  const c = dcos(t), s = dsin(t);
+  const ex = eggQx(m, c) - px, ey = eggQy(m, c, s) - py;
+  return ex * ex + ey * ey;
+}
+
+// Radial boundary parameter: the t where q(t) is PARALLEL to (dx,dy)
+// with positive dot — the ray from the COM along (dx,dy) meets the
+// boundary. Bracket the cross-product sign change on the fixed grid,
+// then fixed bisection. Convexity + interior COM make it unique.
+function eggRadialT(m, dx, dy) {
+  let prevCr = 0, prevDot = 0, bi = -1;
+  // Grid values at i = 0 first, then walk the ring including wrap.
+  const q0x = eggQx(m, EGG_C[0]), q0y = eggQy(m, EGG_C[0], EGG_S[0]);
+  let cr0 = q0x * dy - q0y * dx, dot0 = q0x * dx + q0y * dy;
+  prevCr = cr0; prevDot = dot0;
+  for (let i = 1; i <= EGG_N; i++) {
+    const j = i % EGG_N;
+    const qx = eggQx(m, EGG_C[j]), qy = eggQy(m, EGG_C[j], EGG_S[j]);
+    const cr = qx * dy - qy * dx, dot = qx * dx + qy * dy;
+    if (prevCr * cr <= 0 && (prevDot + dot) > 0) { bi = i - 1; break; }
+    prevCr = cr; prevDot = dot;
+  }
+  if (bi < 0) bi = 0; // degenerate direction; harmless fallback
+  let lo = bi * EGG_DT, hi = (bi + 1) * EGG_DT;
+  let crLo = eggCr(m, dx, dy, lo);
+  for (let k = 0; k < 20; k++) {
+    const mid = (lo + hi) / 2;
+    const crM = eggCr(m, dx, dy, mid);
+    if (crLo * crM <= 0) { hi = mid; } else { lo = mid; crLo = crM; }
+  }
+  return (lo + hi) / 2;
+}
+function eggCr(m, dx, dy, t) {
+  const c = dcos(t), s = dsin(t);
+  return eggQx(m, c) * dy - eggQy(m, c, s) * dx;
+}
+
+// ------------------------------------------------------------
+// Tapered body vs segment: the honest convex construction —
+// face phase (support point against the segment's line) with a span
+// test, else vertex phase (closest boundary point to the endpoint).
+// Same output contract as ellipseVsSegment; resolveContact needs no
+// changes and stays shape-blind.
+// ------------------------------------------------------------
+function eggVsSegment(m, A, B, out) {
+  out.hit = false;
+  const cos = dcos(m.angle);
+  const sin = dsin(m.angle);
+
+  // World -> COM-local (translate + rotate by -angle; NO scaling).
+  const ax = (A.x - m.x) * cos + (A.y - m.y) * sin;
+  const ay = -(A.x - m.x) * sin + (A.y - m.y) * cos;
+  const bx = (B.x - m.x) * cos + (B.y - m.y) * sin;
+  const by = -(B.x - m.x) * sin + (B.y - m.y) * cos;
+
+  // Cheap reject: closest segment point vs a generous bounding radius.
+  const abx = bx - ax, aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  let tSeg = len2 > 0 ? -(ax * abx + ay * aby) / len2 : 0;
+  tSeg = tSeg < 0 ? 0 : (tSeg > 1 ? 1 : tSeg);
+  const cpx = ax + abx * tSeg, cpy = ay + aby * tSeg;
+  const boundR = m.a * (1 + m.taper);
+  if (cpx * cpx + cpy * cpy >= boundR * boundR) return;
+
+  let nlx, nly, penL, qx, qy, tStar, pxL, pyL;
+
+  if (len2 > 1e-12) {
+    // ---- Face phase: support against the segment's line ----
+    const invLen = 1 / Math.sqrt(len2);
+    const ux = abx * invLen, uy = aby * invLen;
+    // Line normal pointing toward the body (the COM is the origin).
+    let nx0 = uy, ny0 = -ux;
+    if (nx0 * ax + ny0 * ay > 0) { nx0 = -nx0; ny0 = -ny0; }
+    const tS = eggSupportT(m, -nx0, -ny0); // deepest point against the face
+    const cS = dcos(tS), sS = dsin(tS);
+    const sqx = eggQx(m, cS), sqy = eggQy(m, cS, sS);
+    const proj = (sqx - ax) * ux + (sqy - ay) * uy;
+    if (proj >= 0 && proj <= 1 / invLen) {
+      penL = nx0 * (ax - sqx) + ny0 * (ay - sqy);
+      if (penL <= 0) return;
+      nlx = nx0; nly = ny0;
+      qx = sqx; qy = sqy; tStar = tS;
+      pxL = ax + ux * proj; pyL = ay + uy * proj; // on the segment
+    } else {
+      // ---- Vertex phase: the nearer endpoint ----
+      const vx = proj < 0 ? ax : bx, vy = proj < 0 ? ay : by;
+      if (!eggVertexContact(m, vx, vy)) return;
+      // eggVertexContact leaves its results in the module scratch:
+      nlx = EGGV.nx; nly = EGGV.ny; penL = EGGV.pen;
+      qx = EGGV.qx; qy = EGGV.qy; tStar = EGGV.t;
+      pxL = vx; pyL = vy;
+    }
+  } else {
+    // Degenerate segment: pure vertex.
+    if (!eggVertexContact(m, ax, ay)) return;
+    nlx = EGGV.nx; nly = EGGV.ny; penL = EGGV.pen;
+    qx = EGGV.qx; qy = EGGV.qy; tStar = EGGV.t;
+    pxL = ax; pyL = ay;
+  }
+
+  // Local -> world.
+  out.nx = nlx * cos - nly * sin;
+  out.ny = nlx * sin + nly * cos;
+  out.px = m.x + pxL * cos - pyL * sin;
+  out.py = m.y + pxL * sin + pyL * cos;
+  out.pen = penL;
+  {
+    const c = dcos(tStar), s = dsin(tStar);
+    out.curvR = eggCurvR(m, c, s);
+  }
+  out.hit = true;
+}
+
+// Vertex-vs-boundary scratch + solver: is the local point (vx,vy)
+// inside the body? If so, contact at the closest boundary point with
+// the INWARD surface normal there (the ellipse path's semantics).
+const EGGV = { nx: 0, ny: 0, pen: 0, qx: 0, qy: 0, t: 0 };
+function eggVertexContact(m, vx, vy) {
+  // Inside test via the implicit form (COM frame; sh restores the
+  // geometric parameterization).
+  const Xg = (vx - m.sh) / m.a;
+  if (Xg <= -1 || Xg >= 1) return false;
+  const g = 1 - m.taper * Xg;
+  const yr = vy / (m.b * g);
+  if (Xg * Xg + yr * yr >= 1) return false;
+  const t = eggClosestT(m, vx, vy);
+  const c = dcos(t), s = dsin(t);
+  const qx = eggQx(m, c), qy = eggQy(m, c, s);
+  // Inward normal from the tangent q' = (−a·s, b·(c + τ − 2τc²)):
+  // outward is (q'y, −q'x); inward is the negation, normalized.
+  const dqx = -m.a * s;
+  const dqy = m.b * (c + m.taper - 2 * m.taper * c * c);
+  let nx = -dqy, ny = dqx;
+  const nn = Math.sqrt(nx * nx + ny * ny);
+  nx /= nn; ny /= nn;
+  const pen = (vx - qx) * nx + (vy - qy) * ny;
+  if (pen <= 0) return false;
+  EGGV.nx = nx; EGGV.ny = ny; EGGV.pen = pen;
+  EGGV.qx = qx; EGGV.qy = qy; EGGV.t = t;
+  return true;
 }
 
 // ------------------------------------------------------------

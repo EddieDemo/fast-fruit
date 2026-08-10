@@ -16,9 +16,19 @@
 'use strict';
 
 const studio = { active: false };
-// The design the player races with — published by the studio frame and
-// seeded here so the game wears it from boot, not just after a visit.
-studio.design = { color: null, patKey: 'StudioMelonA|watermelon', fruit: 'watermelon' };
+// The design the player races with. Derived from the SAME selections
+// the stage uses, and published eagerly at load — not only from the
+// studio's frame loop, or the melon wears a different colour until the
+// studio has been opened once.
+function currentDesign() {
+  const fruit = FRUITS_CYCLE[fruitIdx];
+  const F = window.FF.FRUITS && window.FF.FRUITS[fruit];
+  return {
+    color: studioColor || (F ? F.bots[3] : null),
+    patKey: SEEDS[seedIdx] + '|' + fruit,
+    fruit,
+  };
+}
 let cv, ctx, panel, panelL, panelR, btn, tabBar;
 let angle = 0.6, omega = 0;
 let zoomLevel = 1.4;             // studio inspection zoom
@@ -95,7 +105,13 @@ const ASSIGN_TARGETS = ['baseFill', 'basePat', 'shadowFill', 'shadowPat',
 // slot: endpoints are editable (numeric L/H/S with drag-scrub), the
 // interpolated middles are read-only and greyed, so the interpolation
 // is visible rather than implied.
+// `key` is either a P key (string) or a {get, set} accessor — the
+// latter lets the B cell edit a SPECIES' patternOffset (fruits.js
+// data) with the identical widget, so the grid always edits whatever
+// the stage actually renders with.
 function numField(key, label, readOnly, value) {
+  const getV = () => (typeof key === 'string' ? window.FF.shading.P[key] : key.get());
+  const setV = (v) => { if (typeof key === 'string') window.FF.shading.P[key] = v; else key.set(v); };
   const wrap = document.createElement('span');
   wrap.className = 'pal-field' + (readOnly ? ' ro' : '');
   const lab = document.createElement('i');
@@ -109,24 +125,24 @@ function numField(key, label, readOnly, value) {
   }
   const inp = document.createElement('input');
   inp.type = 'number';
-  inp.value = Math.round(window.FF.shading.P[key]);
+  inp.value = Math.round(getV());
   inp.addEventListener('input', () => {
     const n = parseFloat(inp.value);
-    if (!isNaN(n)) window.FF.shading.P[key] = n;
+    if (!isNaN(n)) setV(n);
   });
   // Drag-scrub: click and drag vertically to change the number, the
   // standard design-tool gesture — sliders don't fit a 70px column.
   let dragY = null, dragV = 0;
   const down = (e) => {
     dragY = (e.touches ? e.touches[0].clientY : e.clientY);
-    dragV = window.FF.shading.P[key];
+    dragV = getV();
     e.preventDefault();
   };
   const move = (e) => {
     if (dragY === null) return;
     const y = (e.touches ? e.touches[0].clientY : e.clientY);
     const nv = Math.round(dragV + (dragY - y) * 0.5);
-    window.FF.shading.P[key] = nv;
+    setV(nv);
     inp.value = nv;
     e.preventDefault();
   };
@@ -144,14 +160,20 @@ function numField(key, label, readOnly, value) {
 // Which region a swatch click assigns to (click-to-assign).
 let assignTarget = 'baseFill';
 
-function refreshPalette(baseColor) {
+function refreshPalette(baseColor, fruit) {
   const RIG = window.FF.shading;
   const P = RIG.P;
-  const pal = RIG.palette(baseColor);
+  // The grid shows the RESOLVED palette of the fruit on stage —
+  // species pattern offset included — so what the swatches say and
+  // what the stage renders can never disagree again.
+  const F = window.FF.FRUITS && window.FF.FRUITS[fruit];
+  const spOff = (F && F.patternOffset) || null;
+  const off = spOff || { dL: P.rampBDL, dH: P.rampBDH, dS: P.rampBDS };
+  const pal = RIG.palette(baseColor, spOff);
   const n = pal.n; // always 3: shadow / base / highlight
   for (const grid of paletteStrips) {
-    const sig = [baseColor, P.rampLoDL, P.rampLoDH, P.rampLoDS, P.rampHiDL,
-      P.rampHiDH, P.rampHiDS, P.rampBDL, P.rampBDH, P.rampBDS, assignTarget].join(',');
+    const sig = [baseColor, fruit, P.rampLoDL, P.rampLoDH, P.rampLoDS, P.rampHiDL,
+      P.rampHiDH, P.rampHiDS, off.dL, off.dH, off.dS, assignTarget].join(',');
     if (grid.dataset.sig === sig) continue; // nothing changed
     grid.dataset.sig = sig;
     grid.innerHTML = '';
@@ -160,9 +182,11 @@ function refreshPalette(baseColor) {
       for (let i = 1; i <= n; i++) {
         const slot = row + i;
         const t = n === 1 ? 0 : (i - 1) / (n - 1);
-        const dL = P.rampLoDL + (P.rampHiDL - P.rampLoDL) * t + (row === 'B' ? P.rampBDL : 0);
-        const dH = P.rampLoDH + (P.rampHiDH - P.rampLoDH) * t + (row === 'B' ? P.rampBDH : 0);
-        const dS = P.rampLoDS + (P.rampHiDS - P.rampLoDS) * t + (row === 'B' ? P.rampBDS : 0);
+        // One law, both rows: the deltas are the SAME curve — B differs
+        // only by which anchor it shades (base + the offset below).
+        const dL = P.rampLoDL + (P.rampHiDL - P.rampLoDL) * t;
+        const dH = P.rampLoDH + (P.rampHiDH - P.rampLoDH) * t;
+        const dS = P.rampLoDS + (P.rampHiDS - P.rampLoDS) * t;
         const cell = document.createElement('div');
         cell.className = 'pal-cell';
         const sw = document.createElement('div');
@@ -182,10 +206,17 @@ function refreshPalette(baseColor) {
           fields.appendChild(numField(isStart ? 'rampLoDH' : 'rampHiDH', 'H', false));
           fields.appendChild(numField(isStart ? 'rampLoDS' : 'rampHiDS', 'S', false));
         } else if (bEdit && isStart) {
-          // B's editable cell edits the OFFSET FROM A, labelled as such.
-          fields.appendChild(numField('rampBDL', '+L', false));
-          fields.appendChild(numField('rampBDH', '+H', false));
-          fields.appendChild(numField('rampBDS', '+S', false));
+          // B's editable cell edits the PATTERN-ANCHOR OFFSET — and it
+          // targets whatever the stage renders with: the species' own
+          // patternOffset when it has one (live-mutating the FRUITS
+          // entry; 'copy settings' exports it for committing), else the
+          // shared default in P.
+          const acc = (k) => spOff
+            ? { get: () => spOff[k], set: (v) => { spOff[k] = v; } }
+            : ({ dL: 'rampBDL', dH: 'rampBDH', dS: 'rampBDS' })[k];
+          fields.appendChild(numField(acc('dL'), '+L', false));
+          fields.appendChild(numField(acc('dH'), '+H', false));
+          fields.appendChild(numField(acc('dS'), '+S', false));
         } else {
           fields.appendChild(numField(null, 'L', true, dL));
           fields.appendChild(numField(null, 'H', true, dH));
@@ -269,7 +300,16 @@ function buildPanel() {
   const copyBtn = document.createElement('button');
   copyBtn.textContent = 'copy settings';
   copyBtn.addEventListener('click', () => {
-    const json = JSON.stringify(P, null, 2);
+    // Two labeled blocks, matching where each bakes back in: the
+    // global rig state (shading.js P) and every species' pattern-
+    // anchor offset (fruits.js entries) — including any live edits
+    // made through the grid's B cell.
+    const patternOffsets = {};
+    const FR = window.FF.FRUITS || {};
+    for (const k of Object.keys(FR)) {
+      if (FR[k].patternOffset) patternOffsets[k] = FR[k].patternOffset;
+    }
+    const json = JSON.stringify({ 'shading.js P': P, 'fruits.js patternOffset': patternOffsets }, null, 2);
     if (navigator.clipboard) navigator.clipboard.writeText(json).catch(() => {});
     copyBtn.textContent = 'copied!';
     setTimeout(() => { copyBtn.textContent = 'copy settings'; }, 900);
@@ -280,17 +320,18 @@ function buildPanel() {
   fruitBtn.addEventListener('click', () => {
     fruitIdx = (fruitIdx + 1) % FRUITS_CYCLE.length;
     fruitBtn.textContent = 'fruit: ' + FRUITS_CYCLE[fruitIdx];
+    studio.design = currentDesign();
   });
   head.appendChild(fruitBtn);
   const seedBtn = document.createElement('button');
   seedBtn.textContent = 'reroll pattern';
-  seedBtn.addEventListener('click', () => { seedIdx = (seedIdx + 1) % SEEDS.length; });
+  seedBtn.addEventListener('click', () => { seedIdx = (seedIdx + 1) % SEEDS.length; studio.design = currentDesign(); });
   head.appendChild(seedBtn);
   const colorIn = document.createElement('input');
   colorIn.type = 'color';
   colorIn.value = '#56c516';
   colorIn.title = 'melon color';
-  colorIn.addEventListener('input', () => { studioColor = colorIn.value; });
+  colorIn.addEventListener('input', () => { studioColor = colorIn.value; studio.design = currentDesign(); });
   head.appendChild(colorIn);
   const resetPal = document.createElement('button');
   resetPal.textContent = 'reset palette';
@@ -306,7 +347,7 @@ function buildPanel() {
   const colorReset = document.createElement('button');
   colorReset.textContent = 'palette';
   colorReset.title = 'back to the species palette';
-  colorReset.addEventListener('click', () => { studioColor = null; });
+  colorReset.addEventListener('click', () => { studioColor = null; studio.design = currentDesign(); });
   head.appendChild(colorReset);
   panelL.appendChild(head);
 
@@ -541,17 +582,16 @@ function frame(dtFrame, inputAxis) {
   const key = SEEDS[seedIdx] + '|' + fruit;
   const FR = window.FF.FRUITS[fruit];
   const baseColor = studioColor || FR.bots[3];
-  refreshPalette(baseColor);
-  // Publish the design so the RACE player wears exactly what's on the
-  // stage: same species, same base colour, same rind pattern.
-  studio.design = { color: baseColor, patKey: key, fruit };
+  refreshPalette(baseColor, fruit);
+  studio.design = currentDesign(); // the stage IS the player's melon
 
   // Cast + contact previews (mirrors the renderer's construction).
   const hM = 0.9;
   if (RIG.P.castShadow && hM < RIG.P.castMaxM) {
     // The rig's TRUE footprint against the flat studio floor (world
     // coords centered on the melon; floor sits (b+90) below).
-    const fp = RIG.castFootprint(0, 0, angle, a, b, () => b + 90);
+    const shC = (FR.taper || 0) * a / 4;
+    const fp = RIG.castFootprint(shC * Math.cos(angle), shC * Math.sin(angle), angle, a, b, () => b + 90, (FR.taper || 0));
     if (fp) {
       const fade = 1 - hM / RIG.P.castMaxM;
       const rx = fp.half * RIG.P.castStretch * zoom;
@@ -604,6 +644,8 @@ function frame(dtFrame, inputAxis) {
 window.FF = window.FF || {};
 window.FF.studio = studio;
 studio.frame = frame;
+studio.currentDesign = currentDesign;
+studio.design = currentDesign(); // worn from the very first frame
 studio.init = ensureDom;
 
 })();
