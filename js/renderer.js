@@ -22,6 +22,23 @@ const COLORS = {
 };
 
 const GRID_SPACING = 100; // world px between grid lines
+// ---- Grid hierarchy: 1 / 25 / 50 / 100 / 200 m ----
+// DISTANCE ONLY (elevation stays a uniform ruler). The 100m tier is a QUARTER LAP and
+// 200m is HALF, so the heavy lines double as lap-structure markers.
+// Lines stay deliberately subtle (weight + alpha only, no tint); the
+// NUMBERS carry the readable hierarchy through size alone.
+const TIER_M = [200, 100, 50, 25];             // metres, descending
+const TIER_ALPHA = [0.20, 0.16, 0.12, 0.09];   // line alpha per tier
+const TIER_WIDTH = [2, 2, 1.5, 1];             // line width per tier
+const TIER_FONT = [22, 18, 15, 13];            // label px per tier
+const BASE_ALPHA = 0.06, BASE_FONT = 11;
+// Tier index for a world-metre value: 0..3, or -1 for a plain line.
+function tierOf(m) {
+  const a = Math.abs(Math.round(m));
+  if (a === 0) return 0;
+  for (let i = 0; i < TIER_M.length; i++) if (a % TIER_M[i] === 0) return i;
+  return -1;
+}
 // Racing camera: the melon rides at 38% from the trailing edge, not
 // center — backward vision is worthless, so the same window buys ~25%
 // more forward reaction time. Purely presentational; the sim never
@@ -137,7 +154,15 @@ function createRenderer(canvas) {
     const groundScreenY = toScreenY(0);
 
     // ---- FX decay (presentation state owned by renderer) ----
-    state.fx.squash = Math.max(0, state.fx.squash - CONFIG.squashDecay * state.fx.squash * dtFrame);
+    // Decay every body's deformation (presentation-tier, frame-rate
+    // based — the sim never reads it back).
+    const decayK = CONFIG.squashDecay * dtFrame;
+    for (const pl of state.players) {
+      if (pl.melon.squash) pl.melon.squash = Math.max(0, pl.melon.squash - decayK * pl.melon.squash);
+    }
+    for (const bt of state.bots) {
+      if (bt.melon.squash) bt.melon.squash = Math.max(0, bt.melon.squash - decayK * bt.melon.squash);
+    }
     state.fx.flash = Math.max(0, state.fx.flash - 10 * state.fx.flash * dtFrame);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -225,7 +250,7 @@ function createRenderer(canvas) {
         y: gp.y + (gm.y - gp.y) * alpha,
         angle: gp.angle + (gm.angle - gp.angle) * alpha,
         color: window.FF.racerColor(state, state.players.length + i),
-        fx: null,
+        squash: gm, // bots deform too: strain is per-body now
         name: gm.name,
       });
     }
@@ -242,7 +267,7 @@ function createRenderer(canvas) {
         y: gp.y + (gm.y - gp.y) * alpha,
         angle: gp.angle + (gm.angle - gp.angle) * alpha,
         color: PLAYER_PALETTE[i % PLAYER_PALETTE.length],
-        fx: null,
+        squash: gm, // remote players are simulated locally: real strain
         name: gm.name,
       });
     }
@@ -255,7 +280,7 @@ function createRenderer(canvas) {
         // green their persistent melon's seed picked — Gerald's green
         // is Gerald's. Identity lives in the nameplate now.
         color: state.melon.bodyColor || PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
-        fx: state.fx, isPlayer: true,
+        squash: state.melon, isPlayer: true,
         name: state.melon.name,
       });
     }
@@ -301,25 +326,51 @@ function createRenderer(canvas) {
           ctx.fillText(d.name, sx, toScreenY(wy) + 34 + Math.round(150 * zoom));
         }
       }
-      // ---- Cast shadow: the body's ellipse projected sunward onto
-      // the terrain, stretching along the light, fading with height.
+      // ---- Cast shadow: TRUE projection. The rotated silhouette's
+      // extremes are ray-marched along the sun onto the terrain (the
+      // rig solves it), so the footprint stretches on away-slopes,
+      // narrows with pose, hugs the local tangent, and is CLIPPED to
+      // the terrain fill — it can never bleed past a cliff edge.
       if (RIG.P.castShadow) {
-        const wyG = terrainYAt(state.terrain, dxw);
-        if (wyG !== null) {
-          const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);
+        const wyG0 = terrainYAt(state.terrain, dxw);
+        if (wyG0 !== null) {
+          const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / 100);
           if (hM < RIG.P.castMaxM) {
-            const s2 = RIG.sun();
-            const fade = 1 - hM / RIG.P.castMaxM;
-            const sxG = toScreenX(dxw + (wyG - dyw) * (s2.x / Math.max(0.25, -s2.y) || 0) * 0.35);
-            const grow = 1 + hM * 0.25;
-            ctx.save();
-            ctx.globalAlpha = RIG.P.castAlpha * fade;
-            ctx.fillStyle = '#000000';
-            ctx.beginPath();
-            ctx.ellipse(sxG, toScreenY(wyG), d.melon.a * RIG.P.castStretch * grow * zoom,
-              d.melon.b * 0.32 * grow * zoom, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+            const fp = RIG.castFootprint(dxw, dyw, d.angle, d.melon.a, d.melon.b,
+              (gx) => terrainYAt(state.terrain, gx));
+            if (fp) {
+              const fade = 1 - hM / RIG.P.castMaxM;
+              const rx = fp.half * RIG.P.castStretch * zoom;
+              const ry = rx * RIG.P.castFlat;
+              const sxS = toScreenX(fp.x), syS = toScreenY(fp.y);
+              ctx.save();
+              // Clip to the terrain fill: a local polygon under the line.
+              ctx.beginPath();
+              const spanW = rx * 2.6 / zoom;
+              const steps = 8;
+              for (let i = 0; i <= steps; i++) {
+                const gx = fp.x - spanW / 2 + (i / steps) * spanW;
+                const gy = terrainYAt(state.terrain, gx);
+                const px2 = toScreenX(gx), py2 = gy === null ? syS : toScreenY(gy);
+                if (i === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+              }
+              ctx.lineTo(toScreenX(fp.x + spanW / 2), syS + 400);
+              ctx.lineTo(toScreenX(fp.x - spanW / 2), syS + 400);
+              ctx.closePath();
+              ctx.clip();
+              ctx.fillStyle = '#000000';
+              if (RIG.P.castSoft) {
+                ctx.globalAlpha = RIG.P.castAlpha * fade * 0.45;
+                ctx.beginPath();
+                ctx.ellipse(sxS, syS, rx * 1.28, ry * 1.5, fp.slope, 0, Math.PI * 2);
+                ctx.fill();
+              }
+              ctx.globalAlpha = RIG.P.castAlpha * fade;
+              ctx.beginPath();
+              ctx.ellipse(sxS, syS, rx, ry, fp.slope, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
           }
         }
       }
@@ -339,7 +390,7 @@ function createRenderer(canvas) {
           smeared = true;
         }
       }
-      drawMelon(ctx, sx, sy, d.angle, d.fx, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
+      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
       // ---- Contact shadow: the body darkens near its ground touch ----
       if (RIG.P.contactShadow) {
         const wyG = terrainYAt(state.terrain, dxw);
@@ -385,7 +436,7 @@ function createRenderer(canvas) {
       // ordinary impact juice.
       if (d.isPlayer && state.fx.flash > 0.02) {
         ctx.globalAlpha = state.fx.flash;
-        drawMelon(ctx, sx, sy, d.angle, d.fx, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
+        drawMelon(ctx, sx, sy, d.angle, d.squash, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
         ctx.globalAlpha = 1;
       }
       drawPlace(ctx, sx, sy, d.place, zoom);
@@ -500,7 +551,7 @@ function createRenderer(canvas) {
     ctx.fillText(String(n), sx, sy - 100 * zoom);
   }
 
-  function drawMelon(ctx, sx, sy, angle, fx, color, zoom, seedKey, bodyA, bodyB, fruit) {
+  function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit) {
     const a = bodyA || CONFIG.semiMajor;
     const b = bodyB || CONFIG.semiMinor;
 
@@ -511,10 +562,13 @@ function createRenderer(canvas) {
     // Squash: compress along the impact normal, stretch along tangent.
     // Applied in the impact frame, then we rotate into body frame.
     // (fx is null for ghost bodies — they carry no impact FX.)
-    if (fx && fx.squash > 0.003) {
-      ctx.rotate(fx.squashAngle + Math.PI / 2);
-      ctx.scale(1 + fx.squash, 1 - fx.squash);
-      ctx.rotate(-(fx.squashAngle + Math.PI / 2));
+    // The body carries its own strain: m.squash / m.squashAngle. (This
+    // read was .amount/.angle for a while — undefined, silently false,
+    // no error, no deformation on screen anywhere.)
+    if (squash && squash.squash > 0.003) {
+      ctx.rotate(squash.squashAngle + Math.PI / 2);
+      ctx.scale(1 + squash.squash, 1 - squash.squash);
+      ctx.rotate(-(squash.squashAngle + Math.PI / 2));
     }
 
     // Cel-shaded body: world-fixed sun, terminator the surface rolls
@@ -687,7 +741,7 @@ function createRenderer(canvas) {
     // the pattern rides on top, translucent over base AND lit alike.
     // This is also the future texture pipe: a hand-painted rind map is
     // just another way to fill the offscreen.
-    const raster = patternRaster(seedKey || baseColor, fruit, a, b);
+    const raster = RIG.P.showPattern ? patternRaster(seedKey || baseColor, fruit, a, b) : null;
     if (raster) {
       ctx.save();
       ctx.rotate(angle);
@@ -731,24 +785,22 @@ function createRenderer(canvas) {
       }
     }
 
-    ctx.restore(); // body clip ends here
-
-    // ---- Ink: outline drawn over everything, outside the clip ----
+    // ---- Ink: strictly INTERIOR. Drawn inside the body clip at
+    // DOUBLE width — the clip shaves the outer half, leaving a full-
+    // width line that never hangs past the silhouette.
     if (RIG.P.inkMode !== 'none') {
       ctx.strokeStyle = RIG.shadeHex(baseColor, RIG.P.inkDarkK);
       ctx.lineCap = 'round';
       if (RIG.P.inkMode === 'silhouette') {
-        ctx.lineWidth = RIG.P.inkWidth;
+        ctx.lineWidth = RIG.P.inkWidth * 2;
         ctx.beginPath();
         ctx.ellipse(0, 0, a, b, angle, 0, TAU2);
         ctx.stroke();
       } else {
-        // Weighted: thick on the shadow side, hairline on the lit —
-        // the hand-drawn tell.
         const { tPeak, halfSpan } = RIG.rimArc(angle, a, b);
         const caA = Math.cos(angle), saA = Math.sin(angle);
         const seg = (t0, t1, w2) => {
-          ctx.lineWidth = w2;
+          ctx.lineWidth = w2 * 2;
           ctx.beginPath();
           const N = 30;
           for (let i = 0; i <= N; i++) {
@@ -764,6 +816,8 @@ function createRenderer(canvas) {
         seg(tPeak + span, tPeak + 2 * Math.PI - span, RIG.P.inkWidth * 0.4);
       }
     }
+
+    ctx.restore(); // body clip ends here
   }
 
   // ---- Seeded 2D gradient (Perlin) noise + fBm ----
@@ -1138,52 +1192,78 @@ function createRenderer(canvas) {
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
 
   function drawTerrainGrid(ctx, cam, w, h, groundY, zoom) {
-    ctx.strokeStyle = COLORS.terrainGrid;
-    ctx.lineWidth = 1; // hairline at every zoom, like the background grid
-    ctx.beginPath();
-    const spacing = TERRAIN_GRID_SPACING * zoom;
-    // Vertical lines: world-anchored, so they scroll with the terrain.
+    // Same 1/25/50/100/200 banding as the background, so emphasis
+    // lines read continuously where they cross the ground line.
     const span = (w / 2) / zoom;
     const firstX = Math.floor((cam.x - span) / TERRAIN_GRID_SPACING) * TERRAIN_GRID_SPACING;
-    for (let wx = firstX; wx < cam.x + span + TERRAIN_GRID_SPACING; wx += TERRAIN_GRID_SPACING) {
-      const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
-      ctx.moveTo(sx, 0);
-      ctx.lineTo(sx, h);
-    }
-    // Horizontal lines: anchored to world y (same origin as background).
+    const lastX = cam.x + span + TERRAIN_GRID_SPACING;
+    const spacing = TERRAIN_GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
+
+    ctx.strokeStyle = COLORS.terrainGrid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
+      if (tierOf(wx / 100) >= 0) continue;
+      const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
+      ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
+    }
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
       const y = Math.round(sy) + 0.5;
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
+      ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
+
+    for (let t = TIER_M.length - 1; t >= 0; t--) {
+      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t] * 0.6})`;
+      ctx.lineWidth = TIER_WIDTH[t];
+      ctx.beginPath();
+      for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
+        if (tierOf(wx / 100) !== t) continue;
+        const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
+        ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
+      }
+      ctx.stroke();
+    }
   }
 
   function drawGrid(ctx, camX, w, h, groundY, zoom) {
-    ctx.strokeStyle = COLORS.grid;
-    ctx.lineWidth = 1; // grid stays hairline at every zoom
-    ctx.beginPath();
-    const spacing = GRID_SPACING * zoom; // world-anchored, screen-spaced
-    // Vertical lines: anchored to world x, scroll with the camera.
-    // 0.5 offset keeps 1px lines crisp on integer pixel boundaries.
+    // Base pass: every 1m line at the quietest weight, then one pass
+    // per tier over the top so emphasis lines are drawn, not tinted.
     const span = (w / 2) / zoom;
     const firstX = Math.floor((camX - span) / GRID_SPACING) * GRID_SPACING;
-    for (let wx = firstX; wx < camX + span + GRID_SPACING; wx += GRID_SPACING) {
-      const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
-      ctx.moveTo(sx, 0);
-      ctx.lineTo(sx, h);
-    }
-    // Horizontal lines: anchored to world y, full screen height — the
-    // terrain fill covers whatever falls below the surface, so lines
-    // stay consistent inside dips below world y=0.
+    const lastX = camX + span + GRID_SPACING;
+    const spacing = GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
+
+    ctx.strokeStyle = `rgba(255,255,255,${BASE_ALPHA})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
+      if (tierOf(wx / 100) >= 0) continue; // drawn by a tier pass
+      const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
+      ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
+    }
+    // Horizontal (elevation) lines: uniform hairlines. The tier
+    // hierarchy is DISTANCE-ONLY by design — depth milestones tested
+    // as noise, so the vertical axis stays a plain ruler.
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
       const y = Math.round(sy) + 0.5;
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
+      ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
+
+    for (let t = TIER_M.length - 1; t >= 0; t--) {
+      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t]})`;
+      ctx.lineWidth = TIER_WIDTH[t];
+      ctx.beginPath();
+      for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
+        if (tierOf(wx / 100) !== t) continue;
+        const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
+        ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
+      }
+      ctx.stroke();
+    }
   }
 
   function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY, zoom) {
@@ -1191,17 +1271,30 @@ function createRenderer(canvas) {
     const span = (w / 2) / zoom;
     const first = Math.floor((camX - span) / SPACING) * SPACING;
     ctx.fillStyle = COLORS.marker;
-    // Labels stay screen-sized: they're UI, not world objects.
-    ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
+    // Labels stay screen-sized: they're UI, not world objects. SIZE
+    // carries the hierarchy — the numbers are the readable layer, so
+    // milestones grow (and take an 'm' suffix) rather than brighten.
     for (let wx = first; wx < camX + span + SPACING; wx += SPACING) {
       const wy = terrainYAt(state.terrain, wx);
       if (wy === null) continue;
-      const sx = toScreenX(wx);
-      const sy = toScreenY(wy);
-      // Number only, just under the surface inside the fill (the tick
-      // pips were removed by request — the label alone marks distance).
-      ctx.fillText(`${wx / 100 | 0}`, sx, sy + 16);
+      const m = wx / 100 | 0;
+      const t = tierOf(m);
+      ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
+      ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
+    }
+    // 25m milestones fall between the 2m label stops: draw them too.
+    const M25 = 2500;
+    const f25 = Math.floor((camX - span) / M25) * M25;
+    for (let wx = f25; wx < camX + span + M25; wx += M25) {
+      if (wx % SPACING === 0) continue; // already drawn above
+      const wy = terrainYAt(state.terrain, wx);
+      if (wy === null) continue;
+      const m = wx / 100 | 0;
+      const t = tierOf(m);
+      if (t < 0) continue;
+      ctx.font = `${TIER_FONT[t]}px ui-monospace, monospace`;
+      ctx.fillText(`${m}m`, toScreenX(wx), toScreenY(wy) + 16);
     }
   }
 

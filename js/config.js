@@ -39,7 +39,13 @@ const DEFAULTS = Object.freeze({
   motorTorque: 75000,      // peak torque at zero spin
   maxAngVel: 55,           // rad/s where motor torque tapers to zero
   brakeBoost: 1.3,         // torque multiplier when spinning against ω
-  airTorqueScale: 0.55,    // torque authority while airborne
+  airTorqueScale: 1,    // AIR AUTHORITY: parity with ground torque.
+  // The rolling constraint still makes the air ~3x more responsive on
+  // its own (grounded, the motor drags the whole mass through traction
+  // — effective inertia ~3.5x; airborne there is only the body's I),
+  // so 1.0 needs no multiplier to feel freer. Measured: a 40 rad/s
+  // race spin dies in ~0.35s — decisive but AIMABLE. (5 reversed in
+  // 0.09s and was unusably twitchy; 0.65 took 0.53s and felt sluggish.)
   inputResponse: 24,       // how fast input eases to target (1/s)
 
   // --- Surface interaction ---
@@ -61,7 +67,22 @@ const DEFAULTS = Object.freeze({
   penetrationSlop: 0.4,    // allowed overlap before correction (px)
 
   // --- Juice (visual only, physics never reads these) ---
-  squashStrength: 0.00022, // impact impulse -> squash amount
+  squashStrength: 0.00006, // STRAIN dial: (severity / mass) -> squash.
+  // Re-derived when squash became curvature-aware and mass-normalized
+  // (the old 0.00022 was calibrated against raw impulse and saturates
+  // the 0.3 clamp instantly under the new quantity). At 0.00006 a
+  // gentle flat landing reads ~0.04, a hard tip landing ~0.22 — the
+  // deformation is now a truthful preview of how close to bursting.
+  squashCurve: 0.7,        // STRAIN RESPONSE: squash = 0.3 * (s/ref)^curve.
+  // Real rind stiffens as it compresses — the first squash comes easily,
+  // each extra bit costs more — so an exponent below 1 spreads the
+  // visible range across ordinary hits while leaving headroom at the top.
+  // (Linear response pinned ~40% of real-race impacts at the clamp, where
+  // a hard landing and a near-death slam looked identical.) Swept against
+  // a real race: routine bumps read ~0.09, hard hits ~0.22, the worst
+  // 0.30, with only ~2% clipped — the whole range now carries meaning.
+  // (0.55 is the punchier alternative: routine ~0.11.)
+  squashRef: 5000,         // strain (severity/mass) that reads as full squash
   squashDecay: 9,          // 1/s
   cameraLerp: 5.5,         // camera follow speed (1/s)
 });
@@ -77,12 +98,12 @@ const PRESETS = Object.freeze({
     gravity: 2400,
     semiMajor: 46, semiMinor: 36,
     motorTorque: 75000, maxAngVel: 55, brakeBoost: 1.3,
-    airTorqueScale: 0.55, inputResponse: 24,
+    airTorqueScale: 1, inputResponse: 24,
     friction: 0.95, rollingResistance: 0.025,
     restitution: 0.18, restitutionThreshold: 90,
     linearDamping: 0.035, angularDamping: 0.12,
-    squashStrength: 0.00022, cameraLerp: 5.5,
-    smashThreshold: 4700, curvExponent: 1.7,
+    squashStrength: 0.00006, cameraLerp: 5.5,
+    smashThreshold: 3870, curvExponent: 1.25,
   }),
   // Bouncier, floatier, a touch more out-of-control at speed:
   // higher restitution + lower bounce threshold, less grip and
@@ -91,11 +112,11 @@ const PRESETS = Object.freeze({
     gravity: 2400,
     semiMajor: 46, semiMinor: 36,
     motorTorque: 80000, maxAngVel: 60, brakeBoost: 1.3,
-    airTorqueScale: 0.65, inputResponse: 24,
+    airTorqueScale: 1, inputResponse: 24,
     friction: 0.9, rollingResistance: 0.018,
     restitution: 0.34, restitutionThreshold: 55,
     linearDamping: 0.028, angularDamping: 0.09,
-    squashStrength: 0.0003, cameraLerp: 4.5,
+    squashStrength: 0.00008, cameraLerp: 4.5,
     // Severity = contact impulse x (R_flat / R_contact)^curvExponent.
     // Envelope fitted to real landing telemetry (1797 paired landings):
     // smash = exceptional speed AND bad angle, never speed alone.
@@ -103,7 +124,14 @@ const PRESETS = Object.freeze({
     // tilt lethal ~19, tip lethal ~11.5. Kills only the worst ~5% of
     // unprepared tumbling landings; a prepared flat landing survives
     // any achievable speed. Smash = exceptional speed AND bad angle.
-    smashThreshold: 5400,
+    // Re-tuned WITH curvExponent 1.25 (2026-08-08): softening the tip
+  // penalty from 1.7 cut bot deaths 78% (2.64 -> 0.59/race), so the
+  // threshold came down to restore the carnage baseline. Swept: 5400 ->
+  // 0.59 deaths, 4450 -> 1.80, 4200 -> 2.33, 3900 -> 2.79. At 4200 the
+  // pack runs 302m/2.33 deaths; 4450 gives 316m/1.80 — chosen for a
+  // slightly more forgiving game now that real air control lets a
+  // skilled pilot save a bad landing.
+  smashThreshold: 4450,
   // Size-toughness exponent k: a body's effective threshold scales as
   // s^k (via its mass ratio). k=0: raw square-cube (big melons ~34%
   // more land-fragile at s=1.15). k=2: area-law structural honesty —
@@ -131,7 +159,12 @@ const PRESETS = Object.freeze({
   // still dies 4x/race and podiums anyway; the runt is still nearly
   // immortal. Laws, not favors.
   sizeEngineExp: 3.5,
-  sizeRevExp: 0.4, curvExponent: 1.7,
+  // SHARPNESS PENALTY exponent: the contact-curvature ratio is raised
+  // to this power. Contact mechanics supports ~1.0-1.5 (contact patch
+  // ~sqrt of the ratio, plus a stiffness term); 1.7 was chosen by feel
+  // and over-egged the tip. At 1.25 a tip landing is ~1.8x as punishing
+  // as a flank landing (was ~2.2x); flank landings are unaffected.
+  sizeRevExp: 0.4, curvExponent: 1.25,
   }),
 });
 const DEFAULT_PRESET = 'Loose 1';
@@ -156,7 +189,7 @@ const SCHEMA = [
   { key: 'motorTorque',    min: 5000, max: 150000, step: 1000 },
   { key: 'maxAngVel',      min: 5,    max: 120,   step: 1 },
   { key: 'brakeBoost',     min: 1,    max: 4,     step: 0.1 },
-  { key: 'airTorqueScale', min: 0,    max: 1.5,   step: 0.05 },
+  { key: 'airTorqueScale', min: 0,    max: 12,    step: 0.25 },
   { key: 'inputResponse',  min: 2,    max: 40,    step: 1 },
 
   { group: 'World' },
@@ -176,7 +209,7 @@ const SCHEMA = [
   { key: 'curvExponent',   min: 0,    max: 2,     step: 0.05 },
 
   { group: 'Feel' },
-  { key: 'squashStrength', min: 0,    max: 0.001, step: 0.00002 },
+  { key: 'squashStrength', min: 0,    max: 0.0002, step: 0.000005 },
   { key: 'cameraLerp',     min: 0.5,  max: 20,    step: 0.5 },
 ];
 

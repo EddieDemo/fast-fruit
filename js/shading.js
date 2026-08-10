@@ -50,8 +50,12 @@ const P = {
   // Cast shadow (ellipse projected onto the terrain)
   castShadow: false,
   castAlpha: 0.22,
-  castStretch: 1.15,     // along-light elongation
+  castStretch: 1.0,      // extra along-slope elongation on the true footprint
+  castFlat: 0.3,         // shadow thickness as fraction of its length
+  castSoft: false,       // penumbra ring at half alpha
   castMaxM: 3.5,         // fades with height, gone beyond this
+  // Pattern
+  showPattern: true,     // rind pattern layer (stripes / net / crackle)
   // Ink
   inkMode: 'none',       // 'none' | 'silhouette' | 'weighted'
   inkWidth: 2.0,
@@ -94,7 +98,10 @@ const SCHEMA = [
   { group: 'Shadows', key: 'castShadow', label: 'cast shadow', type: 'bool' },
   { group: 'Shadows', key: 'castAlpha', label: 'cast alpha', type: 'range', min: 0.05, max: 0.5, step: 0.01 },
   { group: 'Shadows', key: 'castStretch', label: 'cast stretch', type: 'range', min: 0.6, max: 2.5, step: 0.05 },
+  { group: 'Shadows', key: 'castFlat', label: 'cast thickness', type: 'range', min: 0.1, max: 0.7, step: 0.01 },
+  { group: 'Shadows', key: 'castSoft', label: 'cast penumbra', type: 'bool' },
   { group: 'Shadows', key: 'castMaxM', label: 'cast range m', type: 'range', min: 1, max: 8, step: 0.25 },
+  { group: 'Pattern', key: 'showPattern', label: 'rind pattern', type: 'bool' },
   { group: 'Ink', key: 'inkMode', label: 'ink', type: 'select', options: ['none', 'silhouette', 'weighted'] },
   { group: 'Ink', key: 'inkWidth', label: 'ink width', type: 'range', min: 0.5, max: 6, step: 0.25 },
   { group: 'Ink', key: 'inkDarkK', label: 'ink darkness', type: 'range', min: 0.2, max: 0.85, step: 0.01 },
@@ -289,7 +296,57 @@ function rimArc(angle, a, b) {
 }
 
 window.FF = window.FF || {};
+// ---- Cast-shadow projection solver ----
+// The TRUE footprint: the rotated ellipse's two silhouette extremes
+// (tangent parallel to the sun ray — rotation-dependent, so a
+// tumbling body's shadow wobbles in width), each ray-marched along
+// the sun onto the terrain via the caller-supplied ground function.
+// Returns the footprint interval + local slope, or null.
+function castFootprint(cx, cy, angle, a, b, groundYAt) {
+  const s2 = sun();
+  // Ray direction: FROM the sun, through the body, toward the ground.
+  let dx = -s2.x, dy = -s2.y;
+  if (dy < 0.2) { dy = 0.2; } // keep rays descending enough to land
+  const dn = Math.sqrt(dx * dx + dy * dy);
+  dx /= dn; dy /= dn;
+  // Silhouette extremes: body-frame direction of the ray, then the
+  // tangency points of the ellipse for that direction (support form).
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const bx = dx * ca + dy * sa, by = -dx * sa + dy * ca;
+  // Tangent parallel to (bx,by): extreme offset = perpendicular support.
+  const px = -by, py = bx; // perpendicular in body frame
+  const denom = Math.sqrt(a * a * px * px + b * b * py * py) || 1;
+  const ox = (a * a * px) / denom, oy = (b * b * py) / denom;
+  // World-frame extreme points:
+  const e1x = cx + (ox * ca - oy * sa), e1y = cy + (ox * sa + oy * ca);
+  const e2x = cx - (ox * ca - oy * sa), e2y = cy - (ox * sa + oy * ca);
+  // Ray-march each to the terrain (secant-ish stepping).
+  const land = (x0, y0) => {
+    let t = 0;
+    for (let i = 0; i < 10; i++) {
+      const gx = x0 + dx * t, gy = y0 + dy * t;
+      const g = groundYAt(gx);
+      if (g === null) return null;
+      const gap = g - gy;
+      if (Math.abs(gap) < 1.5) return { x: gx, y: g };
+      t += gap / dy * 0.9;
+      if (t < -400 || t > 4000) return null;
+    }
+    const gx = x0 + dx * t;
+    const g = groundYAt(gx);
+    return g === null ? null : { x: gx, y: g };
+  };
+  const h1 = land(e1x, e1y), h2 = land(e2x, e2y);
+  if (!h1 || !h2) return null;
+  const mx = (h1.x + h2.x) / 2;
+  const gy0 = groundYAt(mx - 6), gy1 = groundYAt(mx + 6);
+  const slope = (gy0 === null || gy1 === null) ? 0 : Math.atan2(gy1 - gy0, 12);
+  const half = Math.sqrt((h2.x - h1.x) * (h2.x - h1.x) + (h2.y - h1.y) * (h2.y - h1.y)) / 2;
+  return { x: mx, y: (h1.y + h2.y) / 2, half, slope };
+}
+
 window.FF.shading = {
+  castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf,
   bodyLight, isoContour, specPoint, rimArc,
 };

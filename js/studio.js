@@ -21,6 +21,7 @@ let angle = 0.6, omega = 0;
 let zoomLevel = 1.4;             // studio inspection zoom
 const ZOOM_MIN = 0.4, ZOOM_MAX = 8;
 let pinchDist = 0;
+let studioAxis = 0; // the studio's own touch spin (its canvas eats game input)
 
 function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
 
@@ -48,11 +49,22 @@ function wireZoom(el) {
     zoomLevel = clampZoom(zoomLevel * (d / pinchDist));
     pinchDist = d;
   }, { passive: false });
-  el.addEventListener('touchend', () => { pinchDist = 0; });
+  el.addEventListener('touchend', (e) => {
+    pinchDist = 0;
+    if (e.touches.length === 0) studioAxis = 0;
+  });
+  // Single-finger spin: left half of the screen spins left, right right.
+  const setAxis = (e) => {
+    if (e.touches.length !== 1) return;
+    studioAxis = e.touches[0].clientX < window.innerWidth / 2 ? -1 : 1;
+  };
+  el.addEventListener('touchstart', setAxis, { passive: true });
+  el.addEventListener('touchmove', (e) => { if (e.touches.length === 1) setAxis(e); }, { passive: true });
 }
 let seedIdx = 0;
 const SEEDS = ['StudioMelonA', 'StudioMelonB', 'StudioMelonC', 'm12345'];
 let fruitIdx = 0;
+let studioColor = null; // color-picker override for the pinned melon
 const FRUITS_CYCLE = ['watermelon', 'cantaloupe', 'honeydew'];
 
 function ensureDom() {
@@ -100,6 +112,17 @@ function buildPanel() {
   seedBtn.textContent = 'reroll pattern';
   seedBtn.addEventListener('click', () => { seedIdx = (seedIdx + 1) % SEEDS.length; });
   head.appendChild(seedBtn);
+  const colorIn = document.createElement('input');
+  colorIn.type = 'color';
+  colorIn.value = '#56c516';
+  colorIn.title = 'melon color';
+  colorIn.addEventListener('input', () => { studioColor = colorIn.value; });
+  head.appendChild(colorIn);
+  const colorReset = document.createElement('button');
+  colorReset.textContent = 'palette';
+  colorReset.title = 'back to the species palette';
+  colorReset.addEventListener('click', () => { studioColor = null; });
+  head.appendChild(colorReset);
   panel.appendChild(head);
 
   for (const [gname, params] of Object.entries(groups)) {
@@ -183,7 +206,7 @@ function frame(dtFrame, inputAxis) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   // Spin with the game controls: torque toward axis, damped.
-  omega += (inputAxis || 0) * 6 * dtFrame;
+  omega += ((inputAxis || 0) || studioAxis) * 6 * dtFrame;
   omega *= Math.max(0, 1 - 1.2 * dtFrame);
   angle += omega * dtFrame;
 
@@ -213,21 +236,33 @@ function frame(dtFrame, inputAxis) {
   const fruit = FRUITS_CYCLE[fruitIdx];
   const key = SEEDS[seedIdx] + '|' + fruit;
   const FR = window.FF.FRUITS[fruit];
-  const baseColor = FR.bots[3];
+  const baseColor = studioColor || FR.bots[3];
 
   // Cast + contact previews (mirrors the renderer's construction).
   const hM = 0.9;
   if (RIG.P.castShadow && hM < RIG.P.castMaxM) {
-    const s2 = RIG.sun();
-    const fade = 1 - hM / RIG.P.castMaxM;
-    const grow = 1 + hM * 0.25;
-    ctx.save();
-    ctx.globalAlpha = RIG.P.castAlpha * fade;
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.ellipse(cx + s2.x * -30 * zoom, floorY, a * RIG.P.castStretch * grow * zoom, b * 0.32 * grow * zoom, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    // The rig's TRUE footprint against the flat studio floor (world
+    // coords centered on the melon; floor sits (b+90) below).
+    const fp = RIG.castFootprint(0, 0, angle, a, b, () => b + 90);
+    if (fp) {
+      const fade = 1 - hM / RIG.P.castMaxM;
+      const rx = fp.half * RIG.P.castStretch * zoom;
+      const ry = rx * RIG.P.castFlat;
+      const sxS = cx + fp.x * zoom, syS = cy + fp.y * zoom;
+      ctx.save();
+      ctx.fillStyle = '#000';
+      if (RIG.P.castSoft) {
+        ctx.globalAlpha = RIG.P.castAlpha * fade * 0.45;
+        ctx.beginPath();
+        ctx.ellipse(sxS, syS, rx * 1.28, ry * 1.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = RIG.P.castAlpha * fade;
+      ctx.beginPath();
+      ctx.ellipse(sxS, syS, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   ctx.save();

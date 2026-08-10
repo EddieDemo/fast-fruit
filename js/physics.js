@@ -93,6 +93,13 @@ function step(state, dt) {
     applySmashRule(state.players[i].melon, state, tick, i === state.localSlot, i);
   }
   for (let i = 0; i < state.bots.length; i++) {
+    // Bots race by the SAME rules and the same throttle as the player:
+    // hold right, forever — the air pump included (spinning up mid-
+    // flight to convert into speed on landing). An earlier policy
+    // braked them out of over-rev; it also locked them out of the
+    // game's central speed mechanic and handed the player a structural
+    // 43% pace advantage. Deaths are the honest price of that speed.
+    state.bots[i].input.rawAxis = 1;
     applySmashRule(state.bots[i].melon, state, tick, false, state.players.length + i);
   }
 
@@ -384,8 +391,28 @@ function stepBody(m, inp, terrain, dt, sink) {
     }
   }
   m.grounded = grounded;
+  m.airTicks = grounded ? 0 : (m.airTicks || 0) + 1;
   if (strongestImpulse > 0) {
     m.hitSeverity = severity(strongestImpulse, strongestCurvR, m);
+
+    // ---- Per-body STRAIN (deformation): every melon, not just the
+    // player. Strain is severity per unit mass — impulse scaled by the
+    // curvature penalty (a tip concentrates the same force into far
+    // higher pressure, so it deforms more) and divided by mass (light
+    // fruit is springier than heavy fruit at equal load). Presentation
+    // tier: nothing reads it back, so determinism is untouched — but
+    // unlike the old raw-impulse squash it now tracks the SAME quantity
+    // the smash rule judges, making deformation a truthful preview of
+    // how close a body came to bursting.
+    // Stiffening response: deformation rises steeply for light hits and
+    // flattens toward the 0.3 limit, so the whole envelope stays
+    // legible instead of saturating (see CONFIG.squashCurve).
+    const rel = (m.hitSeverity * m.invM) / CONFIG.squashRef;
+    const strain = Math.min(0.3, 0.3 * dpow(Math.min(1, rel), CONFIG.squashCurve));
+    if (strain > (m.squash || 0)) {
+      m.squash = strain;
+      m.squashAngle = Math.atan2(m.hitNy, m.hitNx); // pinned-op normal
+    }
   }
 
   // ---- 6. Telemetry & FX events (player body only) ----
@@ -408,14 +435,8 @@ function stepBody(m, inp, terrain, dt, sink) {
     state.telemetry.lastImpactAngleDeg = (d * 180) / Math.PI;
   }
 
-  // Squash is an FX event sourced from physics but never read back.
-  if (strongestImpulse > 0) {
-    const squash = Math.min(0.3, strongestImpulse * CONFIG.squashStrength);
-    if (squash > state.fx.squash) {
-      state.fx.squash = squash;
-      state.fx.squashAngle = impactNormalAngle;
-    }
-  }
+  // (Squash now lives per-body as m.squash — written above for every
+  // melon, player and bot alike — so state.fx no longer carries it.)
 }
 
 // ------------------------------------------------------------

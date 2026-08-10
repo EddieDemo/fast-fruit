@@ -84,8 +84,7 @@ function createState() {
     lastDeath: null, // presentation-only death certificate (local player)
 
     fx: {
-      squash: 0,        // 0..~0.3, visual squash amount
-      squashAngle: 0,   // world angle of last impact normal
+      // (squash moved onto the bodies themselves: m.squash / m.squashAngle)
       flash: 0,         // 0..1 near-miss flash (renderer decays it)
     },
 
@@ -118,6 +117,8 @@ function createBody(x, y, scale) {
   return {
     a, b,
     fruit: 'watermelon', // species tag: aesthetics look up through FRUITS
+    squash: 0,           // per-body deformation (strain), presentation-tier
+    squashAngle: 0,      // world angle of the deforming contact normal
     invM: 1 / mass,
     invI: 1 / inertia,
     x, y,           // center, world px (y is down)
@@ -159,7 +160,7 @@ function resetPlayers(state, count, localSlot, x, y, aliasLocalInput) {
   if (aliasLocalInput) state.players[localSlot].input = state.input;
   state.melon = state.players[localSlot].melon;
   state.prevMelon = state.players[localSlot].prevMelon;
-  state.fx.squash = 0;
+  state.melon.squash = 0;
   state.fx.flash = 0;
   state.telemetry.lastImpactVn = null;
   state.telemetry.lastImpactAngleDeg = null;
