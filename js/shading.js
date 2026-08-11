@@ -277,6 +277,31 @@ function offsetColor(hex, dL, dH, dS) {
   return c;
 }
 
+
+// ---- THE ANCHOR LAW ----
+// A species no longer carries a list of eleven pigments; it declares
+// an ANCHOR BAND — seeded ranges of hue, saturation and lightness in
+// pre-sun pigment space — and every individual derives its own anchor
+// continuously from its seed. The seed cannot lie, extended to
+// colour: no two racers need ever share a green, and the old
+// hand-picked elevens survive as the calibration envelope each band
+// was measured from (see fruits.js). Deterministic: mulberry32 over
+// (seed x species-name hash), identical on every peer. Presentation
+// tier only — the sim never reads colours.
+function anchorColor(species, seed) {
+  const F = window.FF.FRUITS && window.FF.FRUITS[species];
+  const band = F && F.anchorBand;
+  if (!band) return '#37a01c';
+  let h = 2166136261;
+  for (let i = 0; i < species.length; i++) { h ^= species.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rng = window.FF.mulberry32(((seed >>> 0) ^ (h >>> 0)) >>> 0);
+  const hue = band.h[0] + rng() * (band.h[1] - band.h[0]);
+  const sat = band.s[0] + rng() * (band.s[1] - band.s[0]);
+  const lig = band.l[0] + rng() * (band.l[1] - band.l[0]);
+  const [r, g, b] = hslToRgb(hue, sat, lig);
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+}
+
 // Build this melon's full palette: both ramps, every slot, keyed by
 // 'A1'..'An' / 'B1'..'Bn'. Cached per (base colour + law + offset) so
 // a race of twelve melons solves twelve palettes, not twelve per frame.
@@ -620,6 +645,7 @@ function resetPalette() {
 }
 
 window.FF.shading = {
+  anchorColor,
   PALETTE_DEFAULTS, resetPalette,
   rimMaskRegion, palette, slotColor, offsetColor,
   castFootprint,

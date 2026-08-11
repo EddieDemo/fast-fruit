@@ -291,6 +291,13 @@ function resetBots(state, count, x, y, sizeSeed, gridStart) {
     const cseed = (((sizeSeed === undefined ? 0xB07 : sizeSeed) >>> 0) + Math.imul(i + 1, 2654435761)) >>> 0;
     if (window.FF.shading && window.FF.shading.anchorColor) {
       melon.bodyColor = window.FF.shading.anchorColor(fruit, (cseed ^ 0xC010A) >>> 0);
+    } else if (typeof console !== 'undefined' && !resetBots._warned) {
+      // Headless suites legitimately run without shading.js; a BROWSER
+      // without it is a stale partial copy — say so LOUDLY, because
+      // the visible symptom (legacy green bodies under correct species
+      // patterns) looks like a colour bug, not a deployment one.
+      resetBots._warned = true;
+      console.warn('FF: shading.anchorColor missing — stale shading.js? Bots will wear legacy fallback greens.');
     }
     gridPlace(state, melon, g0 + i, x, y);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;

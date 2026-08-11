@@ -6,9 +6,12 @@
 // fruit someday earns different materials, that becomes an explicit
 // amendment to the laws — never a quiet per-species stat.
 //
-// Palettes are L*-normalized into [54, 74] (same solver as the
-// greens), so the constant-contrast highlight and nameplate
-// guarantees hold for every species automatically.
+// Colour is a LAW, not a list (2026-08-10): each species declares an
+// anchorBand — seeded H/S/L ranges in pre-sun pigment space — and
+// every individual derives its own anchor continuously from its seed
+// (shading.js anchorColor). The bands are the measured envelopes of
+// the old hand-picked eleven-shade lists, widened 15%, so the
+// families are calibrated by the shades that shipped.
 // ============================================================
 
 (function () {
@@ -17,12 +20,11 @@
 const FRUITS = {
   watermelon: {
     sizeMult: 1.0, // the reference fruit
-    // Eleven greens (L* 54-74). The player's sacred #00ff00 lives in
-    // PLAYER_PALETTE, outside the species table.
-    bots: [
-      '#90c710', '#6bb31a', '#56c516', '#37a01c', '#1bc01b', '#24a93f',
-      '#17ce54', '#25965a', '#20b378', '#22a07e', '#608e24',
-    ],
+    anchorBand: { h: [71.6, 170.2], s: [0.576, 0.87], l: [0.342, 0.457] },
+    // the wide melon-green family: eleven hand-picked greens became
+    // the measured envelope, widened 15%. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     pulp: {
       flesh: '#ff4757',      // chunks
       fleshLight: '#ff6b7d', // fine spray
@@ -39,11 +41,10 @@ const FRUITS = {
     // emphatic while every fruit still reads as a racer. Mass follows
     // the law from total scale: 0.8^3 = 0.51x at the same roll.
     sizeMult: 0.8,
-    // Eleven muted tans/creams/yellows (hues 38-56, L* 54-74).
-    bots: [
-      '#d4b16c', '#c39b2e', '#c4ad4f', '#9b8c29', '#c4a163', '#b18f1f',
-      '#c3b539', '#9b8042', '#b59d26', '#979132', '#a57a29',
-    ],
+    anchorBand: { h: [37.0, 57.8], s: [0.38, 0.724], l: [0.366, 0.646] },
+    // muted tans, creams and yellows. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     pulp: {
       flesh: '#ff9438',      // orange flesh: forensic wreckage identity
       fleshLight: '#ffb066',
@@ -56,12 +57,10 @@ const FRUITS = {
 
   honeydew: {
     sizeMult: 0.9, // between the melon and the cantaloupe, as in life
-    // Eleven BRIGHT sunny yellows (hues 50-57, saturated, L* raised
-    // to 64-80 — honeydews are the luminous ones on the shelf).
-    bots: [
-      '#e3c609', '#cab70d', '#e1bf12', '#b3a914', '#d9ba0b', '#c0b005',
-      '#dcc516', '#a69f18', '#ccb30d', '#b1a60e', '#af9f16',
-    ],
+    anchorBand: { h: [49.6, 57.6], s: [0.732, 0.964], l: [0.365, 0.484] },
+    // the bright sunny yellows. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     pulp: {
       flesh: '#b8e086',      // pale green flesh: the third forensic color
       fleshLight: '#d2eda9',
@@ -87,10 +86,11 @@ const FRUITS = {
     aspect: 0.86,        // egg-round: stubbier than a melon, not a sphere
     taper: 0.26,         // ASYMMETRIC: one end pointier, as a real egg
     sizeMult: 0.88,
-    bots: [
-      '#f6f4ee', '#f2f0e8', '#fbf9f4', '#eeece4', '#f8f6f0', '#f4f1ea',
-      '#fdfbf7', '#eae7de', '#f7f5ef', '#f1eee6', '#faf8f3',
-    ],
+    anchorBand: { h: [39.4, 48.6], s: [0.194, 0.628], l: [0.888, 0.987] },
+    // near-white shells (the high HSL saturation is an artifact of
+    // near-white lightness; chroma stays tiny). Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     // The spots are a genuinely different MATERIAL from the shell —
     // pigment, not a lighting response of white — so this is the one
     // per-species colour fact: the pattern anchor swings hue hard and
@@ -122,13 +122,10 @@ const FRUITS = {
     // the unsmashable class is also the fast class. A deliberate
     // character, not an accident; re-sweep the trio together if the
     // phone says otherwise.
-    // Eleven near-black charcoals (L* ~10, whisper of hue variance).
-    // The law reads them honestly: shadow band vanishes into the body,
-    // highlight lifts to a dark-gray sheen — a billiard ball's polish.
-    bots: [
-      '#1c1d20', '#191a1c', '#202124', '#17181a', '#1e1f22', '#1a1b1e',
-      '#222326', '#16171a', '#1d1e21', '#18191b', '#212225',
-    ],
+    anchorBand: { h: [219.6, 225.4], s: [0.053, 0.085], l: [0.091, 0.145] },
+    // near-black charcoals, faint cool tint. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     // The number disc: pattern anchor driven to white off the black
     // base purely by lightness — black has no hue or sat to shift.
     patternOffset: { dL: 80, dH: 0, dS: 0 },
@@ -147,18 +144,10 @@ const FRUITS = {
     aspect: 1.0,         // perfect sphere (same sweep as above)
     sizeMult: 0.80,      // Eddie's call 2026-08-10: one size for the
     // sphere trio (see eightBall's note for the sweep context).
-    // PRE-COMPENSATED anchors (the dragon-ball lesson, applied at
-    // birth): the seeded colour is the pigment BEFORE the sun. The law
-    // rotates hue -25 and desaturates at its base slot, so these
-    // hyper-greens RACE as bright felt GREEN (retargeted greener per
-    // Eddie 2026-08-10, away from fluorescent yellow; numerically
-    // inverted through the real offsetColor, hue- and L*-true). The
-    // vivid saturation keeps it cleanly apart from the melons' muted
-    // olives despite the shared hue family.
-    bots: [
-      '#12e600', '#0de000', '#14eb00', '#0adb00', '#10e600', '#12eb00',
-      '#0cdb00', '#16f500', '#0ee000', '#0fe600', '#0bdb00',
-    ],
+    anchorBand: { h: [114.4, 117.5], s: [1, 1], l: [0.426, 0.484] },
+    // the PRE-COMPENSATED hyper-greens that race as felt green. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     // The seam: BETWEEN the felt green and white (Eddie 2026-08-10) —
     // a modest lift and gentle desaturation, so it derives to a pale
     // green (~#ceeeb1 on the reference anchor) rather than pure white.
@@ -184,19 +173,10 @@ const FRUITS = {
     // ~332m watermelon baseline. 0.80 keeps it a touch behind the pack,
     // which is the honest price of being unkillable.
     sizeMult: 0.80,
-    // PRE-COMPENSATED anchors, like the melon greens: the global law's
-    // base slot rotates hue -25 and desaturates -47, so the seeded
-    // colour is the PIGMENT BEFORE THE SUN, not the on-track look —
-    // the melons' vivid greens race as muted olives, and these vivid
-    // yellow-ambers race as muted ambers (numerically inverted through
-    // the real offsetColor against the old on-track orange, hue- and
-    // L*-true; the old vivid saturation is outside the law's image, so
-    // the ball now sits in the same muted register as everyone —
-    // which is the point of one law).
-    bots: [
-      '#bdb100', '#b3a900', '#c2b700', '#ada400', '#c2b600', '#b8ad00',
-      '#c7bc00', '#aca300', '#bcb000', '#b8ae00', '#c7b500',
-    ],
+    anchorBand: { h: [54.4, 57.1], s: [1, 1], l: [0.333, 0.394] },
+    // the PRE-COMPENSATED vivid yellows that race as amber-orange. Individuals derive their anchor
+    // continuously from this band (shading.js anchorColor): the seed
+    // owns the pigment.
     // The star is the second material: its red is the pattern anchor —
     // hue rotated off the base rather than hard-coded, so every shade
     // of ball still derives its own star. Shading of both shell and

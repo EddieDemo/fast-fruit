@@ -15,6 +15,14 @@
 (function () {
 'use strict';
 
+// The stage's default pigment: YOUR persistent seed pushed through
+// the staged species' anchor band — the studio shows the individual
+// you actually race as, not a fixed list entry.
+function stageAnchor(fruit) {
+  const seed = (window.FF.melon && window.FF.melon.active().seed) || 0xB07;
+  return window.FF.shading.anchorColor(fruit, seed >>> 0);
+}
+
 const studio = { active: false };
 // The design the player races with. Derived from the SAME selections
 // the stage uses, and published eagerly at load — not only from the
@@ -24,7 +32,7 @@ function currentDesign() {
   const fruit = FRUITS_CYCLE[fruitIdx];
   const F = window.FF.FRUITS && window.FF.FRUITS[fruit];
   return {
-    color: studioColor || (F ? F.bots[3] : null),
+    color: studioColor || stageAnchor(fruit),
     patKey: SEEDS[seedIdx] + '|' + fruit,
     fruit,
   };
@@ -581,7 +589,7 @@ function frame(dtFrame, inputAxis) {
   const fruit = FRUITS_CYCLE[fruitIdx];
   const key = SEEDS[seedIdx] + '|' + fruit;
   const FR = window.FF.FRUITS[fruit];
-  const baseColor = studioColor || FR.bots[3];
+  const baseColor = studioColor || stageAnchor(fruit);
   refreshPalette(baseColor, fruit);
   studio.design = currentDesign(); // the stage IS the player's melon
 

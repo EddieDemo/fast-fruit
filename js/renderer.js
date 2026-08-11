@@ -86,9 +86,10 @@ window.FF.racerColor = function (state, bodyIndex) {
     return (pb && pb.bodyColor) || PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
   }
   const body = state.bots[bodyIndex - np] && state.bots[bodyIndex - np].melon;
-  const species = (window.FF.FRUITS && body && window.FF.FRUITS[body.fruit]) || null;
-  const pal = species ? species.bots : BOT_PALETTE;
-  return pal[(bodyIndex - np) % pal.length];
+  // Bots carry their seeded pigment (state.js, via the anchor band);
+  // the legacy palette survives only as a headless/boot fallback.
+  if (body && body.bodyColor) return body.bodyColor;
+  return BOT_PALETTE[(bodyIndex - np) % BOT_PALETTE.length];
 };
 
 // Canonical player-slot colors: every peer agrees on who wears what.
@@ -476,6 +477,96 @@ function createRenderer(canvas) {
     // Respawn smoke LAST in the body layer: the poof sits on top and
     // the reborn melon falls out beneath it.
     drawPuffs(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
+
+    // The visible thumbstick sits on top of everything: it's UI glass.
+    drawInputSticks(ctx);
+  }
+
+  // ---- The floating thumbstick (Eddie, 2026-08-11) ----
+  // Draws whatever input.js is actually doing — same anchors, same
+  // deadzone, same shaping — so the visual is the truth, not a
+  // decoration. Design brief: GLASS, not chrome. The player chose
+  // where to put their thumb; the stick must never make that choice
+  // cost anything, so everything is thin strokes at low alpha, no
+  // filled discs. The ring is an INSTRUMENT, not a cursor: the
+  // horizontal guide line through the centre IS the flare-neutral
+  // marker, and the ring's upper/lower arc brightens with the flare
+  // you're actually holding (green up = bouncy armour, ember down =
+  // dead rubber) — the one piece of game state that was previously
+  // invisible, readable at a glance. Under the CIRCULAR gamut the
+  // ring is the TRUE input boundary, so the visual and the semantics
+  // are the same shape. Fast fade-in (~80ms), slower
+  // fade-out (~250ms) so releases read as deliberate. Multi-touch
+  // draws every stick, because input sums every stick — the visual
+  // may not lie about the semantics. Strictly presentation-tier.
+  const STICK_UI = {
+    R: 64,            // must match input.js STICK_R (CSS px)
+    DZ: 0.16,         // must match input.js DEADZONE
+    NUB: 13,
+    UP_TINT: '127, 220, 102',   // bouncy: the game's green family
+    DOWN_TINT: '255, 122, 82',  // dead rubber: ember
+  };
+  function drawInputSticks(ctx) {
+    if (!window.FF.getInputSticks) return;
+    const sticks = window.FF.getInputSticks(performance.now());
+    if (!sticks.length) return;
+    ctx.save();
+    // Client (CSS px) coordinates -> device pixels.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineCap = 'round';
+    for (const s of sticks) {
+      const fadeIn = Math.min(1, s.ageDown / 80);
+      const fadeOut = s.ageUp === null ? 1 : Math.max(0, 1 - s.ageUp / 250);
+      const A = fadeIn * fadeOut;
+      if (A <= 0) continue;
+      const { R, DZ, NUB } = STICK_UI;
+      const cx = s.x0, cy = s.y0;
+      // Ring.
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.16 * A})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.stroke();
+      // Deadzone: the null region, so the neutral is learnable.
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.10 * A})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * DZ, 0, Math.PI * 2);
+      ctx.stroke();
+      // Horizontal guide: the spin axis AND the flare-neutral line.
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 * A})`;
+      ctx.beginPath();
+      ctx.moveTo(cx - R, cy); ctx.lineTo(cx - R * DZ, cy);
+      ctx.moveTo(cx + R * DZ, cy); ctx.lineTo(cx + R, cy);
+      ctx.stroke();
+      // Flare readout: the held bounce value, painted on the ring.
+      if (s.ay > 0.01 || s.ay < -0.01) {
+        const up = s.ay > 0;
+        const mag = Math.min(1, Math.abs(s.ay));
+        const tint = up ? STICK_UI.UP_TINT : STICK_UI.DOWN_TINT;
+        // Arc grows from the pole outward with the magnitude; screen y
+        // is down, so the UP pole is -PI/2.
+        const pole = up ? -Math.PI / 2 : Math.PI / 2;
+        const span = (Math.PI / 2.4) * mag;
+        ctx.strokeStyle = `rgba(${tint}, ${(0.12 + 0.30 * mag) * A})`;
+        ctx.lineWidth = 2 + 2.5 * mag;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, pole - span, pole + span);
+        ctx.stroke();
+      }
+      // Nub: the thumb's true offset, clamped to the ring.
+      let dx = s.dx, dy = s.dy;
+      const d = Math.hypot(dx, dy);
+      if (d > R) { dx *= R / d; dy *= R / d; }
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.35 * A})`;
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.20 * A})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx + dx, cy + dy, NUB, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // Fragment dress by kind: 0 fleck, 1 chunk, 2 rind, 3 slab.

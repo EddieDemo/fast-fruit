@@ -22,6 +22,16 @@
 // Multi-touch: each pointer is its own stick; deflections sum and
 // clamp (two thumbs can cancel, as before).
 //
+// CIRCULAR GAMUT (Eddie's ratification, 2026-08-11): the stick's
+// output vector is capped at magnitude 1 — the ring IS the boundary.
+// Deadzone and shaping apply to the RADIAL magnitude, direction is
+// preserved. Consequence, by design: full flare and full spin cannot
+// be held simultaneously; the diagonal buys ~70% of each. The stick
+// is a BUDGET — mid-air you spend it on orientation, on armour, or
+// split — which is the anti-degeneracy mechanism that keeps
+// corner-parking from beating actual play. Keyboard diagonals
+// normalize the same way.
+//
 // Desktop: arrows/WASD — left/right spin, up/down flare (digital).
 // ============================================================
 
@@ -29,8 +39,11 @@ const STICK_R = 64;   // px to full deflection
 const DEADZONE = 0.16; // normalized; rescaled so the rim is reachable
 
 function initInput(state, canvas) {
-  // pointerId -> { x0, y0 } stick anchors
+  // pointerId -> { x0, y0, x, y, t0 } stick anchors
   const pointers = new Map();
+  // Recently released sticks, kept briefly so the renderer can fade
+  // them out (pruned in getInputSticks). Presentation data only.
+  const fading = [];
 
   const hint = document.getElementById('touch-hint');
   let hintDismissed = false;
@@ -40,29 +53,38 @@ function initInput(state, canvas) {
     if (hint) hint.classList.add('hidden');
   };
 
-  function shape(v) {
-    const a = Math.abs(v);
-    if (a < DEADZONE) return 0;
-    const r = (a - DEADZONE) / (1 - DEADZONE);
-    return Math.sign(v) * Math.min(1, r);
+  // Radial shaping: deadzone + rescale on the vector MAGNITUDE,
+  // clamped at the ring; direction untouched. Returns [ax, ay] with
+  // |(ax, ay)| <= 1 (screen y down -> stick up is positive bounce).
+  function shapeVec(dx, dy) {
+    const d = Math.hypot(dx, dy) / STICK_R;
+    if (d < DEADZONE) return [0, 0];
+    const mag = Math.min(1, (d - DEADZONE) / (1 - DEADZONE));
+    const inv = mag / (d * STICK_R);
+    return [dx * inv, -dy * inv];
   }
 
   function recompute() {
     let ax = 0, ay = 0;
     for (const p of pointers.values()) {
-      ax += shape((p.x - p.x0) / STICK_R);
-      // Screen y grows DOWN; the stick's up is positive bounce.
-      ay += shape(-(p.y - p.y0) / STICK_R);
+      const v = shapeVec(p.x - p.x0, p.y - p.y0);
+      ax += v[0]; ay += v[1];
     }
     const k = keyAxes();
-    state.input.rawAxis = Math.max(-1, Math.min(1, ax + k.x));
-    state.input.rawBounce = Math.max(-1, Math.min(1, ay + k.y));
+    ax += k.x; ay += k.y;
+    // Sum of sticks + keys can exceed the gamut: clamp RADIALLY, so
+    // the circular contract |(axis, bounce)| <= 1 holds whatever the
+    // input combination.
+    const mag = Math.hypot(ax, ay);
+    if (mag > 1) { ax /= mag; ay /= mag; }
+    state.input.rawAxis = ax;
+    state.input.rawBounce = ay;
   }
 
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     dismissHint();
-    pointers.set(e.pointerId, { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
+    pointers.set(e.pointerId, { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, t0: performance.now() });
     recompute();
   });
 
@@ -74,7 +96,13 @@ function initInput(state, canvas) {
   });
 
   const release = (e) => {
-    if (pointers.delete(e.pointerId)) recompute();
+    const p = pointers.get(e.pointerId);
+    if (p) {
+      pointers.delete(e.pointerId);
+      p.tUp = performance.now();
+      fading.push(p);
+      recompute();
+    }
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
@@ -101,10 +129,10 @@ function initInput(state, canvas) {
       if (UP.has(code)) y += 1;
       if (DOWN.has(code)) y -= 1;
     }
-    return {
-      x: Math.max(-1, Math.min(1, x)),
-      y: Math.max(-1, Math.min(1, y)),
-    };
+    // Normalize keyboard diagonals into the circular gamut too.
+    const mag = Math.hypot(x, y);
+    if (mag > 1) { x /= mag; y /= mag; }
+    return { x, y };
   }
 
   window.addEventListener('keydown', (e) => {
@@ -117,6 +145,32 @@ function initInput(state, canvas) {
   window.addEventListener('keyup', (e) => {
     if (keys.delete(e.code)) recompute();
   });
+
+  // ---- Presentation window into the stick (renderer-facing) ----
+  // The VISIBLE thumbstick draws whatever the input code is actually
+  // doing: same anchors, same deadzone shaping, nothing simulated.
+  // Returns every live stick plus recently released ones (for the
+  // fade-out), each with its raw thumb offset and SHAPED axes.
+  // Strictly presentation-tier: the sim never reads this.
+  window.FF.getInputSticks = function (now) {
+    for (let i = fading.length - 1; i >= 0; i--) {
+      if (now - fading[i].tUp > 300) fading.splice(i, 1);
+    }
+    const out = [];
+    const emit = (p) => {
+      out.push({
+        x0: p.x0, y0: p.y0,
+        dx: p.x - p.x0, dy: p.y - p.y0,
+        ax: shapeVec(p.x - p.x0, p.y - p.y0)[0],
+        ay: shapeVec(p.x - p.x0, p.y - p.y0)[1],
+        ageDown: now - p.t0,
+        ageUp: p.tUp === undefined ? null : now - p.tUp,
+      });
+    };
+    for (const p of pointers.values()) emit(p);
+    for (const p of fading) emit(p);
+    return out;
+  };
 }
 
 Object.assign(window.FF, { initInput });

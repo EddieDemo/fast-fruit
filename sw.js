@@ -1,7 +1,7 @@
 // Fast Fruit service worker: NETWORK-FIRST with cache fallback.
 // Online play always gets the freshest deploy (no sticky-cache deploy
 // pain); the cache exists purely so the game keeps working offline.
-const CACHE = 'fast-fruit-v1';
+const CACHE = 'fast-fruit-v2'; // bumped 2026-08-11: anchor law + damage law + flare stick — force refetch of every script (a stale SW serving old shading.js is the likely cause of the green-bots sighting)
 
 self.addEventListener('install', (e) => self.skipWaiting());
 self.addEventListener('activate', (e) => {

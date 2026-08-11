@@ -35,15 +35,16 @@ function derive(seed) {
   const u = (rng() + rng()) / 2;
   const scale = 0.85 + u * 0.33;
   const kg = BASE_KG * scale * scale * scale;
-  const wm = window.FF.FRUITS && window.FF.FRUITS.watermelon;
   return {
     scale,
     kg,
     lb: kg * 2.20462,
     patternKey: 'm' + (seed >>> 0),
-    // The melon's own green, drawn from the same watermelon palette
-    // as the bots — one more trait the seed owns forever.
-    bodyColor: wm ? wm.bots[(seed >>> 0) % wm.bots.length] : null,
+    // The melon's own green, derived CONTINUOUSLY from the seed via
+    // the watermelon anchor band — no two seeds need share a green;
+    // the seed owns the pigment forever (was seed % 11 into a list).
+    bodyColor: (window.FF.shading && window.FF.shading.anchorColor)
+      ? window.FF.shading.anchorColor('watermelon', seed >>> 0) : null,
   };
 }
 
