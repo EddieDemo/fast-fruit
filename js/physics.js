@@ -195,23 +195,6 @@ function supportRadius(m, nx, ny) {
   return (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
 }
 
-// Curvature radius of a melon's surface at the point facing world
-// direction (nx, ny) — the melon-vs-melon analogue of contact.curvR.
-function curvAtDirection(m, nx, ny) {
-  const c = dcos(m.angle), s = dsin(m.angle);
-  const bx = nx * c + ny * s;
-  const by = -nx * s + ny * c;
-  const a = m.a, b = m.b;
-  if (m.taper) {
-    const t = eggRadialT(m, bx, by);
-    return eggCurvR(m, dcos(t), dsin(t));
-  }
-  const r = (a * b) / Math.sqrt(b * b * bx * bx + a * a * by * by);
-  const u = (r * bx) / a;   // cos t at the surface point
-  const v = (r * by) / b;   // sin t
-  const q = a * a * v * v + b * b * u * u;
-  return (q * Math.sqrt(q)) / (a * b);
-}
 
 // Two-body impulse contact between melons A and B, with friction and
 // split positional correction by inverse mass (true two-body).
@@ -290,8 +273,8 @@ function resolveMelonPair(A, B, period) {
     // means eating the larger share: armour that costs.
     const E = damage.dissipated(vn, k, e);
     const [shA, shB] = damage.pairShares(eA, eB);
-    const sevA = damage.severityFromE(shA * E, curvAtDirection(A, nx, ny), A);
-    const sevB = damage.severityFromE(shB * E, curvAtDirection(B, -nx, -ny), B);
+    const sevA = damage.severityFromE(shA * E, A);
+    const sevB = damage.severityFromE(shB * E, B);
     if (sevA > A.pairSeverity) { A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn; }
     if (sevB > B.pairSeverity) { B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn; }
   }
@@ -432,7 +415,9 @@ function stepBody(m, inp, terrain, dt, sink) {
   m.grounded = grounded;
   m.airTicks = grounded ? 0 : (m.airTicks || 0) + 1;
   if (strongestE > 0) {
-    m.hitSeverity = damage.severityFromE(strongestE, strongestCurvR, m);
+    // Severity is orientation-independent now (shape toughness);
+    // curvR survives only as telemetry/FX flavour.
+    m.hitSeverity = damage.severityFromE(strongestE, m);
 
     // ---- Per-body STRAIN (deformation): every melon, not just the
     // player. Strain is severity per unit mass — impulse scaled by the

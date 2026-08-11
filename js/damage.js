@@ -51,6 +51,7 @@
 
 const { CONFIG, dmath } = window.FF;
 const dpow = dmath.pow;
+const dmathRef = dmath;
 
 const SEV_SCALE = 1 / 1000;
 
@@ -59,11 +60,56 @@ function bodyRestitution(m) {
   return m.restitution === undefined ? CONFIG.restitution : m.restitution;
 }
 
-// Stress concentration at the contact: (R_flat / R_contact)^exp, the
-// same rule as ever — broad sides spread the blow, tips focus it.
-function stressConc(curvR, m) {
-  const Rflat = (m.a * m.a) / m.b;
-  return dpow(Rflat / curvR, CONFIG.curvExponent);
+// ---- SHAPE TOUGHNESS (2026-08-11, replacing per-contact stress
+// concentration — Eddie's decision, ratified after the flare
+// tournament): WHERE you land no longer matters; WHAT you are still
+// does. The orientation mechanic never tested as a skill loop, it
+// scrambled the flare mechanic's feedback (two hidden multipliers on
+// every death), and it didn't generalize across shapes. But the
+// curvature term was also the roster's entire material-character
+// system, so it doesn't die — it becomes a SHAPE CONSTANT: each
+// body's toughness factor is its pointwise concentration
+// (R_flat/R)^exp averaged over UNIFORM LANDING ORIENTATION (the
+// Gauss-map measure: weight = dphi = kappa*ds — the expected
+// concentration of a random landing). One uniform law, derived from
+// shape, no per-species stat: spheres come out at EXACTLY 1 (their
+// per-contact value was always 1, so sphere behavior is unchanged to
+// the bit), melons keep a tip-informed baseline, the egg's taper
+// raises its average. Spin returns to being purely locomotion, and a
+// fall's fate is sealed at launch except for the flare — which is
+// what makes the practice-mode splat predictor honest.
+const concCache = new Map();
+function bodyToughness(m) {
+  const key = m.a + ',' + m.b + ',' + (m.taper || 0) + ',' + CONFIG.curvExponent;
+  let c = concCache.get(key);
+  if (c === undefined) {
+    c = shapeToughness(m.a, m.b, m.taper || 0);
+    if (concCache.size > 128) concCache.clear();
+    concCache.set(key, c);
+  }
+  return c;
+}
+// Fixed 256-sample quadrature over the parametric boundary (the
+// tapered forms reduce to the ellipse at taper 0). Pinned arithmetic,
+// fixed count: lockstep-safe.
+function shapeToughness(a, b, taper) {
+  const dsin = dmathRef.sin, dcos = dmathRef.cos;
+  const Rflat = (a * a) / b;
+  let num = 0, den = 0;
+  for (let i = 0; i < 256; i++) {
+    const t = ((i + 0.5) / 256) * 6.283185307179586;
+    const c = dcos(t), s = dsin(t);
+    const dx = -a * s;
+    const dy = b * (c + taper - 2 * taper * c * c);
+    const sp2 = dx * dx + dy * dy;
+    const sp = Math.sqrt(sp2);
+    const kNum = a * b * (1 + taper * c * (2 * c * c - 3)); // curvature numerator
+    const R = (sp2 * sp) / kNum;
+    const w = kNum / sp2; // kappa * |p'| = dphi/dt (Gauss-map weight)
+    num += dpow(Rflat / R, CONFIG.curvExponent) * w;
+    den += w;
+  }
+  return num / den;
 }
 
 // Energy dissipated in a contact (kilo-units). Zero for separating or
@@ -74,9 +120,10 @@ function dissipated(vn, kn, e) {
   return 0.5 * (1 - e * e) * vn * vn / kn * SEV_SCALE;
 }
 
-// Severity of a terrain contact for body m.
-function severityFromE(E, curvR, m) {
-  return E * stressConc(curvR, m);
+// Severity of a contact for body m: energy times the body's SHAPE
+// toughness — orientation-independent by design.
+function severityFromE(E, m) {
+  return E * bodyToughness(m);
 }
 
 // Pair energy shares by compliance: proportional to each body's own
@@ -102,5 +149,5 @@ function bounceToRestitution(axis) {
   return n + n * axis; // axis in [-1,0): lerp toward 0
 }
 
-window.FF.damage = { bodyRestitution, stressConc, dissipated, severityFromE, pairShares, bounceToRestitution, SEV_SCALE };
+window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, SEV_SCALE };
 })();

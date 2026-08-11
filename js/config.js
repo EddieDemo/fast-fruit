@@ -52,6 +52,9 @@ const DEFAULTS = Object.freeze({
   friction: 0.95,          // Coulomb μ at contact
   rollingResistance: 0.025, // contact losses; also damps contact bounce at speed
   restitution: 0.18,       // NEUTRAL bounciness (flare stick centred)
+  practiceSplat: 0,        // practice mode: tint the airborne player by
+                           // predicted landing fate (green/amber/red);
+                           // flipping the flare mid-air flips the verdict
   bounceMax: 0.7,          // full-flare ceiling — capped well below 1: e=1
                            // is immortality under the energy law, and big
                            // drops must still demand the multi-bounce bleed
@@ -85,7 +88,7 @@ const DEFAULTS = Object.freeze({
   // a real race: routine bumps read ~0.09, hard hits ~0.22, the worst
   // 0.30, with only ~2% clipped — the whole range now carries meaning.
   // (0.55 is the punchier alternative: routine ~0.11.)
-  squashRef: 2697,         // strain (severity/mass) reading as full squash — rescaled by 2400/4450 with the energy law, so near-death deformation looks the same
+  squashRef: 2473,         // strain (severity/mass) reading as full squash — rescaled by 2200/4450, so near-death deformation looks the same
   squashDecay: 9,          // 1/s
   cameraLerp: 5.5,         // camera follow speed (1/s)
 });
@@ -137,14 +140,14 @@ const PRESETS = Object.freeze({
   // ENERGY units since 2026-08-11 (damage.js): severity = dissipated
   // energy (kilo-units) x stress concentration. Calibrated on the
   // race-death ENSEMBLE at the boot configuration (10x60s sweep:
-  // melon-family deaths ~5.0/race matching the impulse law's
-  // baseline; spheres back to 0). A shape change can't pin every
-  // event: the single tip-first marginal drifts 4.1 -> ~5.1m
-  // (slightly more forgiving one-off tips), the above-marginal tail
-  // punishes harder — quadratic in speed, because energy is the
-  // truth — and bounciness becomes armour instead of a death
-  // sentence. Flat landings remain by-design unreachable.
-  smashThreshold: 2400,
+  // melon-family deaths 4.95/race matching the impulse law's ~5.0
+  // baseline; spheres exactly 0). Recalibrated 2026-08-11 for the
+  // SHAPE-TOUGHNESS law (orientation-independent severity — see
+  // damage.js): the constant per-species factor now rides every
+  // landing, not just tips, so the threshold sits higher than the
+  // tip-weighted law needed. Bounciness is armour; where you land no
+  // longer matters, what you are does.
+  smashThreshold: 2200,
   // Size-toughness exponent k: a body's effective threshold scales as
   // s^k (via its mass ratio). k=0: raw square-cube (big melons ~34%
   // more land-fragile at s=1.15). k=2: area-law structural honesty —
@@ -214,6 +217,7 @@ const SCHEMA = [
   { key: 'rollingResistance', min: 0, max: 0.1,   step: 0.002 },
   { key: 'restitution',    min: 0,    max: 0.9,   step: 0.02 },
   { key: 'bounceMax',      min: 0.3,  max: 0.95,  step: 0.01 },
+  { key: 'practiceSplat',  min: 0,    max: 1,     step: 1 },
 
   { group: 'Melon' },
   { key: 'semiMajor',      min: 20,   max: 90,    step: 1 },

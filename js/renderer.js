@@ -478,8 +478,70 @@ function createRenderer(canvas) {
     // the reborn melon falls out beneath it.
     drawPuffs(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 
+    // Practice mode: the splat verdict ring around the airborne player.
+    drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
+
     // The visible thumbstick sits on top of everything: it's UI glass.
     drawInputSticks(ctx);
+  }
+
+  // ---- Practice-mode splat predictor (Eddie, 2026-08-11) ----
+  // HONEST BY CONSTRUCTION, and only possible because severity is now
+  // orientation-independent: once airborne, the flight path is pure
+  // ballistics (air torque spins the body, never bends the path), the
+  // terrain is fixed, so the impact is sealed at launch — the ONLY
+  // live variable is the flare. This ring integrates the same
+  // gravity/damping the sim uses, finds the terrain crossing, and
+  // judges the landing with the REAL damage law at the player's
+  // CURRENT restitution: push the stick up mid-air and red flips
+  // green before your eyes, which is the whole lesson. Amber covers
+  // the honest uncertainty band (contact geometry and rotational
+  // give, ~+-20%). Presentation tier: Math.* welcome, sim untouched.
+  function drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {
+    if (!CONFIG.practiceSplat) return;
+    const m = state.melon;
+    // Grounded = rolling contact dissipates a whisper every tick, so
+    // hitSeverity > 0 IS the grounded test; airborne fires nothing.
+    if (!m.alive || m.hitSeverity > 0) return;
+    // Ballistic integration, sim constants, coarse fixed step.
+    const dt = 1 / 60;
+    let x = m.x, y = m.y, vx = m.vx, vy = m.vy;
+    let hit = null;
+    for (let i = 0; i < 240; i++) {
+      const damp = Math.max(0, 1 - CONFIG.linearDamping * dt);
+      vy += CONFIG.gravity * dt;
+      vx *= damp; vy *= damp;
+      x += vx * dt; y += vy * dt;
+      const gy = terrainYAt(state.terrain, x);
+      if (gy !== null && y + m.b >= gy) { hit = { x, y, vx, vy, gy }; break; }
+    }
+    if (!hit) return;
+    // Surface normal from the local slope.
+    const g1 = terrainYAt(state.terrain, hit.x - 4), g2 = terrainYAt(state.terrain, hit.x + 4);
+    if (g1 === null || g2 === null) return;
+    let nx = -(g2 - g1), ny = -8;
+    const nn = Math.hypot(nx, ny); nx /= nn; ny /= nn;
+    const vn = hit.vx * nx + hit.vy * ny; // negative = approaching
+    if (vn >= 0) return;
+    const RIGD = window.FF.damage;
+    const e = RIGD.bodyRestitution(m);
+    const E = RIGD.dissipated(vn, m.invM, e); // flat-contact kn ~ invM
+    const sev = RIGD.severityFromE(E, m);
+    const mr = 1 / (m.invM * CONFIG.mass);
+    const T = CONFIG.smashThreshold * (mr === 1 ? 1 : Math.pow(mr, CONFIG.sizeToughness / 3));
+    let col;
+    if (sev > T * 1.15) col = '255, 92, 74';        // red: splat
+    else if (sev < T * 0.85) col = '92, 235, 110';  // green: clean
+    else col = '255, 196, 84';                       // amber: on the line
+    const sx = toScreenX(ix), sy = toScreenY(iy);
+    const r = (Math.max(m.a, m.b) + 14) * zoom;
+    ctx.save();
+    ctx.strokeStyle = `rgba(${col}, 0.55)`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // ---- The floating thumbstick (Eddie, 2026-08-11) ----
