@@ -193,7 +193,7 @@ window.FF.netStart = function ({ count, slot, sendInput, setStatus }) {
   respawnRace();
   return {
     receive(msg) {
-      if (msg && msg.t === 'i') netSession.ls.addRemote(msg.s, msg.k, msg.a);
+      if (msg && msg.t === 'i') netSession.ls.addRemote(msg.s, msg.k, msg.a, msg.b);
     },
     stop() { netSession = null; respawnRace(); },
   };
@@ -274,7 +274,7 @@ function frame(now) {
     // Input production FREE-RUNS ahead with bounded lookahead —
     // gating it on sim progress starves the other peers (measured).
     while (ls.queuedThrough < state.tick + 1 + ls.delay + 10) {
-      netSession.sendInput(ls.queueLocal(ls.queuedThrough + 1, state.input.rawAxis));
+      netSession.sendInput(ls.queueLocal(ls.queuedThrough + 1, state.input.rawAxis, state.input.rawBounce));
     }
     let stalled = false;
     while (accumulator >= stepDt) {
@@ -282,7 +282,8 @@ function frame(now) {
       if (!ls.ready(next)) { stalled = true; break; }
       const ins = ls.inputs(next);
       for (let i = 0; i < state.players.length; i++) {
-        state.players[i].input.rawAxis = ins[i];
+        state.players[i].input.rawAxis = ins[i].a;
+        state.players[i].input.rawBounce = ins[i].b;
       }
       step(state, stepDt);
       checkLapCrossings();

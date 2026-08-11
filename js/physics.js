@@ -28,7 +28,7 @@
 //    be recorded positions, not re-simulation (per design).
 // ============================================================
 
-const { CONFIG, melonInertia, terrainYAt, segStartIndex, debris, dmath } = window.FF;
+const { CONFIG, melonInertia, terrainYAt, segStartIndex, debris, dmath, damage } = window.FF;
 // Motion-affecting transcendentals MUST be deterministic (lockstep).
 const dsin = dmath.sin, dcos = dmath.cos, dpow = dmath.pow;
 const { snapshotPrev } = window.FF;
@@ -113,17 +113,12 @@ function step(state, dt) {
   debris.step(state, dt);
 }
 
-// Severity = contact impulse scaled by local stress concentration:
-// (R_flat / R_contact)^curvExponent. R_flat = a^2/b is the broad side's
-// curvature radius; the pointy tips (R = b^2/a) concentrate the same
-// impulse into ~2x the severity at exponent 1. Impulse-based severity
-// is what makes melon-vs-melon physically gentler than terrain: another
-// melon recoils (k includes both inverse masses), the ground does not.
-function severity(jn, curvR, m) {
-  const a = m.a, b = m.b;
-  const Rflat = (a * b) === 0 ? 1 : (a * a) / b;
-  return jn * dpow(Rflat / curvR, CONFIG.curvExponent);
-}
+// Severity now lives in damage.js: harm tracks the ENERGY DISSIPATED
+// in a contact (not the impulse), times the same curvature stress
+// concentration as ever. The solver below only reports raw contact
+// quantities (vn, kn, e) and lets the law judge — see damage.js for
+// the full rationale (the impulse law made bounciness the deadliest
+// setting, inverting the flare mechanic).
 
 function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
   if (!m.alive) return;
@@ -268,7 +263,16 @@ function resolveMelonPair(A, B, period) {
   const vn = rvx * nx + rvy * ny; // negative = approaching
   let jn = 0;
   if (vn < 0) {
-    const e = -vn > CONFIG.restitutionThreshold ? CONFIG.restitution : 0;
+    // Restitution belongs to the PAIR: the deader material dominates
+    // (rubber can't bounce off clay) — e = min of the two bodies',
+    // gated by the same slow-contact threshold as ever. At neutral
+    // (no body carries its own e) both are CONFIG.restitution and the
+    // min is a no-op: the impulse below is bit-identical to the old
+    // solver, so trajectories at neutral don't move.
+    const gate = -vn > CONFIG.restitutionThreshold;
+    const eA = gate ? damage.bodyRestitution(A) : 0;
+    const eB = gate ? damage.bodyRestitution(B) : 0;
+    const e = eA < eB ? eA : eB;
     const raCn = rax * ny - ray * nx;
     const rbCn = rbx * ny - rby * nx;
     const k = invMA + invMB + raCn * raCn * invIA + rbCn * rbCn * invIB;
@@ -277,12 +281,17 @@ function resolveMelonPair(A, B, period) {
     B.vx += jn * nx * invMB; B.vy += jn * ny * invMB; B.omega += rbCn * jn * invIB;
 
     // --- Smash severity, evaluated PER BODY ---
-    // Newton's third law: both receive the same impulse. But stress is
-    // impulse x each melon's OWN local curvature penalty — a melon
-    // struck on its pointy tip suffers more than the one that hit with
-    // its broad flat side. Same collision, different fates.
-    const sevA = severity(jn, curvAtDirection(A, nx, ny), A);
-    const sevB = severity(jn, curvAtDirection(B, -nx, -ny), B);
+    // The pair dissipates ONE quantity of energy (using the pair's e);
+    // it is SHARED BY COMPLIANCE — each body's share tracks its own
+    // deadness (equal e -> half each) — then each share is judged by
+    // that body's OWN local curvature penalty: a melon struck on its
+    // pointy tip suffers more than the one that hit flat. Same
+    // collision, different fates. Deadening a pack hit on purpose
+    // means eating the larger share: armour that costs.
+    const E = damage.dissipated(vn, k, e);
+    const [shA, shB] = damage.pairShares(eA, eB);
+    const sevA = damage.severityFromE(shA * E, curvAtDirection(A, nx, ny), A);
+    const sevB = damage.severityFromE(shB * E, curvAtDirection(B, -nx, -ny), B);
     if (sevA > A.pairSeverity) { A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn; }
     if (sevB > B.pairSeverity) { B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn; }
   }
@@ -326,6 +335,12 @@ function stepBody(m, inp, terrain, dt, sink) {
   // ---- 1. Input smoothing (ease torqueAxis toward rawAxis) ----
   const ease = Math.min(1, CONFIG.inputResponse * dt);
   inp.torqueAxis += (inp.rawAxis - inp.torqueAxis) * ease;
+  // The flare axis smooths identically, then maps onto the body's
+  // restitution through the damage law. UNIFORM: bots hold rawBounce
+  // 0 forever, which maps to exactly the live CONFIG restitution —
+  // full throttle at neutral bounce, no special case (Eddie's spec).
+  inp.bounceAxis += ((inp.rawBounce || 0) - inp.bounceAxis) * ease;
+  m.restitution = damage.bounceToRestitution(inp.bounceAxis);
 
   // ---- 2. Motor torque ----
   // Electric-motor curve: full torque from standstill, tapering to zero
@@ -372,7 +387,7 @@ function stepBody(m, inp, terrain, dt, sink) {
   // ---- 5. Collide & resolve ----
   const wasGrounded = m.grounded;
   let grounded = false;
-  let strongestImpulse = 0;
+  let strongestE = 0;
   let strongestCurvR = 1;
   let impactNormalAngle = 0;
   let impactVn = 0;
@@ -395,8 +410,11 @@ function stepBody(m, inp, terrain, dt, sink) {
         grounded = true;
 
         const applied = resolveContact(m, contact, invM, invI);
-        if (applied.jn > strongestImpulse) {
-          strongestImpulse = applied.jn;
+        // The tick's defining blow is the one that DISSIPATED the most
+        // energy (the damage law's currency), not the biggest impulse.
+        const ev = damage.dissipated(applied.vn, applied.kn, applied.e);
+        if (ev > strongestE) {
+          strongestE = ev;
           strongestCurvR = contact.curvR;
           impactNormalAngle = Math.atan2(contact.ny, contact.nx);
           impactVn = applied.vn;
@@ -413,8 +431,8 @@ function stepBody(m, inp, terrain, dt, sink) {
   }
   m.grounded = grounded;
   m.airTicks = grounded ? 0 : (m.airTicks || 0) + 1;
-  if (strongestImpulse > 0) {
-    m.hitSeverity = severity(strongestImpulse, strongestCurvR, m);
+  if (strongestE > 0) {
+    m.hitSeverity = damage.severityFromE(strongestE, strongestCurvR, m);
 
     // ---- Per-body STRAIN (deformation): every melon, not just the
     // player. Strain is severity per unit mass — impulse scaled by the
@@ -793,12 +811,13 @@ function resolveContact(m, c, invM, invI) {
 
   // --- Normal impulse ---
   const vn = cvx * c.nx + cvy * c.ny; // negative = approaching
-  let jn = 0;
+  let jn = 0, knOut = 0, eOut = 0;
   if (vn < 0) {
-    const e = -vn > CONFIG.restitutionThreshold ? CONFIG.restitution : 0;
+    const e = -vn > CONFIG.restitutionThreshold ? damage.bodyRestitution(m) : 0;
     const rCrossN = rx * c.ny - ry * c.nx;
     const kn = invM + rCrossN * rCrossN * invI;
     jn = (-(1 + e) * vn) / kn;
+    knOut = kn; eOut = e;
     m.vx += jn * c.nx * invM;
     m.vy += jn * c.ny * invM;
     m.omega += rCrossN * jn * invI;
@@ -842,7 +861,7 @@ function resolveContact(m, c, invM, invI) {
     m.y += c.ny * corr;
   }
 
-  return { jn, vn };
+  return { jn, vn, kn: knOut, e: eOut };
 }
 
 Object.assign(window.FF, { step });

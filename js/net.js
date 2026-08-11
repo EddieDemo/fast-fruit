@@ -32,17 +32,19 @@ function createLockstep(playerCount, localSlot, delay) {
     queuedThrough: 0, // highest tick our local input has been queued for
 
     // Queue the local input for a future tick; returns the wire message.
-    queueLocal(tick, axis) {
-      buffers[localSlot].set(tick, axis);
+    // An input frame is now TWO axes: spin (a) and flare (b). A peer
+    // that omits b (older build) reads as flare-neutral — graceful.
+    queueLocal(tick, axis, bounce) {
+      buffers[localSlot].set(tick, { a: axis, b: bounce || 0 });
       ls.queuedThrough = Math.max(ls.queuedThrough, tick);
-      return { t: 'i', s: localSlot, k: tick, a: axis };
+      return { t: 'i', s: localSlot, k: tick, a: axis, b: bounce || 0 };
     },
 
     // Feed a remote (or relayed) input message.
-    addRemote(slot, tick, axis) {
+    addRemote(slot, tick, axis, bounce) {
       if (slot === localSlot) return; // our own echo
       if (slot < 0 || slot >= playerCount) return;
-      buffers[slot].set(tick, axis);
+      buffers[slot].set(tick, { a: axis, b: bounce || 0 });
     },
 
     // Can tick T be simulated? The first DELAY ticks need no network
@@ -58,8 +60,9 @@ function createLockstep(playerCount, localSlot, delay) {
     // Inputs for tick T in canonical slot order.
     inputs(tick) {
       const out = new Array(playerCount);
+      const NEUTRAL = { a: 0, b: 0 };
       for (let s = 0; s < playerCount; s++) {
-        out[s] = tick <= delay ? 0 : (buffers[s].get(tick) || 0);
+        out[s] = tick <= delay ? NEUTRAL : (buffers[s].get(tick) || NEUTRAL);
       }
       return out;
     },

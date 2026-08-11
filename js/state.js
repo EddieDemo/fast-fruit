@@ -34,7 +34,9 @@ function createState() {
     raceStartX: 0,
 
     input: {
-      rawAxis: 0,     // instantaneous intent: -1 (left), 0, +1 (right)
+      rawAxis: 0,     // instantaneous spin intent, [-1, +1]
+      rawBounce: 0,   // instantaneous flare intent, [-1, +1] (up = bouncy)
+      bounceAxis: 0,  // smoothed flare actually applied by physics
       torqueAxis: 0,  // smoothed axis actually applied by physics
     },
 
@@ -222,7 +224,7 @@ function resetPlayers(state, count, localSlot, x, y, aliasLocalInput) {
     state.players.push({
       melon,
       prevMelon: { ...melon },
-      input: { rawAxis: 0, torqueAxis: 0 },
+      input: { rawAxis: 0, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 },
     });
   }
   state.localSlot = localSlot;
@@ -282,12 +284,20 @@ function resetBots(state, count, x, y, sizeSeed, gridStart) {
     const F = window.FF.FRUITS;
     const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
     const melon = createBody(x, y, (0.85 + u * 0.33) * mult, fruit);
+    // The bot's PIGMENT: its own colour seed (pure arithmetic off the
+    // race's cast seed — no srng draw, so the sacred stream and the
+    // size deal are untouched), pushed through the species' anchor
+    // band. Presentation data riding on the body, like the player's.
+    const cseed = (((sizeSeed === undefined ? 0xB07 : sizeSeed) >>> 0) + Math.imul(i + 1, 2654435761)) >>> 0;
+    if (window.FF.shading && window.FF.shading.anchorColor) {
+      melon.bodyColor = window.FF.shading.anchorColor(fruit, (cseed ^ 0xC010A) >>> 0);
+    }
     gridPlace(state, melon, g0 + i, x, y);
     melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
     state.bots.push({
       melon,
       prevMelon: { ...melon },
-      input: { rawAxis: 1, torqueAxis: 0 }, // hold right, forever
+      input: { rawAxis: 1, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 }, // hold right, flare neutral, forever
     });
   }
 }
