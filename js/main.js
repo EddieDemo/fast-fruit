@@ -210,6 +210,9 @@ initInput(state, canvas);
 initDebugPanel(state);
 const renderer = createRenderer(canvas);
 const hud = createHud(state);
+// Boot into the menu: the grid sits assembled behind the panel. After
+// the renderer, so the menu's rotating preview can draw immediately.
+if (window.FF.flow) window.FF.flow.init(state, { respawn: respawnRace });
 
 document.getElementById('respawn-btn').addEventListener('click', () => {
   if (netSession) return; // a solo respawn would desync a lockstep race
@@ -293,12 +296,21 @@ function frame(now) {
     if (stalled) accumulator = Math.min(accumulator, stepDt * 4); // no spiral
     netSession.setStatus(stalled ? 'waiting for peers…' : '');
   } else {
-    while (accumulator >= stepDt) {
-      step(state, stepDt);
-      checkLapCrossings();
-      accumulator -= stepDt;
+    // The state machine gates the SOLO sim: menus and the finish
+    // tableau are frozen worlds. (Netplay above is never gated — a
+    // local pause over a lockstep race is a desync dressed as UI.)
+    const racing = !window.FF.flow || window.FF.flow.state === 'race';
+    if (racing) {
+      while (accumulator >= stepDt) {
+        step(state, stepDt);
+        checkLapCrossings();
+        accumulator -= stepDt;
+      }
+      checkAutoRestart();
+    } else {
+      accumulator = 0;
     }
-    checkAutoRestart();
+    if (window.FF.flow) window.FF.flow.onFrame(state);
   }
 
   // Shader Studio takes the frame over when active (sim pauses too:

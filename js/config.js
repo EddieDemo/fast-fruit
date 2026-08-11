@@ -52,7 +52,7 @@ const DEFAULTS = Object.freeze({
   friction: 0.95,          // Coulomb μ at contact
   rollingResistance: 0.025, // contact losses; also damps contact bounce at speed
   restitution: 0.18,       // NEUTRAL bounciness (flare stick centred)
-  practiceSplat: 0,        // practice mode: tint the airborne player by
+  practiceSplat: 1,        // practice mode: tint the airborne player by
                            // predicted landing fate (green/amber/red);
                            // flipping the flare mid-air flips the verdict
   bounceMax: 0.7,          // full-flare ceiling — capped well below 1: e=1

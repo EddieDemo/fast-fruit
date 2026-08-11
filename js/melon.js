@@ -133,6 +133,13 @@ function maybeAskName(onDone) {
 }
 
 window.FF = window.FF || {};
-window.FF.melon = { derive, active, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
+// setActive: the stable's selector (the menu's arrows).
+function setActive(i) {
+  const st = load();
+  if (i >= 0 && i < st.melons.length) { st.active = i; save(); }
+  return st.active;
+}
+
+window.FF.melon = { derive, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
 
 })();
