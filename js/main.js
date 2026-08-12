@@ -93,7 +93,12 @@ function respawnRace(opts) {
     : Math.max(0, GRID_SIZE - humans);
   resetBots(state, botCount, SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans);
 
-  window.FF.assignRosterNames(state, castSeed);
+  // A CUP KEEPS ITS CAST. Names are normally dealt from the race
+  // seed, which would field four different sets of rivals across a
+  // cup and make its points table meaningless. Mid-cup the DAY's seed
+  // names the field instead — same twelve melons, four races.
+  const cupSeed = (window.FF.cup && window.FF.cup.nameSeed) ? window.FF.cup.nameSeed() : null;
+  window.FF.assignRosterNames(state, (cupSeed === null || cupSeed === undefined) ? castSeed : cupSeed);
 
   // Dress the local player in their PERSISTENT melon (solo only:
   // the MP handshake doesn't carry specs yet, and a peer guessing
@@ -244,6 +249,14 @@ if (window.FF.flow) window.FF.flow.init(state, {
   // The exhibition's hooks: main.js owns track providers and race
   // setup, so it hands the module a way to ask rather than letting it
   // reach into the plumbing.
+  // Build a race on a named track (a cup leg, or practice on leg 1).
+  startLeg: (trackName) => {
+    if (trackName && ensureProvider(trackName)) {
+      modeName = trackName;
+      provider = providers[trackName];
+    }
+    respawnRace();
+  },
   exhibition: {
     gameState: () => state,
     configureRace: (cfg) => {

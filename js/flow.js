@@ -29,6 +29,8 @@ let stateRef = null;
 let respawnFn = null;
 let netplayFn = null;   // () => true while a lockstep session is live
 let exhibitionHooks = null;
+let startLegFn = null;      // (trackName) => build a race on that track
+let practiceMode = true;    // true until a cup is started
 let finishHandledTick = null;
 let spinRAF = 0;
 
@@ -90,6 +92,14 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   margin: 2px 0 10px; }
 .ff-section { font-size: var(--fs-micro); letter-spacing: 0.16em; color: var(--c-accent);
   border-top: 1px solid #1f3a24; padding-top: 8px; margin-top: 2px; }
+.ff-dayline { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-faint); text-align: center; margin-top: 8px; }
+.ff-cup-head { font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  color: var(--c-accent); text-align: center; padding: 2px 0 8px; }
+/* 'abandon cup' is deliberately the quietest thing on the screen:
+   possible, never accidental. */
+.ff-btn.ff-quiet { background: none; border: none; color: var(--c-faint);
+  font-size: var(--fs-micro); letter-spacing: var(--tr-micro); padding: 8px; }
 .ff-stat-row { display: flex; align-items: center; justify-content: space-between;
   gap: 10px; padding: 5px 0 6px; border-bottom: 1px solid #14261a; min-width: 0; }
 .ff-stat-row .k { font-size: var(--fs-micro); letter-spacing: 0.09em; color: var(--c-dim); flex: none; }
@@ -322,9 +332,18 @@ function buildMenu() {
   bodyZone.appendChild(body);
   panel.appendChild(bodyZone);
 
-  const race = el('button', 'ff-btn', 'RACE');
+  // THE HIERARCHY IS THE EXPLANATION. The cup is the day's event and
+  // the single race is how you learn it, so they are not peers: one
+  // primary button, one quiet secondary. The cup's label carries the
+  // SCALE of the commitment — four races is a real ask, and a player
+  // who discovers that in race three feels tricked.
+  const cupBtn = el('button', 'ff-btn', 'DAILY CUP \u00b7 4 RACES');
+  const race = el('button', 'ff-btn ff-secondary', "PRACTICE TODAY'S TRACK");
   const foot = el('div', 'ff-foot');
+  foot.appendChild(cupBtn);
   foot.appendChild(race);
+  const dayLine = el('div', 'ff-dayline', '');
+  foot.appendChild(dayLine);
   panel.appendChild(foot);
   elMenu.appendChild(panel);
   document.body.appendChild(elMenu);
@@ -370,6 +389,17 @@ function buildMenu() {
   };
   const refresh = () => {
     fillStats();
+    // The day's identity, and how you have done at it. This is what
+    // makes returning tomorrow feel like a fixture rather than a
+    // relaunch.
+    if (window.FF.cup && window.FF.dailyTrackName) {
+      const day = window.FF.dailyTrackName().replace('Daily ', '');
+      const rec = window.FF.cup.dayRecord();
+      dayLine.textContent = rec && rec.bestPoints !== null
+        ? day + '  \u00b7  best ' + rec.bestPoints + ' pts in ' + rec.attempts
+          + (rec.attempts === 1 ? ' try' : ' tries')
+        : day + '  \u00b7  not raced yet';
+    }
     const st = M._load();
     const cur = M.active();
     nameEl.textContent = (cur.name || 'unnamed melon')
@@ -389,12 +419,26 @@ function buildMenu() {
   };
   left.addEventListener('click', () => cycle(-1));
   right.addEventListener('click', () => cycle(1));
+  // PRACTICE: leg 1, no record, freely retried.
   race.addEventListener('click', () => {
     fromMenuOrRetry = true;
+    practiceMode = true;
+    if (window.FF.cup) window.FF.cup.abandon();
     if (window.FF.exhibition) window.FF.exhibition.stop();
-    if (respawnFn) respawnFn();   // clean grid, real roster, real laps
+    if (respawnFn) respawnFn();
     flow.go('race');
   });
+  // THE CUP: four legs, scored together.
+  cupBtn.addEventListener('click', () => {
+    if (!window.FF.cup || !startLegFn) return;
+    fromMenuOrRetry = true;
+    practiceMode = false;
+    if (window.FF.exhibition) window.FF.exhibition.stop();
+    window.FF.cup.begin();
+    startLegFn(window.FF.cup.trackForLeg(0));
+    flow.go('race');
+  });
+  elMenu._dayLine = dayLine;
   elMenu._refresh = refresh;
   elMenu._spin = spin;
   elMenu._stats = statsEl;
@@ -457,7 +501,9 @@ function buildFinish() {
   const rows = el('div', 'ff-rows');
   const facts = el('div', 'ff-facts');
   const summary = el('div', 'ff-summary');
+  const cupTable = el('div', 'ff-facts');
   const paneDefs = [
+    ['cup', 'CUP', cupTable],
     ['places', 'PLACES', rows],
     ['race', 'RACE', facts],
     ['you', 'YOU', summary],
@@ -481,14 +527,51 @@ function buildFinish() {
   const btns = el('div', 'ff-buttons');
   btns.appendChild(retry);
   btns.appendChild(menu);
+  // Mid-cup the action is NEXT RACE and nothing else is a peer:
+  // leaving abandons the attempt entirely, so it must be deliberate
+  // rather than one of two equal buttons.
+  const next = el('button', 'ff-btn', 'NEXT RACE');
+  const quit = el('button', 'ff-btn ff-quiet', 'abandon cup');
+  const cupBtns = el('div');
+  cupBtns.appendChild(next);
+  cupBtns.appendChild(quit);
   const foot = el('div', 'ff-foot');
   foot.appendChild(btns);
+  foot.appendChild(cupBtns);
   panel.appendChild(foot);
+  elFinish._btns = btns;
+  elFinish._cupBtns = cupBtns;
+  next.addEventListener('click', () => {
+    const c = window.FF.cup;
+    if (!c || !startLegFn) return;
+    startLegFn(c.trackForLeg(c.current().leg));
+    fromMenuOrRetry = true;
+    flow.go('race');
+  });
+  quit.addEventListener('click', () => {
+    // Records nothing — not even the legs already run.
+    if (window.FF.cup) window.FF.cup.abandon();
+    practiceMode = true;
+    if (respawnFn) respawnFn();
+    flow.go('menu');
+  });
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
-  retry.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
+  retry.addEventListener('click', () => {
+    // After a completed cup, RETRY means another ATTEMPT at the day —
+    // unlimited by design, ranked on your best.
+    if (!practiceMode && window.FF.cup && window.FF.cup.isComplete() && startLegFn) {
+      window.FF.cup.begin();
+      startLegFn(window.FF.cup.trackForLeg(0));
+    } else if (respawnFn) {
+      respawnFn();
+    }
+    fromMenuOrRetry = true;
+    flow.go('race');
+  });
   menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
   elFinish._rows = rows;
+  elFinish._cupTable = cupTable;
   elFinish._facts = facts;
   elFinish._summary = summary;
   elFinish._panes = panes;
@@ -629,6 +712,18 @@ flow.register('pause', {
   exit() { elPause.style.display = 'none'; },
 });
 
+// A cup leg finishing is not the end of anything except that leg, so
+// the finish screen behaves differently mid-cup: the standings become
+// a POINTS TABLE and the action is NEXT RACE. Leaving mid-cup must be
+// deliberate — abandoning records nothing at all — so MAIN MENU is
+// demoted rather than offered as an equal choice.
+function inCup() {
+  return !practiceMode && window.FF.cup && window.FF.cup.isRunning();
+}
+function cupJustEnded() {
+  return !practiceMode && window.FF.cup && window.FF.cup.isComplete();
+}
+
 flow.register('finish', {
   enter() {
     // THE ONE CAREER WRITE. This is the only moment a race is
@@ -644,14 +739,38 @@ flow.register('finish', {
       const rw = window.FF.raceWatch;
       const sum = (rw && rw.summary) ? rw.summary(stateRef) : {};
       if (mine) {
-        M.recordRace({
-          place: mine.pos,
-          fieldSize: rowsNow.length,
-          splats: sum.deaths || 0,
-          bestLapTicks: (stateRef.race && stateRef.race.bestLapTicks) || null,
-          distanceM: mine.x / 100,
-          biggestSurvived: sum.biggestSurvived || 0,
-        });
+        // PRACTICE RECORDS NOTHING: it is how you learn the day's
+        // terrain, not a result. Cup races record as races, exactly
+        // as before the cup existed.
+        if (!practiceMode) {
+          M.recordRace({
+            place: mine.pos,
+            fieldSize: rowsNow.length,
+            splats: sum.deaths || 0,
+            bestLapTicks: (stateRef.race && stateRef.race.bestLapTicks) || null,
+            distanceM: mine.x / 100,
+            biggestSurvived: sum.biggestSurvived || 0,
+          });
+        }
+        if (!practiceMode && window.FF.cup && window.FF.cup.current()) {
+          window.FF.cup.completeLeg({
+            place: mine.pos,
+            fieldSize: rowsNow.length,
+            timeSec: mine.timeSec,
+            splats: sum.deaths || 0,
+            standings: rowsNow,   // the whole field, for the points table
+          });
+          // A finished cup banks the attempt and the career record.
+          if (window.FF.cup.isComplete()) {
+            const done = window.FF.cup.finish();
+            if (done && M.recordCup) {
+              // done.place is the player's rank in the cup's own
+              // points table — a fact, computed from every racer's
+              // finishes, not an estimate from the player's score.
+              M.recordCup({ place: done.place, points: done.totals.points });
+            }
+          }
+        }
       }
     }
     // Hand the melon over: the field keeps racing behind the panel.
@@ -683,7 +802,12 @@ flow.register('finish', {
     }
     fillFacts();
     fillSummary();
-    showTab('places');   // the result first; curiosity is one tap away
+    const cupping = !practiceMode && window.FF.cup && window.FF.cup.current();
+    fillCup();
+    // Mid-cup the standings that matter are the CUP's, so that tab
+    // leads; a single race still opens on its own result.
+    setCupMode(!!cupping, cupping && window.FF.cup.isComplete());
+    showTab(cupping ? 'cup' : 'places');
     startSpinners();
   },
   exit() {
@@ -711,6 +835,40 @@ function showTab(key) {
   // reads exactly like "low fidelity and won't rotate".
   spinnersPaused = key !== 'places';
   if (!spinnersPaused) startSpinners();
+}
+
+// ---- The CUP tab: the points table, and what it is for ----------
+function fillCup() {
+  const box = elFinish._cupTable;
+  box.textContent = '';
+  const c = window.FF.cup;
+  if (!c || !c.current()) return;
+  const rows = c.table();
+  const t = c.totals();
+  const legs = c.current().leg;
+  const head = el('div', 'ff-cup-head',
+    c.isComplete() ? 'FINAL \u00b7 ' + t.points + ' pts'
+      : 'AFTER ' + legs + ' OF ' + c.LEGS + '  \u00b7  ' + t.points + ' pts');
+  box.appendChild(head);
+  for (const r of rows) {
+    const row = el('div', 'ff-fact' + (r.isPlayer ? ' ff-you' : ''));
+    row.appendChild(el('div', 'ff-fact-l', ordinal(r.pos)));
+    const right = el('div', 'ff-fact-r');
+    right.appendChild(el('div', 'ff-fact-n', r.isPlayer ? 'YOU' : r.name));
+    right.appendChild(el('div', 'ff-fact-v', r.points + ' pts  \u00b7  ' + fmtTime(r.timeSec)));
+    row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
+// Which face is the finish screen wearing?
+function setCupMode(cupping, complete) {
+  const showCupTab = !!cupping;
+  elFinish._tabBtns.cup.style.display = showCupTab ? '' : 'none';
+  // Mid-cup: NEXT RACE. Cup over, or a practice race: RETRY / MENU.
+  const mid = cupping && !complete;
+  elFinish._cupBtns.style.display = mid ? '' : 'none';
+  elFinish._btns.style.display = mid ? 'none' : '';
 }
 
 // ---- The RACE tab: superlatives over the whole field -------------
@@ -793,6 +951,7 @@ flow.init = function (state, opts) {
   respawnFn = (opts && opts.respawn) || null;
   netplayFn = (opts && opts.isNetplay) || null;
   exhibitionHooks = (opts && opts.exhibition) || null;
+  startLegFn = (opts && opts.startLeg) || null;
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);

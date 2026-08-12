@@ -77,6 +77,12 @@ function blankRecord() {
     biggestSurvived: 0,
     bestPlace: null,
     lastRaced: null,
+    // CUPS ARE THEIR OWN UNIT. Without this, "wins" would silently
+    // mean two things the day the cup shipped — race wins and cup
+    // wins — and every existing number would change meaning. Cup
+    // races still count as races; only completed cups count here.
+    cups: 0, cupWins: 0, cupPodiums: 0,
+    bestCupPlace: null, bestCupPoints: null,
   };
 }
 
@@ -174,6 +180,9 @@ function career(melonRef) {
   add('splats', 'SPLATS', String(r.splats),
     r.races ? (r.splats / r.races).toFixed(1) + ' per race' : null);
   add('tough', 'BIGGEST HIT SURVIVED', r.biggestSurvived ? String(r.biggestSurvived) : '\u2014');
+  add('cups', 'CUPS', String(r.cups || 0));
+  add('cupwins', 'CUP WINS', String(r.cupWins || 0));
+  add('bestcup', 'BEST CUP', r.bestCupPlace ? ordinal(r.bestCupPlace) : '\u2014');
   add('born', m.firstSeen ? 'FIRST SEEN' : 'RECEIVED', m.born || '\u2014');
   return rows;
 }
@@ -183,6 +192,21 @@ function ordinal(n) {
   if (t >= 11 && t <= 13) return n + 'th';
   const d = n % 10;
   return n + (d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th');
+}
+
+// The cup's own write, mirroring recordRace: one call, at the end of
+// a COMPLETED cup. Practice and abandoned cups never reach here.
+function recordCup(result) {
+  if (!result || !result.place) return null;
+  const m = active();
+  const r = m.record || (m.record = blankRecord());
+  r.cups++;
+  if (result.place === 1) r.cupWins++;
+  if (result.place <= 3) r.cupPodiums++;
+  if (r.bestCupPlace === null || result.place < r.bestCupPlace) r.bestCupPlace = result.place;
+  if (r.bestCupPoints === null || (result.points || 0) > r.bestCupPoints) r.bestCupPoints = result.points || 0;
+  save();
+  return r;
 }
 
 // ---- Melon codes: the seed cannot lie ----
@@ -299,6 +323,6 @@ function stats(seed, fruit) {
   return rows;
 }
 
-window.FF.melon = { derive, stats, career, recordRace, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
+window.FF.melon = { derive, stats, career, recordRace, recordCup, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
 
 })();

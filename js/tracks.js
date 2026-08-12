@@ -147,18 +147,39 @@ window.FF = window.FF || {};
 // forever, with no registry entry and no server.
 const DAILY_RE = /^Daily (\d{4})-(\d{2})-(\d{2})$/;
 
+// A daily name may carry a CUP LEG: "Daily 2026-08-12" is leg 1, and
+// "Daily 2026-08-12 #2..#4" are the rest of that day's cup. All four
+// derive from the same date, so a day has ONE identity and practising
+// leg 1 genuinely prepares you for the cup's first race.
+const LEG_RE = /\s#([1-4])$/;
+
 function trackDefByName(name) {
   if (TRACKS[name]) return TRACKS[name];
-  const m = DAILY_RE.exec(name || '');
+  const legM = LEG_RE.exec(name || '');
+  const leg = legM ? parseInt(legM[1], 10) : 1;
+  const base = legM ? name.slice(0, legM.index) : name;
+  const m = DAILY_RE.exec(base || '');
   if (m) {
+    const dateSeed = parseInt(m[1] + m[2] + m[3], 10);
+    // Leg 1 MUST keep the bare date seed, or today's practice track
+    // stops matching the cup's first race (and every stored daily
+    // ghost/record from before the cup would silently change track).
+    const seed = leg === 1 ? dateSeed : (dateSeed ^ Math.imul(leg, 0x9E3779B1)) >>> 0;
     return {
-      seed: parseInt(m[1] + m[2] + m[3], 10),
+      seed,
       lapLengthM: 400,
       dropPerLapM: 70,
       laps: 3,
+      leg,
     };
   }
   return null;
+}
+
+// The four legs of a day's cup, in order. Leg 1 is the plain daily.
+function dailyCupTracks(d) {
+  const base = dailyTrackName(d);
+  return [base, base + ' #2', base + ' #3', base + ' #4'];
 }
 
 // Today's daily name, from the local date: the seed IS the date.
@@ -168,6 +189,6 @@ function dailyTrackName(d) {
   return `Daily ${day.getFullYear()}-${p(day.getMonth() + 1)}-${p(day.getDate())}`;
 }
 
-Object.assign(window.FF, { TRACKS, createTrackProvider, trackDefByName, dailyTrackName });
+Object.assign(window.FF, { TRACKS, createTrackProvider, trackDefByName, dailyTrackName, dailyCupTracks });
 
 })();
