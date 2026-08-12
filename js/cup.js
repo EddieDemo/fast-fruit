@@ -62,6 +62,26 @@ function begin(day) {
 }
 
 function current() { return active; }
+
+// Rehydrate a cup from a snapshot. Only the fields the cup actually
+// owns — the tracks are re-derived from the day, so a change to the
+// leg-seed rule can never resurrect a cup pointing at stale terrain.
+function resume(saved) {
+  if (!saved || !saved.day) return null;
+  const tracks = window.FF.dailyCupTracks();
+  if (saved.day !== window.FF.dailyTrackName()) return null;  // yesterday's cup
+  active = {
+    day: saved.day,
+    tracks,
+    leg: Math.max(0, Math.min(LEGS, saved.leg || 0)),
+    results: (saved.results || []).slice(),
+    table: saved.table || {},
+    nameSeed: saved.nameSeed !== undefined && saved.nameSeed !== null
+      ? saved.nameSeed
+      : window.FF.trackDefByName(tracks[0]).seed,
+  };
+  return active;
+}
 function isRunning() { return !!active && active.leg < LEGS; }
 function trackForLeg(i) { return active ? active.tracks[i] : null; }
 
@@ -178,7 +198,7 @@ function finish() {
 
 window.FF.cup = {
   LEGS, pointsFor, begin, current, isRunning, isComplete, trackForLeg,
-  completeLeg, totals, table, playerPlace, finish, abandon, dayRecord,
+  completeLeg, totals, table, playerPlace, finish, abandon, dayRecord, resume,
   nameSeed: () => (active ? active.nameSeed : null),
   _load: load,
 };

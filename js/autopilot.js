@@ -37,7 +37,7 @@
 // unaffected.
 // ============================================================
 
-const state = { engaged: false, sinceTick: 0 };
+const state = { engaged: false, sinceTick: 0, driven: null };
 
 // The neutral policy comes from the BRAIN REGISTRY now: 'cruise' is
 // the one definition of "drives like a bot", so the post-flag
@@ -61,6 +61,8 @@ function engage(gameState, opts) {
   if (opts && opts.netplay) return false;
   state.engaged = true;
   state.sinceTick = (gameState && gameState.tick) || 0;
+  // Remember whose wheel we took, so it can be handed back centred.
+  state.driven = gameState || null;
   // Stop the hands from reaching the wheel: pointers are cleared so a
   // tap on RETRY can't also steer, and the visible stick vanishes
   // because there is nothing to draw.
@@ -73,6 +75,22 @@ function engage(gameState, opts) {
 function disengage() {
   if (!state.engaged) return false;
   state.engaged = false;
+  // HAND THE WHEEL BACK CENTRED. The autopilot drives by writing the
+  // same input fields the stick writes, so releasing without clearing
+  // them leaves full throttle held: the menu's exhibition would end
+  // and the player's very next race would begin already accelerating
+  // — indistinguishable from "a bot is driving my melon" until the
+  // player touched the stick and overwrote it. Both the raw values
+  // and the SMOOTHED ones, or the eased axis keeps driving for a
+  // fraction of a second after the handover.
+  const gs = state.driven;
+  if (gs && gs.input) {
+    gs.input.rawAxis = 0;
+    gs.input.rawBounce = 0;
+    gs.input.torqueAxis = 0;
+    gs.input.bounceAxis = 0;
+  }
+  state.driven = null;
   if (window.FF.setInputEnabled) window.FF.setInputEnabled(true);
   return true;
 }

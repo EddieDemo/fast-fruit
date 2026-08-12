@@ -130,6 +130,9 @@ function has(name) { return BRAINS.has(name); }
 register('cruise', () => ({
   name: 'cruise',
   drive() { return { axis: 1, bounce: 0 }; },
+  // Stateless: nothing to carry across a resume.
+  save() { return null; },
+  load() {},
 }));
 
 // ORACLE: cruise until the landing it is committed to would kill it,
@@ -170,6 +173,17 @@ register('oracle', () => {
       // makes this near-optimal rather than merely safe.
       const drive = Math.sqrt(Math.max(0, 1 - held * held));
       return { axis: drive, bounce: held };
+    },
+    // A brain's HELD PRESCRIPTION is real state: an oracle caught
+    // mid-fall has already decided how much flare this landing needs,
+    // and a resume that forgot it would drive differently for the
+    // next few ticks. Small, but it is the difference between "the
+    // same race continues" and "a similar race continues".
+    save() { return { h: held, u: heldUntilGround ? 1 : 0 }; },
+    load(s) {
+      if (!s) return;
+      held = s.h || 0;
+      heldUntilGround = !!s.u;
     },
   };
 });

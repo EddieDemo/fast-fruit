@@ -119,6 +119,13 @@ function respawnRace(opts) {
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
+  // A NEW RACE STARTS FROM A CENTRED WHEEL. Whatever drove the world
+  // a moment ago — the menu's exhibition, the post-flag autopilot —
+  // must not leak a held throttle into the grid.
+  if (!netSession) {
+    state.input.rawAxis = 0; state.input.rawBounce = 0;
+    state.input.torqueAxis = 0; state.input.bounceAxis = 0;
+  }
   // Clear last race's finish stamps: a body persists across respawns,
   // so a stale stamp would show the previous race's time.
   for (const pl of state.players) pl.melon.finishTick = null;
@@ -243,8 +250,31 @@ const hud = createHud(state);
 // the renderer, so the menu's rotating preview can draw immediately.
 if (window.FF.ticker) window.FF.ticker.init();
 if (window.FF.exhibition) window.FF.exhibition.init();
+// Phones do not get a graceful exit, so the write that matters is the
+// one before backgrounding. Both events, because browsers disagree
+// about which they fire.
+if (typeof document !== 'undefined') {
+  const flush = () => {
+    const st = window.FF.flow && window.FF.flow.state;
+    if (!netSession && st === 'race' && window.FF.resume) {
+      window.FF.resume.save(state, { netplay: false });
+    }
+  };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+  window.addEventListener('pagehide', flush);
+}
+
 if (window.FF.flow) window.FF.flow.init(state, {
   respawn: () => respawnRace(),
+  // Put the game on a named track with a given field, exactly as
+  // starting that race would — then resume.js overwrites the bodies.
+  rebuild: (trackName, botCount) => {
+    if (trackName && ensureProvider(trackName)) {
+      modeName = trackName;
+      provider = providers[trackName];
+    }
+    respawnRace();
+  },
   isNetplay: () => !!netSession,
   // The exhibition's hooks: main.js owns track providers and race
   // setup, so it hands the module a way to ask rather than letting it
@@ -415,6 +445,12 @@ function frame(now) {
     // moment race.finishedTick appears, and it must find every stamp
     // already written.
     if (window.FF.flow) window.FF.flow.onFrame(state);
+    // A race in progress is saved on a heartbeat. Only while actually
+    // racing: a finished or abandoned race has nothing to resume, and
+    // saving the menu's exhibition would offer to "resume" scenery.
+    if (racing && fs === 'race' && window.FF.resume) {
+      window.FF.resume.tick(state, { netplay: !!netSession });
+    }
   }
 
   // Shader Studio takes the frame over when active (sim pauses too:

@@ -30,6 +30,7 @@ let respawnFn = null;
 let netplayFn = null;   // () => true while a lockstep session is live
 let exhibitionHooks = null;
 let startLegFn = null;      // (trackName) => build a race on that track
+let rebuildFn = null;       // (trackName, botCount) => rebuild for a restore
 let practiceMode = true;    // true until a cup is started
 let finishHandledTick = null;
 let spinRAF = 0;
@@ -279,6 +280,13 @@ function fmtTime(sec) {
   return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
 }
 
+// A full ordinal ("3rd"). fillCup called this before it existed —
+// a ReferenceError inside the finish screen's enter(), which killed
+// the frame loop and left a black screen on NEXT RACE.
+function ordinal(n) {
+  return String(n) + ordinalSuffix(n);
+}
+
 // English ordinal suffix. 11/12/13 are the classic trap (eleventh,
 // not eleven-first), so the teens are special-cased before the
 // last-digit rule — a 12-racer field would have hit it.
@@ -337,9 +345,13 @@ function buildMenu() {
   // primary button, one quiet secondary. The cup's label carries the
   // SCALE of the commitment — four races is a real ask, and a player
   // who discovers that in race three feels tricked.
+  // A half-finished run is the most urgent thing on this screen, so
+  // it takes the primary slot and pushes the cup down to secondary.
+  const resumeBtn = el('button', 'ff-btn', 'RESUME');
   const cupBtn = el('button', 'ff-btn', 'DAILY CUP \u00b7 4 RACES');
   const race = el('button', 'ff-btn ff-secondary', "PRACTICE TODAY'S TRACK");
   const foot = el('div', 'ff-foot');
+  foot.appendChild(resumeBtn);
   foot.appendChild(cupBtn);
   foot.appendChild(race);
   const dayLine = el('div', 'ff-dayline', '');
@@ -392,6 +404,18 @@ function buildMenu() {
     // The day's identity, and how you have done at it. This is what
     // makes returning tomorrow feel like a fixture rather than a
     // relaunch.
+    // A waiting run rewrites the menu's hierarchy.
+    const snap = window.FF.resume ? window.FF.resume.peek() : null;
+    if (elMenu._resumeBtn) {
+      elMenu._resumeBtn.style.display = snap ? '' : 'none';
+      elMenu._cupBtn.classList.toggle('ff-secondary', !!snap);
+      if (snap) {
+        elMenu._resumeBtn.textContent = snap.cup
+          ? 'RESUME CUP \u00b7 RACE ' + Math.min(window.FF.cup.LEGS, (snap.cup.leg || 0) + 1)
+            + ' OF ' + window.FF.cup.LEGS
+          : 'RESUME PRACTICE';
+      }
+    }
     if (window.FF.cup && window.FF.dailyTrackName) {
       const day = window.FF.dailyTrackName().replace('Daily ', '');
       const rec = window.FF.cup.dayRecord();
@@ -439,6 +463,20 @@ function buildMenu() {
     flow.go('race');
   });
   elMenu._dayLine = dayLine;
+  elMenu._resumeBtn = resumeBtn;
+  elMenu._cupBtn = cupBtn;
+  resumeBtn.addEventListener('click', () => {
+    const R = window.FF.resume;
+    if (!R || !rebuildFn) return;
+    const snap = R.restore(stateRef, rebuildFn);
+    if (!snap) { refresh(); return; }         // vanished or stale
+    practiceMode = !!snap.practice;
+    fromMenuOrRetry = false;                  // mid-run: keep the records
+    if (window.FF.exhibition) window.FF.exhibition.stop();
+    // Never drop a returning player into a moving world.
+    flow.go('race');
+    flow.go('pause');
+  });
   elMenu._refresh = refresh;
   elMenu._spin = spin;
   elMenu._stats = statsEl;
@@ -465,7 +503,16 @@ function buildPause() {
   document.body.appendChild(elPause);
   resume.addEventListener('click', () => flow.go('race'));
   restart.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
-  menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
+  menu.addEventListener('click', () => {
+    // Leaving for the menu ends the run: nothing left to resume, and
+    // an orphaned snapshot would offer to restore a race the player
+    // deliberately walked away from.
+    if (window.FF.resume) window.FF.resume.clear();
+    if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
+    if (respawnFn) respawnFn();
+    fromMenuOrRetry = true;
+    flow.go('menu');
+  });
 
   // The button itself: visible only while racing (a pause control on
   // the pause screen would be a trap).
@@ -550,6 +597,7 @@ function buildFinish() {
   });
   quit.addEventListener('click', () => {
     // Records nothing — not even the legs already run.
+    if (window.FF.resume) window.FF.resume.clear();
     if (window.FF.cup) window.FF.cup.abandon();
     practiceMode = true;
     if (respawnFn) respawnFn();
@@ -569,7 +617,16 @@ function buildFinish() {
     fromMenuOrRetry = true;
     flow.go('race');
   });
-  menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
+  menu.addEventListener('click', () => {
+    // Leaving for the menu ends the run: nothing left to resume, and
+    // an orphaned snapshot would offer to restore a race the player
+    // deliberately walked away from.
+    if (window.FF.resume) window.FF.resume.clear();
+    if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
+    if (respawnFn) respawnFn();
+    fromMenuOrRetry = true;
+    flow.go('menu');
+  });
   elFinish._rows = rows;
   elFinish._cupTable = cupTable;
   elFinish._facts = facts;
@@ -708,7 +765,13 @@ flow.register('race', {
 // does the pausing — this screen is only the face of it. (Netplay is
 // never gated: pausing a lockstep race would desync the session.)
 flow.register('pause', {
-  enter() { elPause.style.display = 'flex'; },
+  enter() {
+    // The likeliest moment for someone to put the phone down.
+    if (window.FF.resume && stateRef) {
+      window.FF.resume.save(stateRef, { netplay: !!(netplayFn && netplayFn()) });
+    }
+    elPause.style.display = 'flex';
+  },
   exit() { elPause.style.display = 'none'; },
 });
 
@@ -952,6 +1015,7 @@ flow.init = function (state, opts) {
   netplayFn = (opts && opts.isNetplay) || null;
   exhibitionHooks = (opts && opts.exhibition) || null;
   startLegFn = (opts && opts.startLeg) || null;
+  rebuildFn = (opts && opts.rebuild) || null;
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
