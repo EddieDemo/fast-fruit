@@ -120,17 +120,29 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   const shockBase = 40 + Math.min(520, kJn * 0.09);
   const energyK = Math.min(1, kJn / 4000);
 
-  // Every melon's pulp wears ITS OWN green: rind fragments tint from
-  // the owner's body color (two darkened shades), so a debris field is
-  // readable history — you can see WHO died here. Flesh stays the
-  // universal pink; a scatter of near-black SEEDS completes the
-  // watermelon fiction. Colors are presentation-only strings riding on
-  // sim-tier fragments: identical on every peer, never read by motion.
-  const baseCol = window.FF.racerColor ? window.FF.racerColor(state, bodyIndex) : '#00ff00';
-  const pulp = (window.FF.FRUITS && window.FF.FRUITS[m.fruit] && window.FF.FRUITS[m.fruit].pulp)
-    || { flesh: '#ff4757', fleshLight: '#ff6b7d', seed: '#222222', rindK: 0.72, slabK: 0.52 };
-  const rindCol = shadeHex(baseCol, pulp.rindK);
-  const slabCol = shadeHex(baseCol, pulp.slabK);
+  // Every body's pulp wears ITS OWN colours, and now they come from
+  // the SAME rig as the body (shading.pulpPalette): shell fragments
+  // are the body's actual palette bands, flesh is the species'
+  // fleshBand seeded per individual and lit by the same law. A debris
+  // field is readable history — you can see WHO died here — and it
+  // finally reads as pieces of that fruit rather than stickers.
+  //
+  // Previously this tinted from racerColor(), i.e. the PRE-COMPENSATED
+  // anchor, so the pre-compensated species sprayed shards of a colour
+  // they never appear to be on track (a tennis ball's #0fe600). The
+  // palette is computed post-sun, so that bug dies with the multiply.
+  //
+  // Colours are presentation-only strings riding on sim-tier
+  // fragments: identical on every peer, never read by motion, and
+  // derived WITHOUT touching the rng stream.
+  const bodyHex = m.bodyColor
+    || (window.FF.racerColor ? window.FF.racerColor(state, bodyIndex) : '#37a01c');
+  const F = (window.FF.FRUITS && window.FF.FRUITS[m.fruit]) || {};
+  const pulp = (window.FF.shading && window.FF.shading.pulpPalette)
+    ? window.FF.shading.pulpPalette(m.fruit, colorSeedOf(m), bodyHex, F.patternOffset)
+    : (F.pulp || { flesh: '#ff4757', fleshLight: '#ff6b7d', seed: '#222222' });
+  const rindCol = pulp.rind;
+  const slabCol = pulp.slab;
 
   // Cell recipe: radial band (k), size band (r), kind, and direction
   // bias: 'far' = along +n (survivors), 'near' = along -n (the crush
@@ -280,14 +292,18 @@ function makeShard(f, rng) {
   f.verts = v;
 }
 
-// Darken a #rrggbb color by factor k (presentation util).
-function shadeHex(hex, k) {
-  const n = parseInt(hex.slice(1), 16);
-  const rr = Math.round(((n >> 16) & 255) * k);
-  const gg = Math.round(((n >> 8) & 255) * k);
-  const bb = Math.round((n & 255) * k);
-  return '#' + ((1 << 24) | (rr << 16) | (gg << 8) | bb).toString(16).slice(1);
+// A stable per-individual key for the flesh derivation. Hashing the
+// body's own pigment means the interior is owned by the same identity
+// as the exterior without needing the melon's seed plumbed down here
+// — and it is pure arithmetic, so the rng stream is untouched (the
+// hazard that matters: debris runs inside the sim).
+function colorSeedOf(m) {
+  const s = String(m.bodyColor || m.patKey || m.name || m.fruit || 'x');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
+
 
 // Ellipse radius along a WORLD direction (dx,dy).
 function radiusInWorldDir(dx, dy, cos, sin, a, b) {

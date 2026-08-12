@@ -25,6 +25,17 @@ const FRUITS = {
     // the measured envelope, widened 15%. Individuals derive their anchor
     // continuously from this band (shading.js anchorColor): the seed
     // owns the pigment.
+    fleshBand: { h: [14.9, 22.1], s: [1, 1], l: [0.44, 0.6] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#ff4757',      // chunks
       fleshLight: '#ff6b7d', // fine spray
@@ -45,6 +56,17 @@ const FRUITS = {
     // muted tans, creams and yellows. Individuals derive their anchor
     // continuously from this band (shading.js anchorColor): the seed
     // owns the pigment.
+    fleshBand: { h: [50.7, 56.5], s: [1, 1], l: [0.329, 0.399] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#ff9438',      // orange flesh: forensic wreckage identity
       fleshLight: '#ffb066',
@@ -61,6 +83,17 @@ const FRUITS = {
     // the bright sunny yellows. Individuals derive their anchor
     // continuously from this band (shading.js anchorColor): the seed
     // owns the pigment.
+    fleshBand: { h: [106.4, 114.5], s: [0.885, 0.978], l: [0.556, 0.74] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#b8e086',      // pale green flesh: the third forensic color
       fleshLight: '#d2eda9',
@@ -100,6 +133,17 @@ const FRUITS = {
     // entirely through dL*, which is correct — hue moves are invisible
     // at zero saturation, not compensated for).
     patternOffset: { dL: -12, dH: 100, dS: 78 },
+    fleshBand: { h: [110.1, 118.7], s: [0.951, 1], l: [0.379, 0.666] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#8fd94a',      // yolk-green splatter
       fleshLight: '#c3ee92',
@@ -129,6 +173,17 @@ const FRUITS = {
     // The number disc: pattern anchor driven to white off the black
     // base purely by lightness — black has no hue or sat to shift.
     patternOffset: { dL: 80, dH: 0, dS: 0 },
+    fleshBand: { h: [244.2, 249.7], s: [0.264, 0.356], l: [0.191, 0.359] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#2a2b2e',      // phenolic resin shards
       fleshLight: '#4a4b4f',
@@ -152,6 +207,17 @@ const FRUITS = {
     // a modest lift and gentle desaturation, so it derives to a pale
     // green (~#ceeeb1 on the reference anchor) rather than pure white.
     patternOffset: { dL: 14, dH: 0, dS: -12 },
+    fleshBand: { h: [88.7, 94.6], s: [1, 1], l: [0.656, 0.833] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#e8f2a0',      // felt fuzz
       fleshLight: '#f4f9c8',
@@ -182,6 +248,17 @@ const FRUITS = {
     // of ball still derives its own star. Shading of both shell and
     // star follows the global law. (Re-solved against the new anchors.)
     patternOffset: { dL: -11, dH: -28, dS: 30 },
+    fleshBand: { h: [58, 63.7], s: [1, 1], l: [0.271, 0.475] },
+    // The INTERIOR's anchor band — same law as the shell's
+    // anchorBand, so an individual's flesh derives from its own seed
+    // too. PRE-SUN, like the pre-compensated species: these values
+    // were SOLVED numerically so that after the lighting law the
+    // flesh lands on the authored intent (the law rotates hue ~22
+    // degrees, which turned watermelon red into hot pink when the
+    // band was authored in final-colour space). Biased darker and
+    // slightly richer than the authored pair: an interior surface is
+    // self-shadowed, which the law cannot know unless the pigment
+    // says so.
     pulp: {
       flesh: '#ffb03a',      // glassy amber shards
       fleshLight: '#ffd08a',

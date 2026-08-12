@@ -28,6 +28,7 @@ const flow = { state: 'boot' };
 let stateRef = null;
 let respawnFn = null;
 let netplayFn = null;   // () => true while a lockstep session is live
+let exhibitionHooks = null;
 let finishHandledTick = null;
 let spinRAF = 0;
 
@@ -273,8 +274,8 @@ function buildMenu() {
   const row = el('div', 'ff-melon-row');
   const left = el('button', 'ff-arrow', '\u25C0');
   const spin = el('canvas', 'ff-spin ff-portrait');
-  // Backing store sized for the biggest the portrait can render, so
-  // the body stays crisp on a retina panel (CSS sizes the box).
+  // Initial hint only: syncCanvasSize measures the real box every
+  // frame and resizes the backing store to match device pixels.
   spin.width = 560; spin.height = 560;
   const right = el('button', 'ff-arrow', '\u25B6');
   row.appendChild(left); row.appendChild(spin); row.appendChild(right);
@@ -283,10 +284,8 @@ function buildMenu() {
   leftCol.appendChild(nameEl);
   const statsEl = el('div', 'ff-stats');
   rightCol.appendChild(statsEl);
-  const careerHead = el('div', 'ff-section', 'CAREER');
-  const careerEl = el('div', 'ff-stats');
-  rightCol.appendChild(careerHead);
-  rightCol.appendChild(careerEl);
+  // (Single table now — the CAREER sub-heading retired with the split.
+  // melon.career() is untouched and still feeds it.)
   body.appendChild(leftCol);
   body.appendChild(rightCol);
   const bodyZone = el('div', 'ff-body');
@@ -301,6 +300,17 @@ function buildMenu() {
   document.body.appendChild(elMenu);
 
   const M = window.FF.melon;
+  // WHAT THE MENU SHOWS, and in what order. melon.js still computes
+  // the full card — every physical stat and the whole career record —
+  // and this is purely the menu's editorial choice about which of it
+  // earns space on the first screen (Eddie, 2026-08-12). A later
+  // "detailed info" view is then a different selection over the same
+  // data, not new plumbing: change this list, change the card.
+  //
+  // The NAME is deliberately absent: it sits under the portrait as a
+  // heading, not as a row in a table of statistics.
+  const MENU_ROWS = ['species', 'weight', 'races', 'wins', 'podiums', 'best'];
+
   // One renderer for both halves: stats() and career() return the
   // same row shape, so the card grows by adding rows in melon.js and
   // never by editing the menu.
@@ -318,8 +328,15 @@ function buildMenu() {
   const fillStats = () => {
     const design = window.FF.studio && window.FF.studio.design;
     const fruit = (design && design.fruit) || 'watermelon';
-    renderRows(statsEl, M.stats ? M.stats(M.active().seed, fruit) : []);
-    renderRows(careerEl, M.career ? M.career() : []);
+    // Both sources, indexed by key, then selected in the declared
+    // order. Unknown keys are skipped rather than rendered blank, so
+    // this list can name a row that a future species doesn't have.
+    const byKey = new Map();
+    for (const r of (M.stats ? M.stats(M.active().seed, fruit) : [])) byKey.set(r.key, r);
+    for (const r of (M.career ? M.career() : [])) byKey.set(r.key, r);
+    const rows = [];
+    for (const k of MENU_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
+    renderRows(statsEl, rows);
   };
   const refresh = () => {
     fillStats();
@@ -335,11 +352,19 @@ function buildMenu() {
     const st = M._load();
     M.setActive((st.active + d + st.melons.length) % st.melons.length);
     refresh();
-    if (respawnFn) respawnFn(); // re-dress the grid with the chosen melon
+    // No respawn here any more: during the exhibition a respawn would
+    // restart the background race on every arrow press, and the real
+    // grid is rebuilt on RACE anyway.
+    if (!(window.FF.exhibition && window.FF.exhibition.running) && respawnFn) respawnFn();
   };
   left.addEventListener('click', () => cycle(-1));
   right.addEventListener('click', () => cycle(1));
-  race.addEventListener('click', () => { fromMenuOrRetry = true; flow.go('race'); });
+  race.addEventListener('click', () => {
+    fromMenuOrRetry = true;
+    if (window.FF.exhibition) window.FF.exhibition.stop();
+    if (respawnFn) respawnFn();   // clean grid, real roster, real laps
+    flow.go('race');
+  });
   elMenu._refresh = refresh;
   elMenu._spin = spin;
   elMenu._stats = statsEl;
@@ -446,6 +471,21 @@ function buildFinish() {
 // are the REAL species/pigment/pattern, not icons.
 const spinners = []; // { canvas, a, b, color, patKey, fruit, angle }
 let spinnersPaused = false;
+// A canvas has TWO sizes: its CSS box and its backing store. A fixed
+// backing store is under-resolved the moment CSS scales the box up on
+// a high-DPR screen — and no amount of pattern fidelity survives being
+// resampled by a soft canvas. So each spinner sizes its store from the
+// box it actually occupies times devicePixelRatio, and re-sizes when
+// that changes (rotation, window resize, moving to another monitor).
+function syncCanvasSize(cv) {
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  const rect = cv.getBoundingClientRect();
+  const cssW = rect.width || cv.clientWidth || 104;
+  const want = Math.max(64, Math.min(1600, Math.round(cssW * dpr)));
+  if (cv.width !== want || cv.height !== want) { cv.width = want; cv.height = want; }
+  return { dpr, cssW };
+}
+
 function spinLoop(now) {
   spinRAF = 0;
   const draw = window.FF.drawMelonStandalone;
@@ -455,13 +495,17 @@ function spinLoop(now) {
     if (!s.canvas.isConnected) continue;
     any = true;
     s.angle += 0.016 * (s.rate === undefined ? 0.9 : s.rate); // slow, stately
+    const { dpr, cssW } = syncCanvasSize(s.canvas);
     const ctx = s.canvas.getContext('2d');
     ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
     ctx.save();
     ctx.translate(s.canvas.width / 2, s.canvas.height / 2);
-    const fit = (s.canvas.width / 2 - 4) / Math.max(s.a, s.b);
+    const fit = (s.canvas.width / 2 - 4 * dpr) / Math.max(s.a, s.b);
     ctx.scale(fit, fit);
-    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit);
+    // The pattern raster is built for THIS destination: `fit` is
+    // exactly device pixels per world pixel, which is the number the
+    // renderer needs and the only place it can be known.
+    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit);
     ctx.restore();
   }
   if (any && flow.state !== 'race') spinRAF = requestAnimationFrame(spinLoop);
@@ -483,6 +527,10 @@ flow.go = function (name) {
 
 flow.register('menu', {
   enter() {
+    // Scenery: a full grid of bots lapping today's daily behind the
+    // panel. Started here and stopped on exit, so it can never
+    // outlive the screen that owns it.
+    if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
     elMenu.style.display = 'flex';
     elMenu._refresh();
     spinners.length = 0;
@@ -506,7 +554,13 @@ flow.register('menu', {
     });
     startSpinners();
   },
-  exit() { elMenu.style.display = 'none'; },
+  exit() {
+    // Pressing RACE resets to a clean grid: you cannot be handed a
+    // lap-two position you did not earn, so the exhibition is torn
+    // down and a real race is built fresh (respawnFn below).
+    if (window.FF.exhibition) window.FF.exhibition.stop();
+    elMenu.style.display = 'none';
+  },
 });
 
 flow.register('race', {
@@ -577,7 +631,7 @@ flow.register('finish', {
       pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.pos)));
       row.appendChild(pos);
       const c = el('canvas', 'ff-spin');
-      c.width = 104; c.height = 104;
+      c.width = 104; c.height = 104; // hint; syncCanvasSize owns it
       row.appendChild(c);
       const nm = el('div', 'ff-rname', r.name);
       if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
@@ -674,6 +728,7 @@ flow.init = function (state, opts) {
   stateRef = state;
   respawnFn = (opts && opts.respawn) || null;
   netplayFn = (opts && opts.isNetplay) || null;
+  exhibitionHooks = (opts && opts.exhibition) || null;
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);

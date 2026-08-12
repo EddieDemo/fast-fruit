@@ -288,6 +288,23 @@ function offsetColor(hex, dL, dH, dS) {
 // was measured from (see fruits.js). Deterministic: mulberry32 over
 // (seed x species-name hash), identical on every peer. Presentation
 // tier only — the sim never reads colours.
+// Sample a seeded band. Shared by the shell's anchorBand and the
+// interior's fleshBand so both obey one derivation; the KEY salts the
+// stream, which is why a melon's flesh doesn't track its rind.
+// (Named seededBandColor: bandColor above is the cel-shading ramp's
+// own helper, and two functions of the same name in one module is a
+// silent redefinition waiting to happen.)
+function seededBandColor(band, key, seed) {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rng = window.FF.mulberry32(((seed >>> 0) ^ (h >>> 0)) >>> 0);
+  const hue = band.h[0] + rng() * (band.h[1] - band.h[0]);
+  const sat = band.s[0] + rng() * (band.s[1] - band.s[0]);
+  const lig = band.l[0] + rng() * (band.l[1] - band.l[0]);
+  const [r, g, b] = hslToRgb(hue, sat, lig);
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+}
+
 function anchorColor(species, seed) {
   const F = window.FF.FRUITS && window.FF.FRUITS[species];
   const band = F && F.anchorBand;
@@ -644,8 +661,46 @@ function resetPalette() {
   for (const k in PALETTE_DEFAULTS) P[k] = PALETTE_DEFAULTS[k];
 }
 
+// ---- PULP (2026-08-12) ---------------------------------------------
+// A body's debris must look like pieces OF THAT BODY under the same
+// sun. Two rules, no new machinery:
+//   SHELL fragments (rind, slabs) take the body's OWN palette bands —
+//     a shard is literally a piece of the shell, so it should be the
+//     shell's shadow/base tones rather than an sRGB multiply of the
+//     anchor. This also fixes a real bug: debris used to tint from the
+//     PRE-COMPENSATED anchor, so the pre-compensated species sprayed
+//     shards of a colour they never actually appear to be on track.
+//   FLESH takes the species' fleshBand, seeded per individual exactly
+//     like the shell's anchorBand, then goes through the SAME palette
+//     law — so interior chunks carry the same tonal structure as
+//     everything else on screen instead of reading as flat stickers.
+// Seeds/pips stay species constants: they are not part of an
+// individual's identity, and seeding them would be noise.
+function pulpPalette(species, seed, bodyHex, patternOffset) {
+  const F = (window.FF.FRUITS && window.FF.FRUITS[species]) || {};
+  const shell = palette(bodyHex, patternOffset);
+  const fleshAnchor = F.fleshBand
+    ? seededBandColor(F.fleshBand, species + ':flesh', seed)
+    : ((F.pulp && F.pulp.flesh) || '#ff4757');
+  const flesh = palette(fleshAnchor, null);
+  return {
+    // Big curved plates read as the shell in shadow; smaller rind
+    // pieces as the shell's base tone.
+    slab: shell.A1,
+    rind: shell.A2,
+    // Chunks sit in the interior's base tone; fine spray is the
+    // highlight band (which is what the retired 'fleshLight' hex was
+    // approximating by hand).
+    flesh: flesh.A2,
+    fleshLight: flesh.A3,
+    fleshDark: flesh.A1,
+    seed: (F.pulp && F.pulp.seed) || '#222222',
+  };
+}
+
 window.FF.shading = {
   anchorColor,
+  pulpPalette,
   PALETTE_DEFAULTS, resetPalette,
   rimMaskRegion, palette, slotColor, offsetColor,
   castFootprint,

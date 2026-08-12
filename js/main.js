@@ -50,7 +50,12 @@ const state = createState();
 let modeName = 'Track 1';
 let provider = providers[modeName];
 
-function respawnRace() {
+// opts (exhibition only): { roster, endless } — a race whose lap
+// target is unreachable and whose grid is a uniform field. Kept as
+// arguments rather than module state so an ordinary respawn can never
+// inherit exhibition settings by accident.
+function respawnRace(opts) {
+  const exhibition = !!(opts && opts.endless);
   window.FF.debris.reset(); // wreckage persists per race, not across them
   provider.reset();
   provider.update(SPAWN.x - KEEP_BEHIND - 800, SPAWN.x + GEN_AHEAD);
@@ -72,6 +77,9 @@ function respawnRace() {
   // of the flat apron behind it, bots continue from metre humans+1.
   resetPlayers(state, humans, localSlot, SPAWN.x, -CONFIG.semiMinor - 200, !netSession);
   // A configured roster sets the field size; otherwise fill the grid.
+  const roster = (opts && opts.roster) || CONFIG.botRoster;
+  const savedRoster = CONFIG.botRoster;
+  if (opts && opts.roster) CONFIG.botRoster = opts.roster.slice(0, Math.max(0, opts.roster.length - humans));
   const botCount = CONFIG.botRoster && CONFIG.botRoster.length
     ? CONFIG.botRoster.length
     : Math.max(0, GRID_SIZE - humans);
@@ -83,7 +91,11 @@ function respawnRace() {
   // the MP handshake doesn't carry specs yet, and a peer guessing
   // wrong about your mass is a desync — netplay races scale 1.0
   // until the handshake field ships).
-  if (!netSession) {
+  // The exhibition's local body is just another watermelon in the
+  // field — dressing it in the player's persistent melon would put
+  // their racer on the menu twice (portrait and world) and imply the
+  // background race is theirs.
+  if (!netSession && !exhibition) {
     const spec = window.FF.melon.active();
     const d = window.FF.melon.derive(spec.seed);
     window.FF.setBodyScale(state.melon, d.scale);
@@ -99,7 +111,10 @@ function respawnRace() {
   const def = window.FF.trackDefByName(modeName);
   race.mode = def ? 'track' : 'endless';
   race.lapLengthPx = def ? def.lapLengthM * 100 : 0;
-  race.laps = def ? def.laps : 0;
+  // An unreachable lap target is the whole trick: finishedTick is
+  // never set, so every downstream rule (finish screen, career write,
+  // ghost save) stays correct without knowing this race is different.
+  race.laps = def ? (exhibition ? Number.MAX_SAFE_INTEGER : def.laps) : 0;
   race.lapIndex = 0;
   race.lapStartTick = state.tick;
   race.splits.length = 0;
@@ -108,7 +123,14 @@ function respawnRace() {
 
   state.camera.initialized = false; // snap camera, don't pan across the map
 
-  window.FF.ghost.onRaceStart(state);
+  // The exhibition must never record: it is a track-mode race, so the
+  // recorder would happily bank an autopilot lap as the player's.
+  if (exhibition) {
+    if (window.FF.ghost.stopRecording) window.FF.ghost.stopRecording();
+  } else {
+    window.FF.ghost.onRaceStart(state);
+  }
+  if (opts && opts.roster) CONFIG.botRoster = savedRoster;
 }
 
 // Ensure a provider exists for any resolvable track name (registry or
@@ -213,9 +235,23 @@ const hud = createHud(state);
 // Boot into the menu: the grid sits assembled behind the panel. After
 // the renderer, so the menu's rotating preview can draw immediately.
 if (window.FF.ticker) window.FF.ticker.init();
+if (window.FF.exhibition) window.FF.exhibition.init();
 if (window.FF.flow) window.FF.flow.init(state, {
-  respawn: respawnRace,
+  respawn: () => respawnRace(),
   isNetplay: () => !!netSession,
+  // The exhibition's hooks: main.js owns track providers and race
+  // setup, so it hands the module a way to ask rather than letting it
+  // reach into the plumbing.
+  exhibition: {
+    gameState: () => state,
+    configureRace: (cfg) => {
+      if (cfg.track && ensureProvider(cfg.track)) {
+        modeName = cfg.track;
+        provider = providers[cfg.track];
+      }
+      respawnRace({ roster: cfg.roster, endless: cfg.endless });
+    },
+  },
 });
 
 document.getElementById('respawn-btn').addEventListener('click', () => {
@@ -236,7 +272,10 @@ function checkLapCrossings() {
       // l < 0 is the FIRST crossing of the start line (the grid spawns
       // racers behind it): reset the lap clock, record nothing.
       if (l >= 0 && t >= MIN_LAP_TICKS) {
+        // Cap: an endless exhibition would otherwise grow this array
+        // without limit for as long as the menu is open.
         race.splits.push(t);
+        if (race.splits.length > 64) race.splits.shift();
         if (race.bestLapTicks === null || t < race.bestLapTicks) race.bestLapTicks = t;
       }
     }
@@ -317,7 +356,11 @@ function frame(now) {
     // autopilot, which is what makes the flag feel like a moment in a
     // race rather than the game stopping dead.
     const fs = window.FF.flow && window.FF.flow.state;
-    const racing = !window.FF.flow || fs === 'race' || fs === 'finish';
+    const ex = window.FF.exhibition;
+    // The menu steps ONLY while the exhibition says so — it owns the
+    // battery policy (hidden tab, idle timeout), not this loop.
+    const exhibiting = fs === 'menu' && ex && ex.running && ex.shouldStep();
+    const racing = !window.FF.flow || fs === 'race' || fs === 'finish' || exhibiting;
     if (racing) {
       while (accumulator >= stepDt) {
         // Autopilot writes the same input fields the stick does, so

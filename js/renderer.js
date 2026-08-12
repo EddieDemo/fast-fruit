@@ -1050,7 +1050,10 @@ function createRenderer(canvas) {
     ctx.closePath();
   }
 
-  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit) {
+  // patternScale: device pixels per world pixel at the destination.
+  // Defaults to the in-race supersample when a caller doesn't know or
+  // doesn't care (every racing body).
+  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit, patternScale) {
     const TAU2 = Math.PI * 2;
     // A species may carry ONE colour fact of its own — the pattern-
     // anchor offset (FRUITS[x].patternOffset, e.g. a red star on
@@ -1167,7 +1170,9 @@ function createRenderer(canvas) {
     // inside a shadow band and glows inside a highlight band — eight
     // to ten independently addressable colours, all still DERIVED from
     // this melon's own seeded base unless a hex override says otherwise.
-    const raster = RIG.P.showPattern ? patternRaster(seedKey || baseColor, fruit, a, b) : null;
+    const raster = RIG.P.showPattern
+      ? patternRaster(seedKey || baseColor, fruit, a, b, patternScale)
+      : null;
     let stamp = null; // set below; the rim region uses it too
     if (raster) {
       // No global alpha: pattern visibility comes from the colour
@@ -1405,20 +1410,35 @@ function createRenderer(canvas) {
   }
 
   // Build (and cache) a racer's pattern layer as an offscreen raster.
-  const RSCALE = 2; // supersample factor
+  //
+  // RESOLUTION FOLLOWS THE DESTINATION (2026-08-12). The raster used
+  // to be a fixed 2x supersample of the body's WORLD size — ample for
+  // a racing melon covering ~90 screen px, and badly under-resolved
+  // for the menu portrait, which can be 260 CSS px at devicePixelRatio
+  // 3: ~780 device pixels filled from a 200px source, a 4x upscale
+  // that reads as pixelation.
+  //
+  // The pattern is a VECTOR drawing, so building it larger costs only
+  // memory and one-time work. Callers that know their true output size
+  // pass a scale; the scale is part of the cache key, so racing bodies
+  // keep their small rasters and the one big portrait entry lives
+  // alongside instead of inflating every melon on screen.
+  const RSCALE = 2;      // default supersample for in-race bodies
+  const RSCALE_MAX = 8;  // ceiling: the island field is per-pixel work
   const rasterCache = new Map();
-  function patternRaster(key, fruit, a, b) {
+  function patternRaster(key, fruit, a, b, scale) {
     const species = fruit || 'watermelon';
-    const ck = key + '|' + species + '|' + (a | 0);
+    const rs = Math.max(1, Math.min(RSCALE_MAX, scale || RSCALE));
+    const ck = key + '|' + species + '|' + (a | 0) + '|' + rs.toFixed(2);
     let rst = rasterCache.get(ck);
     if (rst !== undefined) return rst;
     if (typeof document === 'undefined') { rasterCache.set(ck, null); return null; }
     const pad = 4; // stroke overhang room (body clip trims at draw time)
     const w = Math.ceil(a * 2) + pad * 2, h = Math.ceil(b * 2) + pad * 2;
     const cv = document.createElement('canvas');
-    cv.width = w * RSCALE; cv.height = h * RSCALE;
+    cv.width = Math.round(w * rs); cv.height = Math.round(h * rs);
     const octx = cv.getContext('2d');
-    octx.scale(RSCALE, RSCALE);
+    octx.scale(rs, rs);
     octx.translate(w / 2, h / 2);
     if (species === 'dragonBall') drawStar(octx, a, b);
     else if (species === 'yoshiEgg') drawSpots(octx, a, b, key);
@@ -1426,8 +1446,20 @@ function createRenderer(canvas) {
     else if (species === 'tennisBall') drawSeam(octx, a, b, key);
     else if (species === 'cantaloupe') drawNet(octx, a, b, key);
     else if (species === 'honeydew') drawCrackle(octx, a, b, key);
-    else buildMarbleStripes(octx, cv, a, b, key, w, h);
-    rst = { canvas: cv, w, h, id: ck };
+    else buildMarbleStripes(octx, cv, a, b, key, w, h, rs);
+    rst = { canvas: cv, w, h, id: ck, scale: rs };
+    // Eviction prefers the EXPENSIVE entries: one 8x portrait raster
+    // outweighs dozens of racing bodies, so a naive clear-all would
+    // keep rebuilding the costly one while cheap entries churn.
+    if (rasterCache.size > 48) {
+      let worst = null, worstCost = -1;
+      for (const [k, v] of rasterCache) {
+        if (!v || k === ck) continue;
+        const cost = v.scale * v.scale * v.w * v.h;
+        if (cost > worstCost) { worstCost = cost; worst = k; }
+      }
+      if (worst) rasterCache.delete(worst);
+    }
     rasterCache.set(ck, rst);
     return rst;
   }
@@ -1446,7 +1478,13 @@ function createRenderer(canvas) {
   // old three-layer marble (one octave = no high-frequency edge
   // noise). Coverage runs ~25-30%, deliberately leaner than the
   // marble's ~55%: fewer, bigger, calmer shapes.
-  function buildMarbleStripes(octx, cv, a, b, key, w, h) {
+  // rs: the raster's ACTUAL supersample. This field is generated in
+  // PIXEL space and projected back to world coordinates, so it is the
+  // one pattern generator that is not resolution-independent by
+  // construction — it must be told the real scale. Hard-coding RSCALE
+  // here meant that raising the portrait's resolution silently
+  // re-projected the artwork: same seed, different melon.
+  function buildMarbleStripes(octx, cv, a, b, key, w, h, rs) {
     let hsh = 2166136261;
     for (let i = 0; i < key.length; i++) { hsh ^= key.charCodeAt(i); hsh = Math.imul(hsh, 16777619); }
     const rng = window.FF.mulberry32(hsh >>> 0);
@@ -1470,7 +1508,7 @@ function createRenderer(canvas) {
     const data = img.data;
     for (let py = 0; py < cv.height; py++) {
       for (let px = 0; px < cv.width; px++) {
-        const x = px / RSCALE - w / 2, y = py / RSCALE - h / 2;
+        const x = px / rs - w / 2, y = py / rs - h / 2;
         const ex = x / a, ey = y / b;
         if (ex * ex + ey * ey > 1) continue; // outside the body
         // Inverse spheroid projection (exact foreshortening):
@@ -1884,8 +1922,11 @@ function createRenderer(canvas) {
 
     window.FF.shadeEllipse = shadeEllipse; // ghosts borrow the same sun
   // The studio's pinned melon: full stack, no state required.
-  window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit) {
-    shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit);
+  // The portrait draw. `scale` is the caller's true output resolution
+  // in device pixels per world pixel — the menu knows its CSS size and
+  // devicePixelRatio, and nothing else can work it out for it.
+  window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit, scale) {
+    shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit, scale);
   };
 
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
