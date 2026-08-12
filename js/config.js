@@ -55,6 +55,9 @@ const DEFAULTS = Object.freeze({
   ringLog: 1,              // DEBUG BUILD: ring-vs-reality logger ON —
                            // one line per event to console + RINGLOG;
                            // turn off (or set 0 here) after the hunt
+  ghosts: 0,               // ghost racer + challenge codes: OFF for now
+                           // (kept in the code; flip to 1 to bring the
+                           // ghost, its banner and share button back)
   practiceSplat: 1,        // practice mode: tint the airborne player by
                            // predicted landing fate (green/amber/red);
                            // flipping the flare mid-air flips the verdict
@@ -167,7 +170,27 @@ const PRESETS = Object.freeze({
   botHoneydew: false,
   // An explicit field roster: one entry per bot, naming registry
   // species outright. null = the normal seeded deal (11 melons).
-  botRoster: ['dragonBall', 'yoshiEgg', 'watermelon', 'watermelon', 'eightBall', 'tennisBall'],
+  // THE FIELD: eleven watermelons plus the player — a full grid
+  // (GRID_SIZE 12 in main.js). One of them, named in botBrains below,
+  // carries the oracle brain; the other ten run cruise.
+  botRoster: [
+    'watermelon', 'watermelon', 'watermelon', 'watermelon',
+    'watermelon', 'watermelon', 'watermelon', 'watermelon',
+    'watermelon', 'watermelon', 'watermelon',
+  ],
+
+  // BRAINS BY NAME, not by grid slot (Eddie, 2026-08-12). A slot-based
+  // assignment meant the clever bot was a different melon every day —
+  // fine for a tournament, useless for testing and worse as character:
+  // "The Rindfather beat me again" is a story, "slot 3 beat me again"
+  // is not. Keyed by name, a melon's brain is the same on every track,
+  // every race, every day.
+  //
+  // Any name here is also RESERVED A SEAT: names.js seats it before
+  // dealing the rest, so the named racer is always in the field.
+  botBrains: {
+    'The Rindfather': 'oracle',
+  },
   // The LAWS OF MELON NATURE — uniform physical rules across the size
   // family, tuned so distinct characters equalize in WIN RATE without
   // ever fudging an individual or an outcome:
@@ -220,6 +243,7 @@ const SCHEMA = [
   { key: 'rollingResistance', min: 0, max: 0.1,   step: 0.002 },
   { key: 'restitution',    min: 0,    max: 0.9,   step: 0.02 },
   { key: 'bounceMax',      min: 0.3,  max: 0.95,  step: 0.01 },
+  { key: 'ghosts',         min: 0,    max: 1,     step: 1 },
   { key: 'practiceSplat',  min: 0,    max: 1,     step: 1 },
   { key: 'ringLog',        min: 0,    max: 1,     step: 1 },
 

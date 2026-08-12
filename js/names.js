@@ -72,9 +72,48 @@ function assignRosterNames(state, raceSeed) {
     const j = Math.floor(rng() * (i + 1));
     const t = deck[i]; deck[i] = deck[j]; deck[j] = t;
   }
+  // RESERVED SEATS. Any melon named in CONFIG.botBrains carries a
+  // brain, so it must actually be in the field — otherwise the clever
+  // racer would simply be absent on days its name wasn't dealt. Seat
+  // those first (deterministically, in declaration order), then deal
+  // the shuffled deck around them.
+  const reserved = Object.keys((window.FF.CONFIG && window.FF.CONFIG.botBrains) || {});
+  const taken = new Set();
+  let seat = 0;
+  for (const nm of reserved) {
+    if (seat >= state.bots.length) break;
+    state.bots[seat].melon.name = nm;
+    taken.add(nm);
+    seat++;
+  }
   let n = 0;
-  for (const pl of state.players) pl.melon.name = deck[n++ % deck.length];
-  for (const b of state.bots) b.melon.name = deck[n++ % deck.length];
+  const next = () => {
+    // Skip names already seated: a duplicate in the field would make
+    // two melons indistinguishable in the standings.
+    let name = deck[n++ % deck.length];
+    let guard = 0;
+    while (taken.has(name) && guard++ < deck.length) name = deck[n++ % deck.length];
+    taken.add(name);
+    return name;
+  };
+  for (const pl of state.players) pl.melon.name = next();
+  for (let i = seat; i < state.bots.length; i++) state.bots[i].melon.name = next();
+
+  // Attach brains by name. Naming runs after resetBots, so this is the
+  // only point where both the melon's identity and its body exist —
+  // and it keeps the rule in ONE place rather than splitting it
+  // between the roster and the cast.
+  const map = (window.FF.CONFIG && window.FF.CONFIG.botBrains) || {};
+  const pilot = window.FF.pilot;
+  for (const b of state.bots) {
+    const want = map[b.melon.name];
+    // A per-slot roster override still wins (the harnesses use it);
+    // otherwise the name decides.
+    if (want && b.brainName === 'cruise' && pilot && pilot.create) {
+      b.brainName = want;
+      b.brain = pilot.create(want);
+    }
+  }
 }
 
 window.FF = window.FF || {};

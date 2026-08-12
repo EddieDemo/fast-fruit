@@ -70,8 +70,22 @@ function step(state, dt) {
       stepBody(pl.melon, pl.input, state.terrain, dt, i === state.localSlot ? state : null);
     }
   }
-  for (const b of state.bots) {
-    if (b.melon.alive) stepBody(b.melon, b.input, state.terrain, dt, null);
+  for (let bi = 0; bi < state.bots.length; bi++) {
+    const b = state.bots[bi];
+    // ---- PILOT PASS ----
+    // A bot's brain writes the same two input fields the human's stick
+    // writes, immediately before its body steps. Fixed iteration order
+    // (roster order) is load-bearing for determinism, and a brain must
+    // never draw from the shared rng stream. The index passed is the
+    // BOT's own (bi) — reusing the player loop's `i` here would have
+    // given every bot the same prediction stagger slot.
+    if (b.melon.alive) {
+      if (b.brain && b.brain.drive) {
+        const cmd = b.brain.drive(b.melon, { state, tick: state.tick, index: bi, input: b.input });
+        if (cmd) { b.input.rawAxis = cmd.axis; b.input.rawBounce = cmd.bounce; }
+      }
+      stepBody(b.melon, b.input, state.terrain, dt, null);
+    }
   }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----

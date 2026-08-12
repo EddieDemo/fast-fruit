@@ -39,9 +39,20 @@
 
 const state = { engaged: false, sinceTick: 0 };
 
-// The neutral policy: exactly what a bot holds. Full throttle right,
-// flare centred (Eddie's call — see the header).
-const POLICY = { rawAxis: 1, rawBounce: 0 };
+// The neutral policy comes from the BRAIN REGISTRY now: 'cruise' is
+// the one definition of "drives like a bot", so the post-flag
+// autopilot, the exhibition field and every cruise bot cannot drift
+// apart. Falls back to the literal values when pilot.js isn't loaded
+// (headless suites that don't need it).
+let cruise = null;
+function policy() {
+  if (!cruise && window.FF.pilot && window.FF.pilot.create) cruise = window.FF.pilot.create('cruise');
+  if (cruise) {
+    const cmd = cruise.drive({}, {});
+    return { rawAxis: cmd.axis, rawBounce: cmd.bounce };
+  }
+  return { rawAxis: 1, rawBounce: 0 };
+}
 
 function engage(gameState, opts) {
   if (state.engaged) return false;
@@ -71,8 +82,9 @@ function disengage() {
 // writes means physics needs no knowledge of any of this.
 function drive(gameState) {
   if (!state.engaged || !gameState || !gameState.input) return;
-  gameState.input.rawAxis = POLICY.rawAxis;
-  gameState.input.rawBounce = POLICY.rawBounce;
+  const p = policy();
+  gameState.input.rawAxis = p.rawAxis;
+  gameState.input.rawBounce = p.rawBounce;
 }
 
 // The question every presentation module asks: is a human driving?

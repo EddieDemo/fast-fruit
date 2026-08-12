@@ -47,8 +47,16 @@ for (const name of Object.keys(TRACKS)) {
 // ---- Bootstrap ----
 const canvas = document.getElementById('game');
 const state = createState();
-let modeName = 'Track 1';
-let provider = providers[modeName];
+// DAILY ONLY (Eddie, 2026-08-12). Everyone races the same track each
+// day, and there is no in-game way to pick another. Track 1 and the
+// whole registry stay in the code — the harnesses race them, and
+// re-exposing a track picker later is a UI change, not a rebuild.
+let modeName = (window.FF.dailyTrackName && window.FF.dailyTrackName()) || 'Track 1';
+if (!providers[modeName]) {
+  const def = window.FF.trackDefByName(modeName);
+  if (def) providers[modeName] = createTrackProvider(def);
+}
+let provider = providers[modeName] || providers['Track 1'];
 
 // opts (exhibition only): { roster, endless } — a race whose lap
 // target is unreachable and whose grid is a uniform field. Kept as
@@ -106,6 +114,10 @@ function respawnRace(opts) {
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
+  // Clear last race's finish stamps: a body persists across respawns,
+  // so a stale stamp would show the previous race's time.
+  for (const pl of state.players) pl.melon.finishTick = null;
+  for (const b of state.bots) b.melon.finishTick = null;
 
   const race = state.race;
   const def = window.FF.trackDefByName(modeName);
@@ -160,30 +172,20 @@ let netSession = null;
 window.FF.currentModeName = () => modeName;
 window.FF.selectTrackByName = selectMode;
 
-// ---- Daily button: one shared track per day, seed = the date ----
-(function buildDailyButton() {
+// ---- Daily indicator ----
+// The toggle is retired: the daily IS the game now, so the control
+// that switched away from it would only ever be a way to leave the
+// only track there is. selectMode survives for the harnesses and for
+// a future track picker.
+(function buildDailyLabel() {
   if (typeof document === 'undefined' || !document.body) return;
   const btn = document.createElement('button');
   btn.id = 'daily-btn';
-  const refresh = () => {
-    const daily = window.FF.dailyTrackName();
-    const active = modeName === daily;
-    btn.textContent = active ? 'daily \u2713' : 'daily';
-    btn.classList.toggle('active', active);
-  };
-  btn.addEventListener('click', () => {
-    if (netSession) return; // mode is shared state in a lockstep race
-    const daily = window.FF.dailyTrackName();
-    if (modeName === daily) {
-      selectMode('Track 1');
-    } else {
-      selectMode(daily);
-      window.FF.ghost.announce("TODAY'S TRACK \u2014 everyone races this one");
-    }
-    refresh();
-  });
+  btn.disabled = true;
+  btn.textContent = 'daily';
+  btn.classList.add('active');
+  btn.title = "today's track — everyone races this one";
   document.body.appendChild(btn);
-  refresh();
 })();
 
 // ---- The naming ceremony: one-time, first boot ----

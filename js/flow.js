@@ -169,6 +169,9 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-row.ff-you .ff-pos, .ff-row.ff-you .ff-pos .ff-ord { color: #39ff5f; }
 .ff-rname { font-size: 14px; color: #dff3df; flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-rtime { font-size: 10px; color: #7fa383; letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums; margin-top: 1px; }
+.ff-row.ff-you .ff-rtime { color: #39ff5f; }
 .ff-you-tag { flex: none; }
 .ff-you-tag { color: #39ff5f; font-size: 11px; letter-spacing: 1px; }
 canvas.ff-spin { width: 52px; height: 52px; flex: none; }
@@ -223,8 +226,16 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
 // Pure function so the harness can test the ranking without a DOM.
 function computeStandings(state) {
   const rows = [];
+  const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
+  const startTick = state.raceStartTick || 0;
   const push = (m, isPlayer) => rows.push({
     name: m.name || (isPlayer ? 'YOU' : '???'),
+    // Elapsed from the race start to THIS racer's own crossing. Null
+    // for anyone still out on track when the standings were captured
+    // — shown as a dash, because inventing a time for an unfinished
+    // racer would be the one dishonest number on the screen.
+    timeSec: (m.finishTick === undefined || m.finishTick === null)
+      ? null : (m.finishTick - startTick) / hz,
     fruit: m.fruit || 'watermelon',
     color: m.bodyColor || '#37a01c',
     patKey: m.patKey || m.name || 'x',
@@ -237,6 +248,14 @@ function computeStandings(state) {
   rows.sort((r, q) => q.x - r.x);
   rows.forEach((r, i) => { r.pos = i + 1; });
   return rows;
+}
+
+// mm:ss.s from the start line to this racer's own crossing.
+function fmtTime(sec) {
+  if (sec === null || sec === undefined) return '\u2014';
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
 }
 
 // English ordinal suffix. 11/12/13 are the classic trap (eleventh,
@@ -635,6 +654,7 @@ flow.register('finish', {
       row.appendChild(c);
       const nm = el('div', 'ff-rname', r.name);
       if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
+      nm.appendChild(el('div', 'ff-rtime', fmtTime(r.timeSec)));
       row.appendChild(nm);
       rows.appendChild(row);
       spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b, color: r.color, patKey: r.patKey, fruit: r.fruit });

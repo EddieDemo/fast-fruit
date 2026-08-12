@@ -272,8 +272,19 @@ function resetBots(state, count, x, y, sizeSeed, gridStart) {
     // per bot — bypassing the seeded species deal. Scalable: any future
     // "the grid is X, Y and three Zs" is a one-line config change.
     const roster = CONFIG.botRoster;
+    let brainName = 'cruise';
     if (roster && roster.length) {
-      fruit = roster[i % roster.length];
+      // An entry is either a species string (every existing roster and
+      // harness) or { fruit, brain } — backward compatible on purpose,
+      // so naming a brain is a one-line roster edit rather than a
+      // parallel array that can fall out of sync with it.
+      const entry = roster[i % roster.length];
+      if (entry && typeof entry === 'object') {
+        fruit = entry.fruit || 'watermelon';
+        brainName = entry.brain || 'cruise';   // per-slot override (harnesses)
+      } else {
+        fruit = entry;
+      }
     } else if (sizeSeed !== undefined) {
       const rSp = srng(); // always drawn: stream position is sacred
       fruit = rSp < 0.3 ? 'cantaloupe' : rSp < 0.6 ? 'honeydew' : 'watermelon';
@@ -304,7 +315,11 @@ function resetBots(state, count, x, y, sizeSeed, gridStart) {
     state.bots.push({
       melon,
       prevMelon: { ...melon },
-      input: { rawAxis: 1, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 }, // hold right, flare neutral, forever
+      // The brain drives this input every tick (physics.js pilot pass);
+      // the values here are just its resting state.
+      input: { rawAxis: 1, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 },
+      brain: (window.FF.pilot && window.FF.pilot.create) ? window.FF.pilot.create(brainName) : null,
+      brainName,
     });
   }
 }

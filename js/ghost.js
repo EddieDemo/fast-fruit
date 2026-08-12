@@ -311,10 +311,34 @@ function initFromUrl() {
 initFromUrl();
 
 window.FF = window.FF || {};
+// ---- THE SWITCH (CONFIG.ghosts, 2026-08-12) ----------------------
+// Ghosts are OFF for now — not removed. Every call site stays exactly
+// as it was; the gate lives here, at the module's boundary, so
+// "disabled" means one thing in one place rather than a scattering of
+// `if (CONFIG.ghosts)` across main.js, the renderer and the flow.
+//
+// Disabled means genuinely inert: nothing records, nothing draws, no
+// banner or challenge button is created, and no storage is touched.
+// The only method that stays live is stopRecording — it is a
+// no-op-safe assertion that recording has ceased, and callers use it
+// as a guarantee rather than a request.
+function ghostsOn() {
+  return !!(window.FF.CONFIG && window.FF.CONFIG.ghosts);
+}
+function gate(fn, fallback) {
+  return function () {
+    if (!ghostsOn()) return fallback;
+    return fn.apply(null, arguments);
+  };
+}
+
 window.FF.ghost = {
   stopRecording() { recFrozen = true; },
-  update, draw, onRaceStart, announce,
-  getChallengeTrack: () => (challenge ? challenge.track : null),
+  update: gate(update),
+  draw: gate(draw),
+  onRaceStart: gate(onRaceStart),
+  announce: gate(announce),
+  getChallengeTrack: () => (ghostsOn() && challenge ? challenge.track : null),
   encodeRun, decodeCode, // exposed for the headless suite
   _debug: { get challenge() { return challenge; }, get lastRun() { return lastRun; } },
 };

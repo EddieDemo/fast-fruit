@@ -486,76 +486,12 @@ function createRenderer(canvas) {
     drawInputSticks(ctx);
   }
 
-  // ---- Practice-mode splat predictor v3 (2026-08-11) ----
-  // v1 and v2 both IMITATED the solver and both lied (Eddie's field
-  // log was the conviction: EP1 exact at w=0, scatter 0.16x-2.3x at
-  // race spin — the contact-point term w x r turns any approximation
-  // of the contact geometry into large vn error, and the energy law
-  // SQUARES it). v3 stops imitating: it clones the player body (all
-  // scalars) and the current input, and steps the clone through the
-  // sim's OWN stepBody (exported as stepBodyClone, sink null) over
-  // the real terrain at the real dt — the forecast is the sim's own
-  // arithmetic, exact by construction, tracking the worst severity
-  // across the bounce chain (up to 2.5s, early-out when the verdict
-  // seals RED or the chain settles). Inputs are HELD at their current
-  // values: the ring answers "what happens if you keep doing exactly
-  // this", and moving the flare mid-air re-answers it live. Verdict
-  // is BINARY by design ruling. Scope, by design: the ring judges the
-  // LANDING — a bot torpedoing you mid-air is not a fall.
-  // Presentation tier; the sim is untouched (clone only).
-  function predictSplat(state, m) {
-    const dt = 1 / CONFIG.physicsHz;
-    const stepClone = window.FF.stepBodyClone;
-    if (!stepClone) return { worst: 0, T: 1, splat: false, trace: null };
-    // Clone the body (all-scalar) and the input (so smoothing evolves
-    // exactly as it would with the current stick HELD).
-    const c = Object.assign({}, m);
-    const inp = {
-      rawAxis: state.input.rawAxis, torqueAxis: state.input.torqueAxis || 0,
-      rawBounce: state.input.rawBounce || 0, bounceAxis: state.input.bounceAxis || 0,
-    };
-    const mr = 1 / (m.invM * CONFIG.mass);
-    const T = CONFIG.smashThreshold * (mr === 1 ? 1 : Math.pow(mr, CONFIG.sizeToughness / 3));
-    const trace = arguments.length > 2 && arguments[2] ? [] : null;
-    // SCOPE: the ring judges THE FALL — the landing and its bounce
-    // chain — not the racing that follows. Without a hard stop, the
-    // clone rolls on for seconds and any wall it drives into seals a
-    // RED the player rightly calls a lie (field-logged: rolling never
-    // tripped the old airborne-only settle test). The fall is OVER
-    // after a quarter-second of continuous sub-lethal ground contact.
-    // SCOPE (final, from Eddie's second field log): the ring judges
-    // THE NEXT LANDING — its contact cluster only. The clone steps
-    // until the first contact, holds through the cluster (severity
-    // peaks over 2-3 ticks; short air gaps tolerated), and stops the
-    // moment the body either rolls on or rebounds clean. Judging any
-    // further was the residual lie: a multi-landing budget spans 3-4
-    // skips at race pace and SLIDES as you bounce, so the verdict
-    // blinked about events seconds away while each immediate landing
-    // was benign — the log showed every FIRST-landing prediction
-    // exact to the unit, and every wrong verdict borrowed from the
-    // future. A bleed chain is judged bounce-by-bounce instead, since
-    // the ring re-asks after every rebound — better tempering
-    // pedagogy anyway. Cheaper too: the sim stops at the landing.
-    let worst = 0, lethal = false, contacted = false, groundSince = 0, airGap = 0;
-    for (let i = 0; i < 400; i++) {
-      stepClone(c, inp, state.terrain, dt);
-      if (c.hitSeverity > 0) {
-        contacted = true; airGap = 0; groundSince++;
-        if (trace && c.hitSeverity > 50) trace.push({ dt: i, sev: Math.round(c.hitSeverity), vy: Math.round(c.vy) });
-        if (c.hitSeverity > worst) worst = c.hitSeverity;
-        // A hit only KILLS after spawn protection expires — the smash
-        // rule's own grace, honoured here too.
-        if (c.hitSeverity >= T && state.tick + i + 1 > m.protectTick) lethal = true;
-        if (lethal && !trace) break; // verdict sealed
-        if (groundSince > 10) break; // rolled on: the landing is judged
-      } else if (contacted) {
-        airGap++;
-        if (airGap > 6) break; // rebounded clean: the landing is judged
-      }
-    }
-    return { worst, T, splat: lethal, trace };
-  }
-  window.FF.predictSplat = predictSplat; // harness-testable
+  // The splat predictor now lives in js/pilot.js — sim-tier and
+  // deterministic, because the bots' oracle brain uses the SAME code
+  // the ring draws. The practice ring is therefore a debug view of
+  // the AI: any improvement to the predictor upgrades both at once,
+  // and neither can drift from the other.
+  const predictSplat = (state, m, trace) => window.FF.pilot.predictSplat(state, m, trace);
 
   // ---- RING DEBUG LOGGER (CONFIG.ringLog) ----
   // One compact line per event into the console AND window.RINGLOG.

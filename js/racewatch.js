@@ -223,6 +223,22 @@ function update(state) {
 
   // ---- Laps: read the race's own book, don't recount ----
   const race = state.race;
+  // ---- FINISH TIMES, per racer ----
+  // The race's own book is the PLAYER's: race.finishedTick is when YOU
+  // crossed. Every other racer's time has to be watched, because the
+  // standings name a whole field and "how long did that take them" is
+  // a fair question for all of it. Recorded on the body so it survives
+  // the standings capture, and only once — a body that keeps racing
+  // (autopilot, exhibition) must not overwrite its own finish.
+  if (race && race.mode === 'track' && race.lapLengthPx > 0 && race.laps) {
+    const all = field;
+    for (const body of all) {
+      if (body.finishTick !== undefined && body.finishTick !== null) continue;
+      const laps = (body.x - state.raceStartX) / race.lapLengthPx;
+      if (laps >= race.laps) body.finishTick = tick;
+    }
+  }
+
   if (race && race.mode === 'track' && race.lapIndex > lastLapIndex) {
     lastLapIndex = race.lapIndex;
     const n = race.splits.length;
