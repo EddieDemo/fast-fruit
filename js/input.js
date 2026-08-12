@@ -41,6 +41,7 @@ const DEADZONE = 0.16; // normalized; rescaled so the rim is reachable
 function initInput(state, canvas) {
   // pointerId -> { x0, y0, x, y, t0 } stick anchors
   const pointers = new Map();
+  let enabled = true;
   // Recently released sticks, kept briefly so the renderer can fade
   // them out (pruned in getInputSticks). Presentation data only.
   const fading = [];
@@ -65,6 +66,7 @@ function initInput(state, canvas) {
   }
 
   function recompute() {
+    if (!enabled) return;
     let ax = 0, ay = 0;
     for (const p of pointers.values()) {
       const v = shapeVec(p.x - p.x0, p.y - p.y0);
@@ -152,7 +154,23 @@ function initInput(state, canvas) {
   // Returns every live stick plus recently released ones (for the
   // fade-out), each with its raw thumb offset and SHAPED axes.
   // Strictly presentation-tier: the sim never reads this.
+  // The autopilot takes the wheel by turning this off: pointers are
+  // dropped (so a tap on a results button can't steer), the axes fall
+  // to neutral, and getInputSticks reports nothing so the visible
+  // stick disappears with it. One switch, three consequences.
+  window.FF.setInputEnabled = function (on) {
+    enabled = !!on;
+    if (!enabled) {
+      pointers.clear();
+      keys.clear();
+      fading.length = 0;
+      state.input.rawAxis = 0;
+      state.input.rawBounce = 0;
+    }
+  };
+
   window.FF.getInputSticks = function (now) {
+    if (!enabled) return [];
     for (let i = fading.length - 1; i >= 0; i--) {
       if (now - fading[i].tUp > 300) fading.splice(i, 1);
     }

@@ -33,6 +33,13 @@ const DELTA_UNIT = 4;          // 4px = 4cm resolution in the code
 
 // ---- Recording state ----
 let rec = null;      // active recording { startTick, coarse:[], frames:[] }
+// FROZEN, not stopped: after the flag the autopilot drives the body,
+// and a ghost that kept sampling would have you racing a lap you did
+// not drive. But the finish-edge block below still has to run — it is
+// what builds lastRun, offers the challenge and saves a best — so
+// this only gates the SAMPLING, never the bookkeeping. (Clearing rec
+// outright silently lost the save.)
+let recFrozen = false;
 let lastRun = null;  // finished run, ready to share
 let prevFinished = false;
 
@@ -75,6 +82,7 @@ function onRaceStart(state) {
   if (state.race.mode !== 'track' || state.players.length > 1) { rec = null; return; }
   rec = { startTick: state.tick, track: null, coarse: [0], frames: [] };
   prevFinished = false;
+  recFrozen = false; // a new race records again
   // Load the local best for this track lazily at each race start.
   loadLocalGhost(currentTrackName(state));
 }
@@ -90,14 +98,16 @@ function update(state) {
   const elapsed = state.tick - rec.startTick;
   const dist = state.melon.x - state.raceStartX;
 
-  // Coarse trace: one sample per second of race time.
-  while (rec.coarse.length <= Math.floor(elapsed / SAMPLE_TICKS)) {
-    rec.coarse.push(Math.round(dist));
-  }
-  // Full-fidelity local frames.
-  if (elapsed % LOCAL_EVERY === 0) {
-    const m = state.melon;
-    rec.frames.push(Math.round(m.x), Math.round(m.y), Math.round(m.angle * 100) / 100);
+  if (!recFrozen) {
+    // Coarse trace: one sample per second of race time.
+    while (rec.coarse.length <= Math.floor(elapsed / SAMPLE_TICKS)) {
+      rec.coarse.push(Math.round(dist));
+    }
+    // Full-fidelity local frames.
+    if (elapsed % LOCAL_EVERY === 0) {
+      const m = state.melon;
+      rec.frames.push(Math.round(m.x), Math.round(m.y), Math.round(m.angle * 100) / 100);
+    }
   }
 
   // Finish edge: freeze the run, offer the challenge, save if best.
@@ -302,6 +312,7 @@ initFromUrl();
 
 window.FF = window.FF || {};
 window.FF.ghost = {
+  stopRecording() { recFrozen = true; },
   update, draw, onRaceStart, announce,
   getChallengeTrack: () => (challenge ? challenge.track : null),
   encodeRun, decodeCode, // exposed for the headless suite

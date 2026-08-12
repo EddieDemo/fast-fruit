@@ -221,6 +221,11 @@ function makeCertificate(m, state, tick, sev, T, isPlayer) {
       if (need === null || need > CONFIG.bounceMax) return null;
       return damage.restitutionToBounce(need);
     })(),
+    // Traffic blame (meaningful only when byPair; see the pair path).
+    pairOtherName: m.pairOtherName || '',
+    pairOtherE: m.pairOtherE,
+    pairIStiffened: !!m.pairIStiffened,
+    pairShare: m.pairShare,
     chainIndex: m.chainIndex || 1,        // 1 = the arrival itself
     airTicks: m.lastFlightTicks || 0,
     fallPx: m.lastFallPx || 0,
@@ -353,8 +358,35 @@ function resolveMelonPair(A, B, period) {
     const [shA, shB] = damage.pairShares(eA, eB);
     const sevA = damage.severityFromE(shA * E, A);
     const sevB = damage.severityFromE(shB * E, B);
-    if (sevA > A.pairSeverity) { A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn; }
-    if (sevB > B.pairSeverity) { B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn; }
+    // ---- TRAFFIC BLAME (presentation breadcrumb) ----
+    // The pair's restitution is min(eA, eB): ONE body deadened this
+    // collision for both. And shares run with deadness, so the
+    // stiffer body eats the bigger cut of the energy. Recording both
+    // facts turns "TRAFFIC INCIDENT" into an accurate accusation —
+    // either your own rigidity cost you, or a rival's took the bounce
+    // out from under you. Written every pair contact, read only by
+    // the certificate.
+    const aStiffer = eA <= eB;
+    // Blame rides with the DOMINANT contact only. A deep overlap
+    // produces a second contact point in the same tick whose approach
+    // speed is tiny — the restitution gate zeroes both bodies' e
+    // there, so writing blame unconditionally let that trivial touch
+    // overwrite the real collision's story with a meaningless 50/50
+    // (measured: a rigid player's share read 0.50 instead of 0.53).
+    if (sevA > A.pairSeverity) {
+      A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn;
+      A.pairOtherName = B.name || '';
+      A.pairOtherE = eB;
+      A.pairIStiffened = aStiffer;
+      A.pairShare = shA;
+    }
+    if (sevB > B.pairSeverity) {
+      B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn;
+      B.pairOtherName = A.name || '';
+      B.pairOtherE = eA;
+      B.pairIStiffened = !aStiffer;
+      B.pairShare = shB;
+    }
   }
 
   // --- Friction impulse (melon rind on melon rind) ---

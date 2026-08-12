@@ -49,7 +49,54 @@ function derive(seed) {
 }
 
 // ---- Stable persistence ----
-let stable = null; // { v: 1, melons: [{v, seed, name, born}], active: 0 }
+let stable = null; // { v: 1, melons: [{v, seed, name, born, record}], active: 0 }
+
+// ---- THE CAREER RECORD -------------------------------------------
+// The one genuinely STORED thing about a melon. Everything else on
+// the stat card is derived from the seed and can't drift; this can't
+// be derived from anything, so it has to be kept — which makes it the
+// only part that needs a migration story, a write policy, and honest
+// gaps.
+//
+// WRITE POLICY (ratified): exactly one write, at the finish screen,
+// for COMPLETED races only. Abandoning to the menu mid-race records
+// nothing — otherwise the race counter becomes a measure of quitting
+// and retry-spam inflates it. All completed races count the same,
+// dailies included.
+//
+// HONEST GAPS: a melon that existed before this feature has no
+// history. Its counters start at zero and its unknowns read '—'
+// rather than being backfilled with invented numbers. `born` was
+// already in the schema; melons without one are stamped 'first seen'
+// on load, which is true, rather than given a fabricated birthday.
+function blankRecord() {
+  return {
+    races: 0, wins: 0, podiums: 0, splats: 0,
+    bestLapTicks: null,     // null = never completed a timed lap
+    furthestM: 0,
+    biggestSurvived: 0,
+    bestPlace: null,
+    lastRaced: null,
+  };
+}
+
+// Migration is idempotent: every load repairs whatever is missing, so
+// a melon from any past version becomes valid without a version bump
+// ladder to maintain.
+function migrate(st) {
+  let dirty = false;
+  for (const m of st.melons) {
+    if (!m.record) { m.record = blankRecord(); dirty = true; }
+    else {
+      const blank = blankRecord();
+      for (const k of Object.keys(blank)) {
+        if (m.record[k] === undefined) { m.record[k] = blank[k]; dirty = true; }
+      }
+    }
+    if (!m.born) { m.born = new Date().toISOString().slice(0, 10); m.firstSeen = true; dirty = true; }
+  }
+  return dirty;
+}
 
 function load() {
   if (stable) return stable;
@@ -64,9 +111,10 @@ function load() {
       const dev = Math.abs(derive(s2).scale - 1);
       if (dev < bestDev) { best = s2; bestDev = dev; }
     }
-    stable = { v: 1, melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10) }], active: 0 };
+    stable = { v: 1, melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10), record: blankRecord() }], active: 0 };
     save();
   }
+  if (migrate(stable)) save();
   return stable;
 }
 
@@ -84,6 +132,57 @@ function rename(name) {
   m.name = String(name || '').trim().slice(0, 24) || m.name;
   save();
   return m.name;
+}
+
+// The ONE write. Called by the finish screen with a completed race's
+// facts; everything it needs is already computed by the standings and
+// the race book, so this only folds them into the record.
+//   { place, fieldSize, splats, bestLapTicks, distanceM, biggestSurvived }
+function recordRace(result) {
+  if (!result || !result.place) return null;
+  const m = active();
+  const r = m.record || (m.record = blankRecord());
+  r.races++;
+  if (result.place === 1) r.wins++;
+  if (result.place <= 3) r.podiums++;
+  if (r.bestPlace === null || result.place < r.bestPlace) r.bestPlace = result.place;
+  r.splats += result.splats || 0;
+  if (result.bestLapTicks && (r.bestLapTicks === null || result.bestLapTicks < r.bestLapTicks)) {
+    r.bestLapTicks = result.bestLapTicks;
+  }
+  if ((result.distanceM || 0) > r.furthestM) r.furthestM = Math.round(result.distanceM);
+  if ((result.biggestSurvived || 0) > r.biggestSurvived) r.biggestSurvived = Math.round(result.biggestSurvived);
+  r.lastRaced = new Date().toISOString().slice(0, 10);
+  save();
+  return r;
+}
+
+// The career half of the stat card. Same structured shape as stats(),
+// so the menu renders both with one code path. Unknowns are '\u2014',
+// never a fake zero.
+function career(melonRef) {
+  const m = melonRef || active();
+  const r = m.record || blankRecord();
+  const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
+  const rows = [];
+  const add = (key, label, value, note) => rows.push({ key, label, value, note });
+  add('races', 'RACES', String(r.races));
+  add('wins', 'WINS', String(r.wins), r.races ? Math.round(100 * r.wins / r.races) + '% of starts' : null);
+  add('podiums', 'PODIUMS', String(r.podiums));
+  add('best', 'BEST FINISH', r.bestPlace ? ordinal(r.bestPlace) : '\u2014');
+  add('lap', 'BEST LAP', r.bestLapTicks ? (r.bestLapTicks / hz).toFixed(1) + 's' : '\u2014');
+  add('splats', 'SPLATS', String(r.splats),
+    r.races ? (r.splats / r.races).toFixed(1) + ' per race' : null);
+  add('tough', 'BIGGEST HIT SURVIVED', r.biggestSurvived ? String(r.biggestSurvived) : '\u2014');
+  add('born', m.firstSeen ? 'FIRST SEEN' : 'RECEIVED', m.born || '\u2014');
+  return rows;
+}
+
+function ordinal(n) {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return n + 'th';
+  const d = n % 10;
+  return n + (d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th');
 }
 
 // ---- Melon codes: the seed cannot lie ----
@@ -140,6 +239,66 @@ function setActive(i) {
   return st.active;
 }
 
-window.FF.melon = { derive, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
+// ---- THE STAT CARD ----------------------------------------------
+// Everything here is DERIVED, never stored: given the seed and the
+// species, the same numbers come out on every device, forever. That
+// is the whole point — a stat card that can't drift, can't be edited,
+// and can't disagree with the body you actually race. (Career
+// history is a separate, genuinely stored thing; it lives elsewhere.)
+//
+// Values are returned structured — { key, label, value, note } — so
+// the menu stays a renderer and never does arithmetic. New stats land
+// by adding a row here.
+function stats(seed, fruit) {
+  const d = derive(seed);
+  const CONFIG = window.FF.CONFIG;
+  const F = (window.FF.FRUITS && window.FF.FRUITS[fruit]) || {};
+  const mult = F.sizeMult || 1;
+  const aspect = F.aspect === undefined ? 0.78 : F.aspect;
+  const taper = F.taper || 0;
+  const a = CONFIG.semiMajor * d.scale * mult;
+  const b = a * aspect;
+  const rows = [];
+  const add = (key, label, value, note) => rows.push({ key, label, value, note });
+
+  // WEIGHT follows the sim's own VOLUME law (state.js: mass ~ a*b^2 *
+  // (1 + tau^2/5)), not scale^3 — otherwise a species with its own
+  // sizeMult or aspect would show a weight its physics body doesn't
+  // have. Anchored so a scale-1.0 watermelon reads the familiar
+  // 9.0 kg, and it reduces to exactly derive().kg for that case.
+  const REF_A = CONFIG.semiMajor, REF_B = CONFIG.semiMajor * 0.78;
+  const volRef = REF_A * REF_B * REF_B;
+  const vol = a * b * b * (1 + taper * taper / 5);
+  const kg = (d.kg / (d.scale * d.scale * d.scale)) * (vol / volRef);
+  add('weight', 'WEIGHT', kg.toFixed(1) + ' kg', Math.round(kg * 2.20462) + ' lb');
+  // Length across the long axis, in the world's own scale (100px = 1m).
+  add('size', 'LENGTH', Math.round(2 * a) + ' cm',
+    d.scale < 0.92 ? 'a little one' : d.scale > 1.08 ? 'a big one' : 'a good size');
+  // Species keys are camelCase identifiers; the card is read by
+  // humans. Split on the case boundary rather than adding a label
+  // field to every species (one place to get wrong instead of seven).
+  const nice = String(fruit || 'watermelon').replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase();
+  add('species', 'SPECIES', F.label ? F.label.toUpperCase() : nice);
+
+  // Shape toughness: the per-species constant the damage law uses,
+  // stated against the sphere it's normalised to. Honest and
+  // comparative — 1.00 really is the unsmashable ball.
+  const D = window.FF.damage;
+  if (D && D.shapeToughness) {
+    add('tough', 'TOUGHNESS', D.shapeToughness(a, b, taper).toFixed(2) + '\u00d7', 'vs a perfect sphere');
+  }
+  // Engine and rev limit scale with size by the same laws physics
+  // uses, so a big melon really does pull harder and rev lower.
+  const sRatio = (d.scale * mult);
+  add('engine', 'ENGINE', Math.pow(sRatio, CONFIG.sizeEngineExp).toFixed(2) + '\u00d7', 'torque vs average');
+  add('revs', 'REV LIMIT', Math.round(CONFIG.maxAngVel * Math.pow(sRatio, -CONFIG.sizeRevExp)) + ' rad/s');
+  // Rind strength: the body's own smash threshold, size-scaled.
+  const mr = Math.pow(sRatio, 3);
+  add('rind', 'RIND', (Math.pow(mr, CONFIG.sizeToughness / 3)).toFixed(2) + '\u00d7', 'impact it can take');
+  add('bounce', 'BOUNCE', CONFIG.restitution.toFixed(2), 'neutral stick');
+  return rows;
+}
+
+window.FF.melon = { derive, stats, career, recordRace, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
 
 })();

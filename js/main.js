@@ -213,7 +213,10 @@ const hud = createHud(state);
 // Boot into the menu: the grid sits assembled behind the panel. After
 // the renderer, so the menu's rotating preview can draw immediately.
 if (window.FF.ticker) window.FF.ticker.init();
-if (window.FF.flow) window.FF.flow.init(state, { respawn: respawnRace });
+if (window.FF.flow) window.FF.flow.init(state, {
+  respawn: respawnRace,
+  isNetplay: () => !!netSession,
+});
 
 document.getElementById('respawn-btn').addEventListener('click', () => {
   if (netSession) return; // a solo respawn would desync a lockstep race
@@ -246,7 +249,18 @@ function checkLapCrossings() {
 
 // After the chequered flag: hold for a beat so the frozen finish time
 // and final splits can be read, then restart the race clean.
+//
+// LEGACY PATH ONLY. When flow.js is present the state machine owns
+// everything after the flag: the finish screen shows the standings
+// and the autopilot keeps the field racing behind it until the player
+// chooses RETRY or MAIN MENU. Leaving this timer armed restarted the
+// race under the results panel a few seconds after finishing — the
+// world silently resetting behind a screen that was still describing
+// the old race. The guard existed before, was lost in an edit, and
+// only became visible once the finish screen stopped freezing the
+// sim: exactly the kind of interaction a "harmless" timer creates.
 function checkAutoRestart() {
+  if (window.FF.flow) return;
   if (netSession) return; // peers can't unilaterally restart a shared race
   const race = state.race;
   if (race.mode !== 'track' || race.finishedTick === null) return;
@@ -297,12 +311,19 @@ function frame(now) {
     if (stalled) accumulator = Math.min(accumulator, stepDt * 4); // no spiral
     netSession.setStatus(stalled ? 'waiting for peers…' : '');
   } else {
-    // The state machine gates the SOLO sim: menus and the finish
-    // tableau are frozen worlds. (Netplay above is never gated — a
-    // local pause over a lockstep race is a desync dressed as UI.)
-    const racing = !window.FF.flow || window.FF.flow.state === 'race';
+    // The state machine gates the SOLO sim. Menus and pause are
+    // frozen worlds; the FINISH screen is not — the field keeps
+    // racing behind the results panel with the player's body on
+    // autopilot, which is what makes the flag feel like a moment in a
+    // race rather than the game stopping dead.
+    const fs = window.FF.flow && window.FF.flow.state;
+    const racing = !window.FF.flow || fs === 'race' || fs === 'finish';
     if (racing) {
       while (accumulator >= stepDt) {
+        // Autopilot writes the same input fields the stick does, so
+        // the sim cannot tell the difference (no-op while a human is
+        // driving).
+        if (window.FF.autopilot) window.FF.autopilot.drive(state);
         step(state, stepDt);
         checkLapCrossings();
         accumulator -= stepDt;

@@ -43,6 +43,11 @@
 //               could not tell.
 const LINES = {
   pair: ['PULPED IN THE PACK', 'RIVAL COLLISION', 'TRAFFIC INCIDENT', 'SQUEEZED OUT'],
+  // Traffic, with blame. The pair law says exactly who deadened the
+  // collision (e = min of the two) and who therefore ate the bigger
+  // share of the energy — so these are accusations, not flavour.
+  pairStiff: ['TOO RIGID IN TRAFFIC', 'NO GIVE, NO LUCK', 'BRACED INTO THE PACK'],
+  pairVictim: ['THE BOUNCE TAKEN OUT OF IT', 'DEADENED BY A RIVAL', 'ABSORBED THE LOT'],
   // Overkill >= 2.5: nothing would have helped.
   obliterated: ['UNSURVIVABLE', 'TOTAL LOSS', 'UNSCHEDULED DISASSEMBLY', 'ERASED'],
   // Died stiff (low restitution) — the flare would have mattered.
@@ -59,7 +64,12 @@ const LINES = {
 
 function classify(d) {
   const pool = (() => {
-    if (d.byPair) return LINES.pair;
+    if (d.byPair) {
+      // Only accuse when the shares were genuinely lopsided; a
+      // symmetric bump is just a bump.
+      if (d.pairShare > 0.6) return d.pairIStiffened ? LINES.pairStiff : LINES.pairVictim;
+      return LINES.pair;
+    }
     if (d.overkill >= 2.5) return LINES.obliterated;
     if ((d.chainIndex || 1) > 1) return LINES.chain;
     if (d.overkill <= 1.15) return LINES.hair;
@@ -158,6 +168,16 @@ function ensureSubscriptions() {
 
 function update(state) {
   ensureSubscriptions();
+  // After the flag the autopilot is driving: the death screen is
+  // feedback for a player who is racing, and this player has stopped.
+  // Swallow the certificate (shownTick) so it doesn't fire late when
+  // the next race starts.
+  const ap = window.FF.autopilot;
+  if (ap && !ap.playerIsDriving()) {
+    if (state.lastDeath) shownTick = state.lastDeath.tick;
+    if (overlay) overlay.classList.remove('show');
+    return;
+  }
   const d = state.lastDeath;
   if (d && d.tick !== shownTick) {
     shownTick = d.tick;

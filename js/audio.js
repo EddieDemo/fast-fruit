@@ -180,6 +180,16 @@ const prev = {
 
 function update(state, dtFrame) {
   const m = state.melon;
+  // Autopilot: keep the edges tracked (so prev stays honest and the
+  // next race doesn't fire a phantom smash on its first frame) but
+  // play nothing. A squelch over the results panel is the sound of a
+  // race the player is no longer in.
+  const ap = window.FF.autopilot;
+  if (ap && !ap.playerIsDriving()) {
+    prev.grounded = m.grounded;
+    prev.alive = m.alive;
+    return;
+  }
 
   // --- Event edges (run even before ctx exists, for stats/haptics) ---
   // Landing: airborne -> grounded with a real impact behind it.

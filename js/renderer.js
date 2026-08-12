@@ -642,6 +642,9 @@ function createRenderer(canvas) {
 
   function drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {
     if (!CONFIG.practiceSplat) return;
+    // The ring coaches a landing the player is about to make; under
+    // autopilot they are making none.
+    if (window.FF.autopilot && !window.FF.autopilot.playerIsDriving()) return;
     const m = state.melon;
     // Grounded = rolling contact dissipates a whisper every tick, so
     // hitSeverity > 0 IS the grounded test; airborne fires nothing.

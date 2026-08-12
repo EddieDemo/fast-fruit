@@ -72,6 +72,12 @@ function ensureRoot() {
 }
 
 function push(text, kind) {
+  // Commentary is for the player racing; behind the results panel
+  // there is no one to talk to. One gate here covers every producer
+  // (near-misses, overtakes, laps, rivals) rather than each learning
+  // about the autopilot separately.
+  const ap = window.FF.autopilot;
+  if (ap && !ap.playerIsDriving()) return;
   ensureRoot();
   const el = document.createElement('div');
   el.className = 'ff-tick' + (kind ? ' ' + kind : '');
@@ -150,6 +156,14 @@ function raceLine(type, d) {
     }
     case 'streak':
       return { text: 'CLEAN RUN — ' + d.metres + 'm', kind: 'flare' };
+    case 'airtime': {
+      const s = d.seconds.toFixed(1);
+      if (d.seconds >= 3) return { text: 'HUGE AIR — ' + s + 's', kind: 'record' };
+      return { text: s + 's OF HANG TIME', kind: null };
+    }
+    case 'rivalDown':
+      if (d.wasLeader) return { text: (d.name || 'THE LEADER').toUpperCase() + ' IS OUT — LEADER DOWN', kind: 'record' };
+      return { text: (d.name || 'A RIVAL').toUpperCase() + ' IS PULP — ' + ordinal(d.place) + ' GONE', kind: null };
     default:
       return null;
   }
@@ -167,7 +181,7 @@ function init() {
   const bus = window.FF.events;
   if (!bus) return;
   bus.on('nearMiss', onNearMiss);
-  for (const type of ['lead', 'overtake', 'lap', 'streak']) {
+  for (const type of ['lead', 'overtake', 'lap', 'streak', 'airtime', 'rivalDown']) {
     bus.on(type, (d) => {
       const line = raceLine(type, d);
       if (line) push(line.text, line.kind);

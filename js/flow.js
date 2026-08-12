@@ -27,6 +27,7 @@
 const flow = { state: 'boot' };
 let stateRef = null;
 let respawnFn = null;
+let netplayFn = null;   // () => true while a lockstep session is live
 let finishHandledTick = null;
 let spinRAF = 0;
 
@@ -54,8 +55,41 @@ const CSS = `
   letter-spacing: 2px; margin: 0 0 14px; text-align: center; }
 .ff-sub { color: #7fa383; font-size: 12px; text-align: center; margin: 0 0 16px; }
 .ff-melon-row { display: flex; align-items: center; justify-content: center;
-  gap: 14px; margin: 6px 0 14px; }
+  gap: 14px; margin: 6px 0 10px; }
 .ff-melon-name { font-size: 15px; color: #e6ffe6; min-width: 120px; text-align: center; }
+/* The menu panel is wider than the others: it carries a portrait of
+   the melon AND its papers. */
+.ff-screen.ff-menu-screen .ff-panel { min-width: 320px; max-width: min(92vw, 620px); }
+/* THE PORTRAIT. Sized from the viewport in BOTH axes — vw alone
+   overflows a short landscape window, vh alone leaves a postage stamp
+   on a tall narrow one — with a hard cap so a desktop monitor doesn't
+   get an absurd melon. */
+canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34vh, 260px); }
+.ff-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
+  margin: 2px 0 10px; }
+.ff-section { font-size: 9px; letter-spacing: 0.16em; color: #39ff5f;
+  border-top: 1px solid #1f3a24; padding-top: 8px; margin-top: 2px; }
+.ff-stat-row { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 5px 0 6px; border-bottom: 1px solid #14261a; min-width: 0; }
+.ff-stat-row .k { font-size: 9px; letter-spacing: 0.09em; color: #7fa383; flex: none; }
+.ff-stat-row .v { font-size: 12px; color: #dff3df; text-align: right;
+  font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.ff-stat-row .v small { display: block; font-size: 9px; color: #5d7a62;
+  letter-spacing: 0.04em; margin-top: 1px; line-height: 1.2; }
+/* The panel should size to its content, not stretch: the menu has no
+   scrolling list to fill leftover height, so a fixed-height panel
+   leaves a dead gap above the RACE button (visible in the proof). */
+.ff-screen.ff-menu-screen .ff-panel { height: auto; }
+/* SHORT VIEWPORTS: portrait beside the papers, not above them — the
+   same fix the finish screen needed, for the same reason. */
+@media (max-height: 560px) {
+  .ff-menu-body { display: flex; align-items: center; gap: 16px; }
+  .ff-menu-left { flex: none; display: flex; flex-direction: column; align-items: center; }
+  .ff-menu-right { flex: 1 1 auto; min-width: 0; }
+  .ff-stats { grid-template-columns: 1fr; margin: 0; }
+  canvas.ff-spin.ff-portrait { width: min(34vw, 46vh, 200px); height: min(34vw, 46vh, 200px); }
+}
 .ff-btn { display: block; width: 100%; margin: 8px 0 0; padding: 12px;
   background: #123018; color: #39ff5f; border: 1px solid #2a5a34;
   border-radius: 7px; font: inherit; font-size: 16px; letter-spacing: 1px;
@@ -64,6 +98,33 @@ const CSS = `
 .ff-btn.ff-secondary { color: #9fc7a5; border-color: #23402a; background: #0d1f12; }
 .ff-arrow { background: none; border: 1px solid #2a5a34; color: #39ff5f;
   border-radius: 6px; font: inherit; font-size: 18px; padding: 6px 12px; cursor: pointer; }
+.ff-tabs { flex: none; display: flex; gap: 4px; margin: 0 0 10px; }
+.ff-tab { flex: 1; padding: 7px 4px; border-radius: 7px; cursor: pointer;
+  background: #0d1f12; border: 1px solid #1b3823; color: #7fa383;
+  font: inherit; font-size: 11px; letter-spacing: 0.1em; }
+.ff-tab.on { background: #123018; color: #39ff5f; border-color: #2a5a34; }
+.ff-pane { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.ff-pane.on { display: flex; }
+/* Superlatives: label above, winner and value below. */
+.ff-facts { overflow-y: auto; flex: 1 1 auto; min-height: 0;
+  -webkit-overflow-scrolling: touch; }
+.ff-fact { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; padding: 7px 2px; border-bottom: 1px solid #14261a; }
+.ff-fact-l { font-size: 10px; letter-spacing: 0.09em; color: #7fa383; flex: none; }
+.ff-fact-r { text-align: right; min-width: 0; }
+.ff-fact-n { display: block; font-size: 14px; color: #dff3df;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-fact-v { display: block; font-size: 11px; color: #39ff5f;
+  font-variant-numeric: tabular-nums; }
+.ff-empty { padding: 18px 4px; text-align: center; font-size: 12px; color: #5d7a62; }
+.ff-summary { display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 10px; margin: 2px 0 10px; align-content: start;
+  overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.ff-stat { text-align: center; }
+.ff-stat .ff-stat-v { display: block; font-size: 19px; font-weight: 700; color: #dff3df;
+  font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ff-stat .ff-stat-k { display: block; font-size: 10px; letter-spacing: 0.08em; color: #7fa383; }
+.ff-stat.hi .ff-stat-v { color: #39ff5f; }
 .ff-rows { margin: 4px 0 10px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
   -webkit-overflow-scrolling: touch; }
 .ff-title, .ff-btn, .ff-melon-row, .ff-melon-name, .ff-sub { flex: none; }
@@ -111,6 +172,13 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
   .ff-pos { width: 48px; font-size: 20px; }
   .ff-pos .ff-ord { font-size: 12px; }
   .ff-rname { font-size: 13px; }
+  .ff-tabs { margin-bottom: 6px; }
+  .ff-tab { padding: 5px 3px; font-size: 10px; }
+  .ff-fact { padding: 4px 2px; }
+  .ff-fact-n { font-size: 12px; }
+  .ff-summary { gap: 3px 8px; margin-bottom: 6px; padding-top: 6px; }
+  .ff-stat .ff-stat-v { font-size: 15px; }
+  .ff-stat .ff-stat-k { font-size: 9px; }
   .ff-melon-row { margin: 2px 0 8px; }
   .ff-melon-row canvas.ff-spin { width: 64px; height: 64px; }
   .ff-btn { padding: 9px; font-size: 14px; margin-top: 6px; }
@@ -164,20 +232,36 @@ function el(tag, cls, text) {
 }
 
 function buildMenu() {
-  elMenu = el('div', 'ff-screen');
+  elMenu = el('div', 'ff-screen ff-menu-screen');
   const panel = el('div', 'ff-panel');
   panel.appendChild(el('h1', 'ff-title', 'FAST FRUIT'));
   panel.appendChild(el('p', 'ff-sub', 'pick your racer'));
 
+  // Two blocks so one media query can flip portrait-above-papers into
+  // portrait-beside-papers without touching the DOM.
+  const body = el('div', 'ff-menu-body');
+  const leftCol = el('div', 'ff-menu-left');
+  const rightCol = el('div', 'ff-menu-right');
   const row = el('div', 'ff-melon-row');
   const left = el('button', 'ff-arrow', '\u25C0');
-  const spin = el('canvas', 'ff-spin');
-  spin.width = 104; spin.height = 104;
+  const spin = el('canvas', 'ff-spin ff-portrait');
+  // Backing store sized for the biggest the portrait can render, so
+  // the body stays crisp on a retina panel (CSS sizes the box).
+  spin.width = 560; spin.height = 560;
   const right = el('button', 'ff-arrow', '\u25B6');
   row.appendChild(left); row.appendChild(spin); row.appendChild(right);
-  panel.appendChild(row);
+  leftCol.appendChild(row);
   const nameEl = el('div', 'ff-melon-name', '');
-  panel.appendChild(nameEl);
+  leftCol.appendChild(nameEl);
+  const statsEl = el('div', 'ff-stats');
+  rightCol.appendChild(statsEl);
+  const careerHead = el('div', 'ff-section', 'CAREER');
+  const careerEl = el('div', 'ff-stats');
+  rightCol.appendChild(careerHead);
+  rightCol.appendChild(careerEl);
+  body.appendChild(leftCol);
+  body.appendChild(rightCol);
+  panel.appendChild(body);
 
   const race = el('button', 'ff-btn', 'RACE');
   panel.appendChild(race);
@@ -185,7 +269,28 @@ function buildMenu() {
   document.body.appendChild(elMenu);
 
   const M = window.FF.melon;
+  // One renderer for both halves: stats() and career() return the
+  // same row shape, so the card grows by adding rows in melon.js and
+  // never by editing the menu.
+  const renderRows = (box, rows) => {
+    box.textContent = '';
+    for (const r of rows) {
+      const line = el('div', 'ff-stat-row');
+      line.appendChild(el('span', 'k', r.label));
+      const v = el('span', 'v', r.value);
+      if (r.note) v.appendChild(el('small', null, r.note));
+      line.appendChild(v);
+      box.appendChild(line);
+    }
+  };
+  const fillStats = () => {
+    const design = window.FF.studio && window.FF.studio.design;
+    const fruit = (design && design.fruit) || 'watermelon';
+    renderRows(statsEl, M.stats ? M.stats(M.active().seed, fruit) : []);
+    renderRows(careerEl, M.career ? M.career() : []);
+  };
   const refresh = () => {
+    fillStats();
     const st = M._load();
     const cur = M.active();
     nameEl.textContent = (cur.name || 'unnamed melon')
@@ -205,6 +310,7 @@ function buildMenu() {
   race.addEventListener('click', () => { fromMenuOrRetry = true; flow.go('race'); });
   elMenu._refresh = refresh;
   elMenu._spin = spin;
+  elMenu._stats = statsEl;
 }
 
 let elPause = null, elPauseBtn = null;
@@ -249,8 +355,32 @@ function buildFinish() {
   elFinish = el('div', 'ff-screen');
   const panel = el('div', 'ff-panel');
   panel.appendChild(el('h1', 'ff-title', 'FINISH'));
+  // Three tabs: the result, the race, and your run. PLACES leads
+  // because it answers the question everyone has at the flag; the
+  // other two are for the curious, and burying them behind a tap is
+  // what keeps the result page from becoming a spreadsheet.
+  const tabs = el('div', 'ff-tabs');
+  const panes = {};
+  const tabBtns = {};
   const rows = el('div', 'ff-rows');
-  panel.appendChild(rows);
+  const facts = el('div', 'ff-facts');
+  const summary = el('div', 'ff-summary');
+  const paneDefs = [
+    ['places', 'PLACES', rows],
+    ['race', 'RACE', facts],
+    ['you', 'YOU', summary],
+  ];
+  for (const [key, label, content] of paneDefs) {
+    const btn = el('button', 'ff-tab', label);
+    btn.addEventListener('click', () => showTab(key));
+    tabs.appendChild(btn);
+    tabBtns[key] = btn;
+    const pane = el('div', 'ff-pane');
+    pane.appendChild(content);
+    panes[key] = pane;
+  }
+  panel.appendChild(tabs);
+  for (const [key] of paneDefs) panel.appendChild(panes[key]);
   const retry = el('button', 'ff-btn', 'RETRY');
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
   const btns = el('div', 'ff-buttons');
@@ -262,6 +392,10 @@ function buildFinish() {
   retry.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
   menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
   elFinish._rows = rows;
+  elFinish._facts = facts;
+  elFinish._summary = summary;
+  elFinish._panes = panes;
+  elFinish._tabBtns = tabBtns;
 }
 
 // ---- The rotating racer previews ----
@@ -269,15 +403,16 @@ function buildFinish() {
 // redrawn via the renderer's own standalone body draw, so previews
 // are the REAL species/pigment/pattern, not icons.
 const spinners = []; // { canvas, a, b, color, patKey, fruit, angle }
+let spinnersPaused = false;
 function spinLoop(now) {
   spinRAF = 0;
   const draw = window.FF.drawMelonStandalone;
-  if (!draw) return;
+  if (!draw || spinnersPaused) return;
   let any = false;
   for (const s of spinners) {
     if (!s.canvas.isConnected) continue;
     any = true;
-    s.angle += 0.016 * 0.9; // slow, stately
+    s.angle += 0.016 * (s.rate === undefined ? 0.9 : s.rate); // slow, stately
     const ctx = s.canvas.getContext('2d');
     ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
     ctx.save();
@@ -314,8 +449,13 @@ flow.register('menu', {
     const design = window.FF.studio && window.FF.studio.design;
     const fruit = (design && design.fruit) || 'watermelon';
     const F = window.FF.FRUITS[fruit] || {};
-    const a = 46 * d.scale * (F.sizeMult || 1);
+    // Semi-major from CONFIG, not a hard-coded 46: the portrait must
+    // track the same reference the sim uses if the tune panel moves it.
+    const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
     spinners.push({
+      // The hero portrait turns slower than the results rows: it is
+      // being looked AT, not glanced at.
+      rate: 0.55,
       canvas: elMenu._spin, angle: 0,
       a, b: a * (F.aspect || 0.78),
       color: (design && design.color) || d.bodyColor,
@@ -355,6 +495,34 @@ flow.register('pause', {
 
 flow.register('finish', {
   enter() {
+    // THE ONE CAREER WRITE. This is the only moment a race is
+    // genuinely complete, and entering this state happens exactly once
+    // per finish (flow.onFrame fires on the crossing tick and latches),
+    // so the record can't double-count. Everything written comes from
+    // the standings captured at the flag and the race book — no new
+    // measurement, no second source of truth.
+    const M = window.FF.melon;
+    if (M && M.recordRace) {
+      const rowsNow = computeStandings(stateRef);
+      const mine = rowsNow.find(r => r.isPlayer);
+      const rw = window.FF.raceWatch;
+      const sum = (rw && rw.summary) ? rw.summary(stateRef) : {};
+      if (mine) {
+        M.recordRace({
+          place: mine.pos,
+          fieldSize: rowsNow.length,
+          splats: sum.deaths || 0,
+          bestLapTicks: (stateRef.race && stateRef.race.bestLapTicks) || null,
+          distanceM: mine.x / 100,
+          biggestSurvived: sum.biggestSurvived || 0,
+        });
+      }
+    }
+    // Hand the melon over: the field keeps racing behind the panel.
+    // Solo only — in netplay peers exchange inputs, so substituting
+    // local AI would desync the session (netplay bypasses these
+    // screens anyway; the guard is belt and braces).
+    if (window.FF.autopilot) window.FF.autopilot.engage(stateRef, { netplay: !!netplayFn && netplayFn() });
     elFinish.style.display = 'flex';
     const rows = elFinish._rows;
     rows.textContent = '';
@@ -375,10 +543,78 @@ flow.register('finish', {
       rows.appendChild(row);
       spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b, color: r.color, patKey: r.patKey, fruit: r.fruit });
     }
+    fillFacts();
+    fillSummary();
+    showTab('places');   // the result first; curiosity is one tap away
     startSpinners();
   },
-  exit() { elFinish.style.display = 'none'; },
+  exit() {
+    if (window.FF.autopilot) window.FF.autopilot.disengage();
+    elFinish.style.display = 'none';
+  },
 });
+
+function showTab(key) {
+  const panes = elFinish._panes, btns = elFinish._tabBtns;
+  for (const k of Object.keys(panes)) {
+    panes[k].classList.toggle('on', k === key);
+    btns[k].classList.toggle('on', k === key);
+  }
+  // Spinners live in the PLACES pane; a hidden canvas would keep the
+  // rAF loop alive for nothing, and isConnected can't see display:none.
+  spinnersPaused = key !== 'places';
+  if (!spinnersPaused) startSpinners();
+}
+
+// ---- The RACE tab: superlatives over the whole field -------------
+function fillFacts() {
+  const box = elFinish._facts;
+  box.textContent = '';
+  const rw = window.FF.raceWatch;
+  const facts = (rw && rw.fieldSummary) ? rw.fieldSummary() : [];
+  if (!facts.length) {
+    box.appendChild(el('div', 'ff-empty', 'a quiet race — nothing to report'));
+    return;
+  }
+  for (const f of facts) {
+    const row = el('div', 'ff-fact');
+    row.appendChild(el('div', 'ff-fact-l', f.label));
+    const right = el('div', 'ff-fact-r');
+    right.appendChild(el('div', 'ff-fact-n', f.name));
+    right.appendChild(el('div', 'ff-fact-v', f.value));
+    row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
+// ---- The race summary -------------------------------------------
+// The finish screen is the one place stats can be DENSE: nothing is
+// competing for attention and the race is over. racewatch keeps the
+// book during the race (it is the module that already knows race
+// context); this only lays it out. Stats that didn't happen are
+// omitted rather than shown as zeroes — a wall of 0s reads as
+// failure, and an empty slot reads as "not this time".
+function fillSummary() {
+  const box = elFinish._summary;
+  box.textContent = '';
+  const rw = window.FF.raceWatch;
+  if (!rw || !rw.summary) return;
+  const s = rw.summary(stateRef);
+  const stat = (v, k, hi) => {
+    const d = el('div', 'ff-stat' + (hi ? ' hi' : ''));
+    d.appendChild(el('span', 'ff-stat-v', v));
+    d.appendChild(el('span', 'ff-stat-k', k));
+    box.appendChild(d);
+  };
+  if (s.bestLapSec !== null) stat(s.bestLapSec.toFixed(1) + 's', 'BEST LAP');
+  stat(String(s.deaths), s.deaths === 1 ? 'SPLAT' : 'SPLATS', s.deaths === 0);
+  if (s.overtakes) stat(String(s.overtakes), 'OVERTAKES');
+  if (s.flareSaves) stat(String(s.flareSaves), s.flareSaves === 1 ? 'FLARE SAVE' : 'FLARE SAVES', true);
+  if (s.biggestSurvived) stat(String(s.biggestSurvived), 'BIGGEST HIT SURVIVED');
+  if (s.bestAirSec >= 1) stat(s.bestAirSec.toFixed(1) + 's', 'BEST AIR');
+  if (s.longestStreakM >= 100) stat(s.longestStreakM + 'm', 'LONGEST CLEAN RUN');
+  if (s.flarePct) stat(s.flarePct + '%', 'TIME FLARED');
+}
 
 // ---- Hooks for main.js ----
 // Called every frame after lap logic: fires the finish screen ONCE
@@ -395,6 +631,7 @@ flow.onFrame = function (state) {
 flow.init = function (state, opts) {
   stateRef = state;
   respawnFn = (opts && opts.respawn) || null;
+  netplayFn = (opts && opts.isNetplay) || null;
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
