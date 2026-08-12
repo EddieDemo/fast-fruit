@@ -41,16 +41,36 @@ const CSS = `
   padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
            max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   box-sizing: border-box; }
-/* The panel is VIEWPORT-BOUNDED, not content-sized: it never exceeds
-   the screen, and the scroll lives on the standings list inside it
-   (a panel taller than the viewport was the landscape bug — the
-   title and the buttons were clipped off the top and bottom, which
-   is exactly the content you can't afford to lose). dvh over vh so
-   mobile browser chrome retracting doesn't re-clip. */
+/* ============ THE PANEL CONTRACT ============
+   Every screen is HEAD / BODY / FOOT:
+     .ff-head  fixed  — title, subtitle, tabs. Never scrolls away.
+     .ff-body  fluid  — the only thing that scrolls, and the only
+                        thing allowed to run out of room.
+     .ff-foot  fixed  — the buttons. Pinned by construction, so they
+                        cannot be pushed off a short screen.
+   The panel is VIEWPORT-BOUNDED, never content-sized.
+
+   min-height: 0 on the body is the load-bearing line: a flex child
+   defaults to min-height:auto and REFUSES to shrink below its
+   content, so without it the body pushes the foot off the screen
+   instead of scrolling. That single omission produced all three
+   landscape bugs (menu RACE button unreachable, finish MAIN MENU
+   outside the box, panel resizing between tabs).
+
+   dvh over vh so retracting mobile browser chrome doesn't re-clip. */
 .ff-panel { background: rgba(10, 14, 10, 0.96); border: 1px solid #1f3a24;
   border-radius: 10px; padding: 20px 24px; min-width: 280px; max-width: 86vw;
   max-height: 100%; display: flex; flex-direction: column; box-sizing: border-box;
   color: #cfe8cf; box-shadow: 0 12px 60px rgba(0,0,0,0.6); }
+.ff-head, .ff-foot { flex: none; }
+.ff-body { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  -webkit-overflow-scrolling: touch; }
+/* A row of buttons: the stacked width:100% must NOT survive into a
+   row, or two buttons demand 200% of the container and the second
+   one leaves the panel. Stated on the container so every future
+   button row inherits the fix instead of rediscovering the bug. */
+.ff-buttons { display: flex; gap: 8px; }
+.ff-buttons .ff-btn { flex: 1 1 0; width: auto; min-width: 0; }
 .ff-title { color: #39ff5f; font-size: 24px; font-weight: 700;
   letter-spacing: 2px; margin: 0 0 14px; text-align: center; }
 .ff-sub { color: #7fa383; font-size: 12px; text-align: center; margin: 0 0 16px; }
@@ -77,10 +97,12 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   white-space: nowrap; }
 .ff-stat-row .v small { display: block; font-size: 9px; color: #5d7a62;
   letter-spacing: 0.04em; margin-top: 1px; line-height: 1.2; }
-/* The panel should size to its content, not stretch: the menu has no
-   scrolling list to fill leftover height, so a fixed-height panel
-   leaves a dead gap above the RACE button (visible in the proof). */
-.ff-screen.ff-menu-screen .ff-panel { height: auto; }
+/* The menu sizes to content while it FITS, and stops at the viewport:
+   height:auto with a max-height gives a tight panel on a tall screen
+   and a bounded, scrolling one on a short screen — no dead gap, no
+   escaped button. (height:auto ALONE was the landscape bug: nothing
+   bounded it, so RACE fell off the bottom.) */
+.ff-screen.ff-menu-screen .ff-panel { height: auto; max-height: 100%; }
 /* SHORT VIEWPORTS: portrait beside the papers, not above them — the
    same fix the finish screen needed, for the same reason. */
 @media (max-height: 560px) {
@@ -98,16 +120,20 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-btn.ff-secondary { color: #9fc7a5; border-color: #23402a; background: #0d1f12; }
 .ff-arrow { background: none; border: 1px solid #2a5a34; color: #39ff5f;
   border-radius: 6px; font: inherit; font-size: 18px; padding: 6px 12px; cursor: pointer; }
+/* A STATED height, not an inferred one: PLACES, RACE and YOU have
+   different content heights, and a content-sized panel visibly
+   breathed as you tapped between them. Bounded by the viewport, so
+   this is a target rather than a demand. */
+.ff-screen.ff-finish-screen .ff-panel { height: min(88dvh, 620px); }
 .ff-tabs { flex: none; display: flex; gap: 4px; margin: 0 0 10px; }
 .ff-tab { flex: 1; padding: 7px 4px; border-radius: 7px; cursor: pointer;
   background: #0d1f12; border: 1px solid #1b3823; color: #7fa383;
   font: inherit; font-size: 11px; letter-spacing: 0.1em; }
 .ff-tab.on { background: #123018; color: #39ff5f; border-color: #2a5a34; }
-.ff-pane { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
-.ff-pane.on { display: flex; }
+.ff-pane { display: none; }
+.ff-pane.on { display: block; }
 /* Superlatives: label above, winner and value below. */
-.ff-facts { overflow-y: auto; flex: 1 1 auto; min-height: 0;
-  -webkit-overflow-scrolling: touch; }
+.ff-facts { }
 .ff-fact { display: flex; align-items: baseline; justify-content: space-between;
   gap: 10px; padding: 7px 2px; border-bottom: 1px solid #14261a; }
 .ff-fact-l { font-size: 10px; letter-spacing: 0.09em; color: #7fa383; flex: none; }
@@ -118,15 +144,16 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   font-variant-numeric: tabular-nums; }
 .ff-empty { padding: 18px 4px; text-align: center; font-size: 12px; color: #5d7a62; }
 .ff-summary { display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 10px; margin: 2px 0 10px; align-content: start;
-  overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+  gap: 10px; margin: 2px 0 10px; align-content: start; }
 .ff-stat { text-align: center; }
 .ff-stat .ff-stat-v { display: block; font-size: 19px; font-weight: 700; color: #dff3df;
   font-variant-numeric: tabular-nums; line-height: 1.15; }
 .ff-stat .ff-stat-k { display: block; font-size: 10px; letter-spacing: 0.08em; color: #7fa383; }
 .ff-stat.hi .ff-stat-v { color: #39ff5f; }
-.ff-rows { margin: 4px 0 10px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
-  -webkit-overflow-scrolling: touch; }
+/* The panes no longer scroll themselves — .ff-body owns the scroll,
+   so a pane is just content and the tab bar can never be pushed off
+   by a long standings list. */
+.ff-rows { margin: 4px 0 10px; }
 .ff-title, .ff-btn, .ff-melon-row, .ff-melon-name, .ff-sub { flex: none; }
 .ff-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px;
   border-bottom: 1px solid #14261a; }
@@ -182,8 +209,7 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
   .ff-melon-row { margin: 2px 0 8px; }
   .ff-melon-row canvas.ff-spin { width: 64px; height: 64px; }
   .ff-btn { padding: 9px; font-size: 14px; margin-top: 6px; }
-  /* Buttons in a row: RETRY and MAIN MENU side by side. */
-  .ff-buttons { display: flex; gap: 8px; }
+  /* (the .ff-buttons row contract lives with the panel contract) */
   .ff-buttons .ff-btn { margin-top: 6px; }
 }
 /* Wide-and-short: let the panel use the horizontal room it has. */
@@ -234,8 +260,10 @@ function el(tag, cls, text) {
 function buildMenu() {
   elMenu = el('div', 'ff-screen ff-menu-screen');
   const panel = el('div', 'ff-panel');
-  panel.appendChild(el('h1', 'ff-title', 'FAST FRUIT'));
-  panel.appendChild(el('p', 'ff-sub', 'pick your racer'));
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'FAST FRUIT'));
+  head.appendChild(el('p', 'ff-sub', 'pick your racer'));
+  panel.appendChild(head);
 
   // Two blocks so one media query can flip portrait-above-papers into
   // portrait-beside-papers without touching the DOM.
@@ -261,10 +289,14 @@ function buildMenu() {
   rightCol.appendChild(careerEl);
   body.appendChild(leftCol);
   body.appendChild(rightCol);
-  panel.appendChild(body);
+  const bodyZone = el('div', 'ff-body');
+  bodyZone.appendChild(body);
+  panel.appendChild(bodyZone);
 
   const race = el('button', 'ff-btn', 'RACE');
-  panel.appendChild(race);
+  const foot = el('div', 'ff-foot');
+  foot.appendChild(race);
+  panel.appendChild(foot);
   elMenu.appendChild(panel);
   document.body.appendChild(elMenu);
 
@@ -318,14 +350,18 @@ let fromMenuOrRetry = true; // set by the paths that BEGIN a race
 function buildPause() {
   elPause = el('div', 'ff-screen');
   const panel = el('div', 'ff-panel');
-  panel.appendChild(el('h1', 'ff-title', 'PAUSED'));
-  panel.appendChild(el('p', 'ff-sub', 'the world is frozen'));
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'PAUSED'));
+  head.appendChild(el('p', 'ff-sub', 'the world is frozen'));
+  panel.appendChild(head);
   const resume = el('button', 'ff-btn', 'RESUME');
   const restart = el('button', 'ff-btn ff-secondary', 'RESTART RACE');
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
-  panel.appendChild(resume);
-  panel.appendChild(restart);
-  panel.appendChild(menu);
+  const foot = el('div', 'ff-foot');
+  foot.appendChild(resume);
+  foot.appendChild(restart);
+  foot.appendChild(menu);
+  panel.appendChild(foot);
   elPause.appendChild(panel);
   document.body.appendChild(elPause);
   resume.addEventListener('click', () => flow.go('race'));
@@ -352,9 +388,10 @@ function buildPause() {
 }
 
 function buildFinish() {
-  elFinish = el('div', 'ff-screen');
+  elFinish = el('div', 'ff-screen ff-finish-screen');
   const panel = el('div', 'ff-panel');
-  panel.appendChild(el('h1', 'ff-title', 'FINISH'));
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'FINISH'));
   // Three tabs: the result, the race, and your run. PLACES leads
   // because it answers the question everyone has at the flag; the
   // other two are for the curious, and burying them behind a tap is
@@ -379,14 +416,19 @@ function buildFinish() {
     pane.appendChild(content);
     panes[key] = pane;
   }
-  panel.appendChild(tabs);
-  for (const [key] of paneDefs) panel.appendChild(panes[key]);
+  head.appendChild(tabs);
+  panel.appendChild(head);
+  const bodyZone = el('div', 'ff-body');
+  for (const [key] of paneDefs) bodyZone.appendChild(panes[key]);
+  panel.appendChild(bodyZone);
   const retry = el('button', 'ff-btn', 'RETRY');
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
   const btns = el('div', 'ff-buttons');
   btns.appendChild(retry);
   btns.appendChild(menu);
-  panel.appendChild(btns);
+  const foot = el('div', 'ff-foot');
+  foot.appendChild(btns);
+  panel.appendChild(foot);
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
   retry.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
