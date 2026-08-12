@@ -262,6 +262,25 @@ document.getElementById('respawn-btn').addEventListener('click', () => {
 });
 
 // ---- Lap accounting (tick-accurate: called after every physics step) ----
+// ---- THE OBSERVER STEP ----
+// Everything that WATCHES the race — finish stamps, overtakes, laps,
+// streaks, airtime — runs here, once per SIMULATED TICK, immediately
+// after the tick it describes.
+//
+// Two bugs died with this. (1) The player's finish time read as a dash:
+// the observer used to run once per FRAME, after flow.onFrame had
+// already captured the standings, so on the one frame that mattered
+// the player's own stamp did not exist yet. Record, then report — the
+// observer must see the tick before the screen that reports it does.
+// (2) At 120Hz physics on a 60Hz display the observer saw every OTHER
+// tick, so every tick-measured rule in racewatch (pass hysteresis,
+// cooldowns, airtime, streak sampling) was running on half the data
+// it was tuned against. Both were the same mistake: an observer
+// sampling frames while measuring ticks.
+function observeTick() {
+  if (window.FF.raceWatch) window.FF.raceWatch.update(state);
+}
+
 function checkLapCrossings() {
   const race = state.race;
   if (race.mode !== 'track' || race.finishedTick !== null) return;
@@ -346,6 +365,7 @@ function frame(now) {
       }
       step(state, stepDt);
       checkLapCrossings();
+      observeTick();   // netplay had no observer at all before this
       ls.prune(next);
       accumulator -= stepDt;
     }
@@ -371,14 +391,17 @@ function frame(now) {
         if (window.FF.autopilot) window.FF.autopilot.drive(state);
         step(state, stepDt);
         checkLapCrossings();
+        observeTick();
         accumulator -= stepDt;
       }
       checkAutoRestart();
     } else {
       accumulator = 0;
     }
+    // AFTER the observer: the finish screen captures standings the
+    // moment race.finishedTick appears, and it must find every stamp
+    // already written.
     if (window.FF.flow) window.FF.flow.onFrame(state);
-    if (racing && window.FF.raceWatch) window.FF.raceWatch.update(state);
   }
 
   // Shader Studio takes the frame over when active (sim pauses too:

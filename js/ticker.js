@@ -43,7 +43,7 @@ const CSS = `
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   font-family: var(--mono, ui-monospace, monospace); }
 .ff-tick { padding: 5px 12px; border-radius: 999px; white-space: nowrap;
-  font-size: clamp(10px, 2.5vw, 13px); letter-spacing: 0.07em;
+  font-size: var(--fs-label); letter-spacing: 0.07em;
   background: rgba(10, 14, 10, 0.82); color: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(255, 255, 255, 0.09);
   opacity: 0; transform: translateY(-6px);

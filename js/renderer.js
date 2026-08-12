@@ -792,13 +792,31 @@ function createRenderer(canvas) {
     // The pair is measured and centred as a UNIT, so "1st" and "12th"
     // both sit dead centre over their fruit (centring on the numeral
     // alone would shift the label sideways on every overtake).
-    const size = Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom));
+    // TIERS, matching the finish screen exactly: the podium is bold,
+    // full-size and bright; from 4th back the numbers are lighter,
+    // smaller and dimmer, so a field of also-rans can never be
+    // mistaken for more silver. Your own label is never dimmed —
+    // it's the one you look for.
+    const podium = n <= 3;
+    const loud = podium || isPlayer;
+    const base = Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom));
+    const size = loud ? base : Math.max(8, Math.round(base * 0.85));
     const num = String(n);
     const suf = ordinalSuffix(n);
-    const fNum = `700 ${size}px "Geist Mono", ui-monospace, monospace`;
-    const fSuf = `600 ${Math.max(7, Math.round(size * 0.62))}px "Geist Mono", ui-monospace, monospace`;
+    // The suffix is TWO STEPS down the interface's scale from the
+    // numeral (1 / 1.25^2 = 0.64). World-scaled, because these labels
+    // live in the scene — but proportioned by the same law as the UI,
+    // so the game reads as one typographic system. See js/type.js.
+    const R = (window.FF.type && window.FF.type.RATIO) || 1.25;
+    const sufSize = Math.max(7, Math.round(size / (R * R)));
+    const fNum = `${loud ? 700 : 400} ${size}px "Geist Mono", ui-monospace, monospace`;
+    const fSuf = `${loud ? 600 : 400} ${sufSize}px "Geist Mono", ui-monospace, monospace`;
     const c = isPlayer ? PLACE_YOU : (PLACE_COLORS[n] || PLACE_COLORS[0]);
     const s = isPlayer ? PLACE_YOU : PLACE_SUF;
+    // Alphas mirror the CSS: 0.62/0.45 for the loud rows, ~0.42 of
+    // that presence for the field behind them.
+    const numAlpha = loud ? 0.62 : 0.42;
+    const sufAlpha = loud ? 0.45 : 0.30;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.font = fNum;
@@ -808,10 +826,12 @@ function createRenderer(canvas) {
     const x0 = sx - (wNum + wSuf) / 2;
     const y = sy - 100 * zoom;
     ctx.font = fNum;
-    ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.62)`;
+    ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${numAlpha})`;
     ctx.fillText(num, x0, y);
     ctx.font = fSuf;
-    ctx.fillStyle = `rgba(${s[0]}, ${s[1]}, ${s[2]}, 0.45)`;
+    ctx.fillStyle = `rgba(${s[0]}, ${s[1]}, ${s[2]}, ${sufAlpha})`;
+    // The suffix rides on the numeral's SHOULDER. This is the game's
+    // one ordinal convention — the finish screen follows it too.
     ctx.fillText(suf, x0 + wNum, y - size * 0.17);
   }
 

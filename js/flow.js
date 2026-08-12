@@ -72,12 +72,12 @@ const CSS = `
    button row inherits the fix instead of rediscovering the bug. */
 .ff-buttons { display: flex; gap: 8px; }
 .ff-buttons .ff-btn { flex: 1 1 0; width: auto; min-width: 0; }
-.ff-title { color: #39ff5f; font-size: 24px; font-weight: 700;
+.ff-title { color: var(--c-accent); font-size: var(--fs-title); font-weight: 700;
   letter-spacing: 2px; margin: 0 0 14px; text-align: center; }
-.ff-sub { color: #7fa383; font-size: 12px; text-align: center; margin: 0 0 16px; }
+.ff-sub { color: var(--c-dim); font-size: var(--fs-body); text-align: center; margin: 0 0 16px; }
 .ff-melon-row { display: flex; align-items: center; justify-content: center;
   gap: 14px; margin: 6px 0 10px; }
-.ff-melon-name { font-size: 15px; color: #e6ffe6; min-width: 120px; text-align: center; }
+.ff-melon-name { font-size: var(--fs-lead); color: var(--c-text); min-width: 120px; text-align: center; }
 /* The menu panel is wider than the others: it carries a portrait of
    the melon AND its papers. */
 .ff-screen.ff-menu-screen .ff-panel { min-width: 320px; max-width: min(92vw, 620px); }
@@ -88,15 +88,15 @@ const CSS = `
 canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34vh, 260px); }
 .ff-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
   margin: 2px 0 10px; }
-.ff-section { font-size: 9px; letter-spacing: 0.16em; color: #39ff5f;
+.ff-section { font-size: var(--fs-micro); letter-spacing: 0.16em; color: var(--c-accent);
   border-top: 1px solid #1f3a24; padding-top: 8px; margin-top: 2px; }
 .ff-stat-row { display: flex; align-items: center; justify-content: space-between;
   gap: 10px; padding: 5px 0 6px; border-bottom: 1px solid #14261a; min-width: 0; }
-.ff-stat-row .k { font-size: 9px; letter-spacing: 0.09em; color: #7fa383; flex: none; }
-.ff-stat-row .v { font-size: 12px; color: #dff3df; text-align: right;
+.ff-stat-row .k { font-size: var(--fs-micro); letter-spacing: 0.09em; color: var(--c-dim); flex: none; }
+.ff-stat-row .v { font-size: var(--fs-body); color: var(--c-text); text-align: right;
   font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
-.ff-stat-row .v small { display: block; font-size: 9px; color: #5d7a62;
+.ff-stat-row .v small { display: block; font-size: var(--fs-micro); color: var(--c-faint);
   letter-spacing: 0.04em; margin-top: 1px; line-height: 1.2; }
 /* The menu sizes to content while it FITS, and stops at the viewport:
    height:auto with a max-height gives a tight panel on a tall screen
@@ -114,13 +114,13 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   canvas.ff-spin.ff-portrait { width: min(34vw, 46vh, 200px); height: min(34vw, 46vh, 200px); }
 }
 .ff-btn { display: block; width: 100%; margin: 8px 0 0; padding: 12px;
-  background: #123018; color: #39ff5f; border: 1px solid #2a5a34;
-  border-radius: 7px; font: inherit; font-size: 16px; letter-spacing: 1px;
+  background: #123018; color: var(--c-accent); border: 1px solid #2a5a34;
+  border-radius: 7px; font: inherit; font-size: var(--fs-lead); letter-spacing: 1px;
   cursor: pointer; }
 .ff-btn:active { background: #1a4522; }
 .ff-btn.ff-secondary { color: #9fc7a5; border-color: #23402a; background: #0d1f12; }
-.ff-arrow { background: none; border: 1px solid #2a5a34; color: #39ff5f;
-  border-radius: 6px; font: inherit; font-size: 18px; padding: 6px 12px; cursor: pointer; }
+.ff-arrow { background: none; border: 1px solid #2a5a34; color: var(--c-accent);
+  border-radius: 6px; font: inherit; font-size: var(--fs-lead); padding: 6px 12px; cursor: pointer; }
 /* A STATED height, not an inferred one: PLACES, RACE and YOU have
    different content heights, and a content-sized panel visibly
    breathed as you tapped between them. Bounded by the viewport, so
@@ -128,29 +128,26 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-screen.ff-finish-screen .ff-panel { height: min(88dvh, 620px); }
 .ff-tabs { flex: none; display: flex; gap: 4px; margin: 0 0 10px; }
 .ff-tab { flex: 1; padding: 7px 4px; border-radius: 7px; cursor: pointer;
-  background: #0d1f12; border: 1px solid #1b3823; color: #7fa383;
-  font: inherit; font-size: 11px; letter-spacing: 0.1em; }
-.ff-tab.on { background: #123018; color: #39ff5f; border-color: #2a5a34; }
+  background: #0d1f12; border: 1px solid #1b3823; color: var(--c-dim);
+  font: inherit; font-size: var(--fs-label); letter-spacing: 0.1em; }
+.ff-tab.on { background: #123018; color: var(--c-accent); border-color: #2a5a34; }
 .ff-pane { display: none; }
 .ff-pane.on { display: block; }
 /* Superlatives: label above, winner and value below. */
 .ff-facts { }
 .ff-fact { display: flex; align-items: baseline; justify-content: space-between;
   gap: 10px; padding: 7px 2px; border-bottom: 1px solid #14261a; }
-.ff-fact-l { font-size: 10px; letter-spacing: 0.09em; color: #7fa383; flex: none; }
+.ff-fact-l { font-size: var(--fs-micro); letter-spacing: 0.09em; color: var(--c-dim); flex: none; }
 .ff-fact-r { text-align: right; min-width: 0; }
-.ff-fact-n { display: block; font-size: 14px; color: #dff3df;
+.ff-fact-n { display: block; font-size: var(--fs-body); color: var(--c-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ff-fact-v { display: block; font-size: 11px; color: #39ff5f;
+.ff-fact-v { display: block; font-size: var(--fs-label); color: var(--c-accent);
   font-variant-numeric: tabular-nums; }
-.ff-empty { padding: 18px 4px; text-align: center; font-size: 12px; color: #5d7a62; }
-.ff-summary { display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 10px; margin: 2px 0 10px; align-content: start; }
-.ff-stat { text-align: center; }
-.ff-stat .ff-stat-v { display: block; font-size: 19px; font-weight: 700; color: #dff3df;
-  font-variant-numeric: tabular-nums; line-height: 1.15; }
-.ff-stat .ff-stat-k { display: block; font-size: 10px; letter-spacing: 0.08em; color: #7fa383; }
-.ff-stat.hi .ff-stat-v { color: #39ff5f; }
+.ff-empty { padding: 18px 4px; text-align: center; font-size: var(--fs-body); color: var(--c-faint); }
+/* The YOU tab uses the RACE tab's rows verbatim — one list shape for
+   both, so the tabs read as one screen with different contents. */
+.ff-summary { margin: 2px 0 10px; }
+.ff-fact-n.hi { color: var(--c-accent); }
 /* The panes no longer scroll themselves — .ff-body owns the scroll,
    so a pane is just content and the tab bar can never be pushed off
    by a long standings list. */
@@ -159,21 +156,35 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px;
   border-bottom: 1px solid #14261a; }
 .ff-row.ff-you { background: rgba(57, 255, 95, 0.07); border-radius: 6px; }
-.ff-pos { width: 62px; color: #cfe8cf; font-size: 26px; font-weight: 700;
+/* NON-PODIUM places recede. Silver (2nd) is a pale grey by nature, so
+   a bone-white 4th sitting next to it read as a second silver — the
+   podium stopped looking like a podium. The rest of the field is now
+   dimmer, lighter in weight and slightly smaller, so the top three
+   are the only bright, heavy numbers on the screen. */
+.ff-pos { width: 62px; color: rgba(207, 232, 207, 0.42); font-size: var(--fs-title); font-weight: 400;
   text-align: right; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
-.ff-pos .ff-ord { font-size: 15px; font-weight: 600; color: #7fa383; }
+.ff-pos .ff-ord { font-size: var(--fs-body); font-weight: 400; color: rgba(127, 163, 131, 0.5);
+  /* On the numeral's SHOULDER — the same ordinal convention the
+     in-race labels use. One idea, one styling. */
+  vertical-align: super; }
+/* The podium: bright, bold and a size larger than the field. */
+.ff-row:nth-child(-n+3) .ff-pos { font-size: var(--fs-hero); font-weight: 700; }
+.ff-row:nth-child(-n+3) .ff-pos .ff-ord { font-size: var(--fs-lead); font-weight: 600; color: var(--c-dim); }
 /* The podium reads at a glance: gold, silver, bronze. */
-.ff-row:nth-child(1) .ff-pos { color: #ffd54a; }
-.ff-row:nth-child(2) .ff-pos { color: #d8e2e6; }
-.ff-row:nth-child(3) .ff-pos { color: #e0a06a; }
-.ff-row.ff-you .ff-pos, .ff-row.ff-you .ff-pos .ff-ord { color: #39ff5f; }
-.ff-rname { font-size: 14px; color: #dff3df; flex: 1 1 auto; min-width: 0;
+.ff-row:nth-child(1) .ff-pos { color: var(--c-gold); }
+.ff-row:nth-child(2) .ff-pos { color: var(--c-silver); }
+.ff-row:nth-child(3) .ff-pos { color: var(--c-bronze); }
+/* YOUR row is never dimmed: finishing 9th should still be legible at
+   a glance, and it is the one row you look for. */
+.ff-row.ff-you .ff-pos { color: var(--c-accent); font-weight: 700; }
+.ff-row.ff-you .ff-pos .ff-ord { color: rgba(57, 255, 95, 0.75); }
+.ff-rname { font-size: var(--fs-body); color: var(--c-text); flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ff-rtime { font-size: 10px; color: #7fa383; letter-spacing: 0.06em;
+.ff-rtime { font-size: var(--fs-micro); color: var(--c-dim); letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums; margin-top: 1px; }
-.ff-row.ff-you .ff-rtime { color: #39ff5f; }
+.ff-row.ff-you .ff-rtime { color: var(--c-accent); }
 .ff-you-tag { flex: none; }
-.ff-you-tag { color: #39ff5f; font-size: 11px; letter-spacing: 1px; }
+.ff-you-tag { color: var(--c-accent); font-size: var(--fs-label); letter-spacing: 1px; }
 canvas.ff-spin { width: 52px; height: 52px; flex: none; }
 
 /* The pause button joins the top-centre cluster: it sits immediately
@@ -185,7 +196,7 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
   right: calc(50% + 34px);
   background: var(--panel-bg, #161616); color: var(--panel-fg, #ddd);
   border: none; border-radius: 10px; padding: 8px 12px;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-body);
   line-height: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 #ff-pause-btn:active { color: var(--panel-accent, #39ff5f); }
 #ff-pause-btn[hidden] { display: none; }
@@ -196,23 +207,23 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
    of stacking, which alone recovers ~50px. */
 @media (max-height: 500px) {
   .ff-panel { padding: 12px 18px; border-radius: 8px; }
-  .ff-title { font-size: 18px; margin-bottom: 6px; }
+  .ff-title { font-size: var(--fs-lead); margin-bottom: 6px; }
   .ff-sub { margin-bottom: 8px; }
   .ff-row { padding: 3px 4px; gap: 9px; }
   canvas.ff-spin { width: 34px; height: 34px; }
-  .ff-pos { width: 48px; font-size: 20px; }
-  .ff-pos .ff-ord { font-size: 12px; }
-  .ff-rname { font-size: 13px; }
+  .ff-pos { width: 48px; font-size: var(--fs-lead); }
+  .ff-pos .ff-ord { font-size: var(--fs-micro); }
+  .ff-row:nth-child(-n+3) .ff-pos { font-size: var(--fs-title); }
+  .ff-row:nth-child(-n+3) .ff-pos .ff-ord { font-size: var(--fs-body); }
+  .ff-rname { font-size: var(--fs-body); }
   .ff-tabs { margin-bottom: 6px; }
-  .ff-tab { padding: 5px 3px; font-size: 10px; }
+  .ff-tab { padding: 5px 3px; font-size: var(--fs-micro); }
   .ff-fact { padding: 4px 2px; }
-  .ff-fact-n { font-size: 12px; }
-  .ff-summary { gap: 3px 8px; margin-bottom: 6px; padding-top: 6px; }
-  .ff-stat .ff-stat-v { font-size: 15px; }
-  .ff-stat .ff-stat-k { font-size: 9px; }
+  .ff-fact-n { font-size: var(--fs-body); }
+  .ff-summary { margin-bottom: 6px; }
   .ff-melon-row { margin: 2px 0 8px; }
   .ff-melon-row canvas.ff-spin { width: 64px; height: 64px; }
-  .ff-btn { padding: 9px; font-size: 14px; margin-top: 6px; }
+  .ff-btn { padding: 9px; font-size: var(--fs-body); margin-top: 6px; }
   /* (the .ff-buttons row contract lives with the panel contract) */
   .ff-buttons .ff-btn { margin-top: 6px; }
 }
@@ -496,6 +507,14 @@ let spinnersPaused = false;
 // resampled by a soft canvas. So each spinner sizes its store from the
 // box it actually occupies times devicePixelRatio, and re-sizes when
 // that changes (rotation, window resize, moving to another monitor).
+// Wipe a canvas that is about to be reused. Without this, a spinner
+// whose loop hasn't run yet still displays the last thing drawn into
+// it — which is how a fresh menu could show a race-old portrait.
+function clearCanvas(cv) {
+  const ctx = cv.getContext && cv.getContext('2d');
+  if (ctx) ctx.clearRect(0, 0, cv.width, cv.height);
+}
+
 function syncCanvasSize(cv) {
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const rect = cv.getBoundingClientRect();
@@ -553,6 +572,7 @@ flow.register('menu', {
     elMenu.style.display = 'flex';
     elMenu._refresh();
     spinners.length = 0;
+    clearCanvas(elMenu._spin);
     const M = window.FF.melon;
     const d = M.derive(M.active().seed);
     const design = window.FF.studio && window.FF.studio.design;
@@ -571,6 +591,7 @@ flow.register('menu', {
       patKey: (design && design.patKey) || String(M.active().seed),
       fruit,
     });
+    spinnersPaused = false; // this screen's portrait always turns
     startSpinners();
   },
   exit() {
@@ -657,6 +678,7 @@ flow.register('finish', {
       nm.appendChild(el('div', 'ff-rtime', fmtTime(r.timeSec)));
       row.appendChild(nm);
       rows.appendChild(row);
+      clearCanvas(c);
       spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b, color: r.color, patKey: r.patKey, fruit: r.fruit });
     }
     fillFacts();
@@ -666,6 +688,10 @@ flow.register('finish', {
   },
   exit() {
     if (window.FF.autopilot) window.FF.autopilot.disengage();
+    // Release the tab-scoped pause: it is meaningless once this
+    // screen is gone, and leaving it set froze the next screen's
+    // spinners.
+    spinnersPaused = false;
     elFinish.style.display = 'none';
   },
 });
@@ -678,6 +704,11 @@ function showTab(key) {
   }
   // Spinners live in the PLACES pane; a hidden canvas would keep the
   // rAF loop alive for nothing, and isConnected can't see display:none.
+  // SCOPED TO THIS SCREEN: leaving the finish on the RACE or YOU tab
+  // used to strand this flag as true, so the menu's portrait never
+  // animated and simply showed whatever pixels the canvas still held
+  // from before the race — a stale bitmap, stretched by CSS, which
+  // reads exactly like "low fidelity and won't rotate".
   spinnersPaused = key !== 'places';
   if (!spinnersPaused) startSpinners();
 }
@@ -716,20 +747,33 @@ function fillSummary() {
   const rw = window.FF.raceWatch;
   if (!rw || !rw.summary) return;
   const s = rw.summary(stateRef);
-  const stat = (v, k, hi) => {
-    const d = el('div', 'ff-stat' + (hi ? ' hi' : ''));
-    d.appendChild(el('span', 'ff-stat-v', v));
-    d.appendChild(el('span', 'ff-stat-k', k));
-    box.appendChild(d);
+  // SAME SHAPE AS THE RACE TAB: label left, value right, one row each
+  // (the three-across stat grid put the label under the number, so
+  // the two tabs read as different screens). Sharing the row markup
+  // means a change to one is a change to both.
+  const stat = (v, k, note, hi) => {
+    const row = el('div', 'ff-fact');
+    row.appendChild(el('div', 'ff-fact-l', k));
+    const right = el('div', 'ff-fact-r');
+    const n = el('div', 'ff-fact-n' + (hi ? ' hi' : ''), String(v));
+    right.appendChild(n);
+    if (note) right.appendChild(el('div', 'ff-fact-v', note));
+    row.appendChild(right);
+    box.appendChild(row);
   };
+  // Order kept: the result first, then the flare story, then the rest.
   if (s.bestLapSec !== null) stat(s.bestLapSec.toFixed(1) + 's', 'BEST LAP');
-  stat(String(s.deaths), s.deaths === 1 ? 'SPLAT' : 'SPLATS', s.deaths === 0);
-  if (s.overtakes) stat(String(s.overtakes), 'OVERTAKES');
-  if (s.flareSaves) stat(String(s.flareSaves), s.flareSaves === 1 ? 'FLARE SAVE' : 'FLARE SAVES', true);
+  stat(String(s.deaths), s.deaths === 1 ? 'SPLAT' : 'SPLATS',
+    s.deaths === 0 ? 'not a scratch' : null, s.deaths === 0);
+  if (s.overtakes) stat(String(s.overtakes), 'OVERTAKES',
+    s.passedBy ? s.passedBy + ' passed you' : null);
+  if (s.flareSaves) stat(String(s.flareSaves), s.flareSaves === 1 ? 'FLARE SAVE' : 'FLARE SAVES',
+    'lives the flare bought', true);
   if (s.biggestSurvived) stat(String(s.biggestSurvived), 'BIGGEST HIT SURVIVED');
   if (s.bestAirSec >= 1) stat(s.bestAirSec.toFixed(1) + 's', 'BEST AIR');
   if (s.longestStreakM >= 100) stat(s.longestStreakM + 'm', 'LONGEST CLEAN RUN');
-  if (s.flarePct) stat(s.flarePct + '%', 'TIME FLARED');
+  if (s.flarePct) stat(s.flarePct + '%', 'TIME FLARED',
+    s.deadPct ? s.deadPct + '% dead-sticked' : null);
 }
 
 // ---- Hooks for main.js ----
