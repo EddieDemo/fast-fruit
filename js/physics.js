@@ -120,6 +120,15 @@ function step(state, dt) {
 // the full rationale (the impulse law made bounciness the deadliest
 // setting, inverting the flare mechanic).
 
+// The event bus hook. Physics only ANNOUNCES; if nothing is
+// listening (headless harnesses, ghosts), this costs one property
+// read. Never read back by the sim — announcements can't change
+// physics, which is what keeps the bus outside determinism.
+function emit(state, type, payload) {
+  const bus = window.FF.events;
+  if (bus) bus.emit(type, payload, state);
+}
+
 function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
   if (!m.alive) return;
   const sev = Math.max(m.hitSeverity, m.pairSeverity);
@@ -134,23 +143,92 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     debris.spawnFromBody(m, state, tick, bodyIndex);
     m.alive = false;
     m.respawnAtTick = tick + CONFIG.respawnDelayTicks;
-    if (isPlayer) {
-      // Death certificate for the presentation layer (same per-peer
-      // divergence license as fx: sim never reads it).
-      state.lastDeath = {
-        tick,
-        name: m.name || '',
-        byPair: m.pairSeverity >= m.hitSeverity,
-        severity: sev,
-        curvR: m.lastHitCurvR || 1,
-        rFlat: (m.a * m.a) / m.b,
-        vn: Math.abs(state.telemetry.lastImpactVn || 0),
-        speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
-      };
+    // The certificate is built for EVERY body: the ticker commentates
+    // the whole field, not just the local player. Only the player's
+    // lands in state.lastDeath (the death overlay's single slot).
+    const cert = makeCertificate(m, state, tick, sev, T, isPlayer);
+    if (isPlayer) state.lastDeath = cert;
+    emit(state, 'death', cert);
+  } else if (sev > 0) {
+    const near = sev >= T * NEAR_MISS_RATIO;
+    // A blow is newsworthy if it was nearly lethal OR if the player's
+    // flare is the only reason it wasn't (see sevAtNeutral above).
+    // Building the certificate is the cheapest way to ask the second
+    // question, so only do it when the first is plausible.
+    if (near || m.restitution > CONFIG.restitution) {
+      const cert = makeCertificate(m, state, tick, sev, T, isPlayer);
+      if (near || cert.flareSaved) {
+        if (isPlayer && near) state.fx.flash = 1; // near-miss: teach the envelope
+        emit(state, 'nearMiss', cert);
+      }
     }
-  } else if (isPlayer && sev >= T * NEAR_MISS_RATIO) {
-    state.fx.flash = 1; // near-miss: teach the envelope
   }
+}
+
+// ---- THE CERTIFICATE ----------------------------------------------
+// One honest record of a violent contact, for the presentation layer.
+// It answers WHY in the terms that now actually decide outcomes:
+// how hard (severity vs this body's threshold), how bouncy you were
+// (the one thing under your control), what it would have taken to
+// survive (the counterfactual — exactly computable, because severity
+// scales with (1 - e^2) at fixed energy), and where in the fall it
+// happened. The old certificate's curvR/rFlat pair is GONE: under the
+// shape-toughness law those numbers no longer cause anything, and a
+// classifier reading them was inventing tip-first stories about
+// deaths that had nothing to do with orientation.
+function makeCertificate(m, state, tick, sev, T, isPlayer) {
+  const e = damage.bodyRestitution(m);
+  // Counterfactual: the same dissipated energy re-judged at full
+  // flare. severity ~ (1 - e^2), so the ratio is exact.
+  const eMax = CONFIG.bounceMax;
+  const sevAtFullFlare = sev * ((1 - eMax * eMax) / (1 - e * e));
+  // ...and the same energy re-judged at NEUTRAL: what this blow would
+  // have done to a player who never touched the stick. This is the
+  // credit side of the ledger, and it must be judged by the
+  // counterfactual rather than the outcome — a flare that works
+  // pushes the ACTUAL severity far below any "near-lethal" bar, so
+  // scoring on the outcome would systematically fail to praise the
+  // saves that worked best (measured: a 9m drop lands at 81% of
+  // lethal when flared, invisible to an 85% near-miss gate).
+  const nE = CONFIG.restitution;
+  const sevAtNeutral = e > nE ? sev * ((1 - nE * nE) / (1 - e * e)) : sev;
+  return {
+    tick,
+    isPlayer: !!isPlayer,
+    name: m.name || '',
+    byPair: m.pairSeverity >= m.hitSeverity,
+    severity: sev,
+    threshold: T,
+    overkill: sev / T,                    // 1.02 = squeaker, 4 = vaporised
+    survived: sev < T,
+    restitution: e,                       // flare AT the moment of truth
+    flareAxis: m.flareAxisAtHit === undefined ? 0 : m.flareAxisAtHit,
+    sevAtFullFlare,
+    sevAtNeutral,
+    flareSaved: sev < T && sevAtNeutral >= T, // the flare is WHY they lived
+    flareWouldSave: sev >= T && sevAtFullFlare < T,
+    // The exact prescription: the minimum restitution that survives,
+    // and the stick position that buys it. null = unsurvivable at any
+    // bounciness, which the commentary must be able to say honestly.
+    eNeeded: damage.restitutionToSurvive(sev, T, e),
+    axisNeeded: (() => {
+      const need = damage.restitutionToSurvive(sev, T, e);
+      // null means UNREACHABLE, not merely "needs a lot": the stick
+      // tops out at CONFIG.bounceMax, so a requirement above the cap
+      // is beyond the player whatever they do. Clamping to 1 here
+      // would have the coach promise a save that full flare cannot
+      // actually deliver — worse than saying nothing.
+      if (need === null || need > CONFIG.bounceMax) return null;
+      return damage.restitutionToBounce(need);
+    })(),
+    chainIndex: m.chainIndex || 1,        // 1 = the arrival itself
+    airTicks: m.lastFlightTicks || 0,
+    fallPx: m.lastFallPx || 0,
+    toughness: damage.bodyToughness(m),
+    fruit: m.fruit || 'watermelon',
+    vn: Math.abs(state.telemetry.lastImpactVn || 0),
+    speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
+  };
 }
 
 const RESPAWN_DROP = 200; // 2m above the surface; the melon falls back in
@@ -324,6 +402,7 @@ function stepBody(m, inp, terrain, dt, sink) {
   // full throttle at neutral bounce, no special case (Eddie's spec).
   inp.bounceAxis += ((inp.rawBounce || 0) - inp.bounceAxis) * ease;
   m.restitution = damage.bounceToRestitution(inp.bounceAxis);
+  m.flareAxisAtHit = inp.bounceAxis; // certificate breadcrumb (presentation)
 
   // ---- 2. Motor torque ----
   // Electric-motor curve: full torque from standstill, tapering to zero
@@ -413,7 +492,34 @@ function stepBody(m, inp, terrain, dt, sink) {
     }
   }
   m.grounded = grounded;
+  // ---- FLIGHT LEDGER (presentation telemetry, every body) ----
+  // The commentary layer needs to know the SHAPE of an event, not
+  // just its magnitude: how long you were up, how high, and whether
+  // the blow that got you was the arrival or the third bounce of a
+  // bleed chain (a story the energy law made possible and the old
+  // orientation commentary couldn't tell). Cheap scalars, written
+  // every tick, read by nobody in the sim — same divergence license
+  // as fx and telemetry.
+  const wasAir = (m.airTicks || 0) > 0;
   m.airTicks = grounded ? 0 : (m.airTicks || 0) + 1;
+  if (!grounded) {
+    if (!wasAir) {
+      // Launch: open a flight record.
+      m.flightTicks = 0;
+      m.flightApexY = m.y;
+      m.launchY = m.y;
+      m.chainIndex = 0;
+      m.chainWorst = 0;
+    }
+    m.flightTicks = (m.flightTicks || 0) + 1;
+    if (m.y < (m.flightApexY === undefined ? m.y : m.flightApexY)) m.flightApexY = m.y;
+  } else if (wasAir) {
+    // Touchdown: this contact is the next link in the landing chain.
+    m.chainIndex = (m.chainIndex || 0) + 1;
+    m.lastFlightTicks = m.flightTicks || 0;
+    // Fall height in px: apex to the ground we just met.
+    m.lastFallPx = Math.max(0, m.y - (m.flightApexY === undefined ? m.y : m.flightApexY));
+  }
   if (strongestE > 0) {
     // Severity is orientation-independent now (shape toughness);
     // curvR survives only as telemetry/FX flavour.

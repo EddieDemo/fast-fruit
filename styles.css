@@ -449,6 +449,16 @@ html, body {
   font-size: clamp(12px, 3vw, 18px);
   color: rgba(255, 255, 255, 0.75);
 }
+/* The coach line: green, because it speaks for the flare (green is
+   the up-stick's colour on the thumbstick ring and the splat
+   predictor). Quieter than the headline — advice, not verdict. */
+#death-overlay .death-coach {
+  margin-top: 10px;
+  font-size: clamp(11px, 2.6vw, 15px);
+  letter-spacing: 0.08em;
+  color: rgba(92, 235, 110, 0.9);
+  text-shadow: 0 0 14px rgba(92, 235, 110, 0.35);
+}
 
 /* ---------- Clean mode / cockpit toggle ---------- */
 #cockpit-toggle {

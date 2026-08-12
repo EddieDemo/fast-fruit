@@ -202,12 +202,13 @@ function buildMenu() {
   };
   left.addEventListener('click', () => cycle(-1));
   right.addEventListener('click', () => cycle(1));
-  race.addEventListener('click', () => flow.go('race'));
+  race.addEventListener('click', () => { fromMenuOrRetry = true; flow.go('race'); });
   elMenu._refresh = refresh;
   elMenu._spin = spin;
 }
 
 let elPause = null, elPauseBtn = null;
+let fromMenuOrRetry = true; // set by the paths that BEGIN a race
 function buildPause() {
   elPause = el('div', 'ff-screen');
   const panel = el('div', 'ff-panel');
@@ -222,7 +223,7 @@ function buildPause() {
   elPause.appendChild(panel);
   document.body.appendChild(elPause);
   resume.addEventListener('click', () => flow.go('race'));
-  restart.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('race'); });
+  restart.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
   menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
 
   // The button itself: visible only while racing (a pause control on
@@ -258,7 +259,7 @@ function buildFinish() {
   panel.appendChild(btns);
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
-  retry.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('race'); });
+  retry.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
   menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
   elFinish._rows = rows;
 }
@@ -327,7 +328,19 @@ flow.register('menu', {
 });
 
 flow.register('race', {
-  enter() { if (elPauseBtn) elPauseBtn.hidden = false; },
+  enter() {
+    if (elPauseBtn) elPauseBtn.hidden = false;
+    // Commentary records are RACE-scoped: "biggest hit survived"
+    // means this race, not this session. Only a fresh start clears
+    // them — resuming from pause must not (you'd re-earn records you
+    // already set).
+    if (fromMenuOrRetry) {
+      if (window.FF.ticker) window.FF.ticker.reset();
+      if (window.FF.raceWatch) window.FF.raceWatch.reset();
+      if (window.FF.events) window.FF.events.reset();
+      fromMenuOrRetry = false;
+    }
+  },
   exit() { if (elPauseBtn) elPauseBtn.hidden = true; },
 });
 

@@ -149,5 +149,31 @@ function bounceToRestitution(axis) {
   return n + n * axis; // axis in [-1,0): lerp toward 0
 }
 
-window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, SEV_SCALE };
+// The inverse of bounceToRestitution: what stick position produces
+// this restitution? Used by the commentary layer to say HOW MUCH
+// flare a death needed ("half flare would have done it"), which is
+// far more teachable than a binary would/wouldn't.
+function restitutionToBounce(e) {
+  const n = CONFIG.restitution;
+  if (e >= n) {
+    const span = CONFIG.bounceMax - n;
+    return span <= 0 ? 0 : Math.min(1, (e - n) / span);
+  }
+  return n <= 0 ? 0 : Math.max(-1, (e - n) / n);
+}
+
+// The MINIMUM restitution that would have survived this contact.
+// Severity scales with (1 - e^2) at fixed dissipated energy, so
+// solving sev * (1 - e^2)/(1 - e0^2) = T is closed-form and exact.
+// Returns null when no bounciness in [0, 1) could have saved it —
+// the honest "nothing would have helped" case.
+function restitutionToSurvive(sev, T, e0) {
+  if (sev <= 0 || T <= 0) return 0;
+  const need2 = 1 - (T / sev) * (1 - e0 * e0);
+  if (need2 <= 0) return 0;      // even dead rubber survives
+  if (need2 >= 1) return null;   // nothing survives
+  return Math.sqrt(need2);
+}
+
+window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, SEV_SCALE };
 })();

@@ -212,6 +212,7 @@ const renderer = createRenderer(canvas);
 const hud = createHud(state);
 // Boot into the menu: the grid sits assembled behind the panel. After
 // the renderer, so the menu's rotating preview can draw immediately.
+if (window.FF.ticker) window.FF.ticker.init();
 if (window.FF.flow) window.FF.flow.init(state, { respawn: respawnRace });
 
 document.getElementById('respawn-btn').addEventListener('click', () => {
@@ -311,6 +312,7 @@ function frame(now) {
       accumulator = 0;
     }
     if (window.FF.flow) window.FF.flow.onFrame(state);
+    if (racing && window.FF.raceWatch) window.FF.raceWatch.update(state);
   }
 
   // Shader Studio takes the frame over when active (sim pauses too:
