@@ -34,9 +34,21 @@ let spinRAF = 0;
 const CSS = `
 .ff-screen { position: fixed; inset: 0; display: flex; align-items: center;
   justify-content: center; z-index: 40; background: rgba(5, 8, 5, 0.72);
-  font-family: ui-monospace, Menlo, monospace; }
+  font-family: ui-monospace, Menlo, monospace;
+  /* Safe areas: landscape phones put the notch on a SIDE, and the
+     home indicator eats the bottom in both orientations. */
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+           max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  box-sizing: border-box; }
+/* The panel is VIEWPORT-BOUNDED, not content-sized: it never exceeds
+   the screen, and the scroll lives on the standings list inside it
+   (a panel taller than the viewport was the landscape bug — the
+   title and the buttons were clipped off the top and bottom, which
+   is exactly the content you can't afford to lose). dvh over vh so
+   mobile browser chrome retracting doesn't re-clip. */
 .ff-panel { background: rgba(10, 14, 10, 0.96); border: 1px solid #1f3a24;
-  border-radius: 10px; padding: 26px 30px; min-width: 300px; max-width: 86vw;
+  border-radius: 10px; padding: 20px 24px; min-width: 280px; max-width: 86vw;
+  max-height: 100%; display: flex; flex-direction: column; box-sizing: border-box;
   color: #cfe8cf; box-shadow: 0 12px 60px rgba(0,0,0,0.6); }
 .ff-title { color: #39ff5f; font-size: 24px; font-weight: 700;
   letter-spacing: 2px; margin: 0 0 14px; text-align: center; }
@@ -52,15 +64,64 @@ const CSS = `
 .ff-btn.ff-secondary { color: #9fc7a5; border-color: #23402a; background: #0d1f12; }
 .ff-arrow { background: none; border: 1px solid #2a5a34; color: #39ff5f;
   border-radius: 6px; font: inherit; font-size: 18px; padding: 6px 12px; cursor: pointer; }
-.ff-rows { margin: 4px 0 12px; max-height: 52vh; overflow-y: auto; }
+.ff-rows { margin: 4px 0 10px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
+  -webkit-overflow-scrolling: touch; }
+.ff-title, .ff-btn, .ff-melon-row, .ff-melon-name, .ff-sub { flex: none; }
 .ff-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px;
   border-bottom: 1px solid #14261a; }
 .ff-row.ff-you { background: rgba(57, 255, 95, 0.07); border-radius: 6px; }
-.ff-pos { width: 34px; color: #7fa383; font-size: 15px; text-align: right; }
-.ff-row.ff-you .ff-pos { color: #39ff5f; }
-.ff-rname { font-size: 14px; color: #dff3df; flex: 1; }
+.ff-pos { width: 62px; color: #cfe8cf; font-size: 26px; font-weight: 700;
+  text-align: right; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.ff-pos .ff-ord { font-size: 15px; font-weight: 600; color: #7fa383; }
+/* The podium reads at a glance: gold, silver, bronze. */
+.ff-row:nth-child(1) .ff-pos { color: #ffd54a; }
+.ff-row:nth-child(2) .ff-pos { color: #d8e2e6; }
+.ff-row:nth-child(3) .ff-pos { color: #e0a06a; }
+.ff-row.ff-you .ff-pos, .ff-row.ff-you .ff-pos .ff-ord { color: #39ff5f; }
+.ff-rname { font-size: 14px; color: #dff3df; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-you-tag { flex: none; }
 .ff-you-tag { color: #39ff5f; font-size: 11px; letter-spacing: 1px; }
-canvas.ff-spin { width: 52px; height: 52px; }
+canvas.ff-spin { width: 52px; height: 52px; flex: none; }
+
+/* The pause button joins the top-centre cluster: it sits immediately
+   LEFT of respawn (which is centred) and daily (at 50%+34), mirroring
+   daily's offset on the other side. Styling matches the cluster by
+   using the same custom properties, so a theme change carries. */
+#ff-pause-btn { position: fixed; z-index: 10;
+  top: max(10px, env(safe-area-inset-top));
+  right: calc(50% + 34px);
+  background: var(--panel-bg, #161616); color: var(--panel-fg, #ddd);
+  border: none; border-radius: 10px; padding: 8px 12px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px;
+  line-height: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+#ff-pause-btn:active { color: var(--panel-accent, #39ff5f); }
+#ff-pause-btn[hidden] { display: none; }
+
+/* LANDSCAPE PHONES: short viewports. Everything that costs vertical
+   space shrinks — the standings list keeps the space it needs to
+   still show several rows, and the buttons sit side by side instead
+   of stacking, which alone recovers ~50px. */
+@media (max-height: 500px) {
+  .ff-panel { padding: 12px 18px; border-radius: 8px; }
+  .ff-title { font-size: 18px; margin-bottom: 6px; }
+  .ff-sub { margin-bottom: 8px; }
+  .ff-row { padding: 3px 4px; gap: 9px; }
+  canvas.ff-spin { width: 34px; height: 34px; }
+  .ff-pos { width: 48px; font-size: 20px; }
+  .ff-pos .ff-ord { font-size: 12px; }
+  .ff-rname { font-size: 13px; }
+  .ff-melon-row { margin: 2px 0 8px; }
+  .ff-melon-row canvas.ff-spin { width: 64px; height: 64px; }
+  .ff-btn { padding: 9px; font-size: 14px; margin-top: 6px; }
+  /* Buttons in a row: RETRY and MAIN MENU side by side. */
+  .ff-buttons { display: flex; gap: 8px; }
+  .ff-buttons .ff-btn { margin-top: 6px; }
+}
+/* Wide-and-short: let the panel use the horizontal room it has. */
+@media (max-height: 500px) and (min-width: 700px) {
+  .ff-panel { max-width: 70vw; }
+}
 `;
 
 // ---- Standings: captured at the instant the player finishes ----
@@ -81,6 +142,16 @@ function computeStandings(state) {
   rows.sort((r, q) => q.x - r.x);
   rows.forEach((r, i) => { r.pos = i + 1; });
   return rows;
+}
+
+// English ordinal suffix. 11/12/13 are the classic trap (eleventh,
+// not eleven-first), so the teens are special-cased before the
+// last-digit rule — a 12-racer field would have hit it.
+function ordinalSuffix(n) {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return 'th';
+  const d = n % 10;
+  return d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
 }
 
 // ---- DOM scaffolding ----
@@ -136,6 +207,43 @@ function buildMenu() {
   elMenu._spin = spin;
 }
 
+let elPause = null, elPauseBtn = null;
+function buildPause() {
+  elPause = el('div', 'ff-screen');
+  const panel = el('div', 'ff-panel');
+  panel.appendChild(el('h1', 'ff-title', 'PAUSED'));
+  panel.appendChild(el('p', 'ff-sub', 'the world is frozen'));
+  const resume = el('button', 'ff-btn', 'RESUME');
+  const restart = el('button', 'ff-btn ff-secondary', 'RESTART RACE');
+  const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
+  panel.appendChild(resume);
+  panel.appendChild(restart);
+  panel.appendChild(menu);
+  elPause.appendChild(panel);
+  document.body.appendChild(elPause);
+  resume.addEventListener('click', () => flow.go('race'));
+  restart.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('race'); });
+  menu.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('menu'); });
+
+  // The button itself: visible only while racing (a pause control on
+  // the pause screen would be a trap).
+  elPauseBtn = el('button', null, 'II');
+  elPauseBtn.id = 'ff-pause-btn';
+  elPauseBtn.setAttribute('aria-label', 'Pause');
+  elPauseBtn.hidden = true;
+  document.body.appendChild(elPauseBtn);
+  elPauseBtn.addEventListener('click', () => {
+    if (flow.state === 'race') flow.go('pause');
+    else if (flow.state === 'pause') flow.go('race');
+  });
+  // Escape/P toggle for desktop; ignored while the studio has focus.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' && e.code !== 'KeyP') return;
+    if (flow.state === 'race') flow.go('pause');
+    else if (flow.state === 'pause') flow.go('race');
+  });
+}
+
 function buildFinish() {
   elFinish = el('div', 'ff-screen');
   const panel = el('div', 'ff-panel');
@@ -144,8 +252,10 @@ function buildFinish() {
   panel.appendChild(rows);
   const retry = el('button', 'ff-btn', 'RETRY');
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
-  panel.appendChild(retry);
-  panel.appendChild(menu);
+  const btns = el('div', 'ff-buttons');
+  btns.appendChild(retry);
+  btns.appendChild(menu);
+  panel.appendChild(btns);
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
   retry.addEventListener('click', () => { if (respawnFn) respawnFn(); flow.go('race'); });
@@ -216,7 +326,19 @@ flow.register('menu', {
   exit() { elMenu.style.display = 'none'; },
 });
 
-flow.register('race', { enter() {}, exit() {} });
+flow.register('race', {
+  enter() { if (elPauseBtn) elPauseBtn.hidden = false; },
+  exit() { if (elPauseBtn) elPauseBtn.hidden = true; },
+});
+
+// PAUSE: a frozen world, nothing captured, nothing reset. main.js
+// already gates the solo sim on flow.state === 'race', so the machine
+// does the pausing — this screen is only the face of it. (Netplay is
+// never gated: pausing a lockstep race would desync the session.)
+flow.register('pause', {
+  enter() { elPause.style.display = 'flex'; },
+  exit() { elPause.style.display = 'none'; },
+});
 
 flow.register('finish', {
   enter() {
@@ -226,7 +348,11 @@ flow.register('finish', {
     spinners.length = 0;
     for (const r of computeStandings(stateRef)) {
       const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
-      row.appendChild(el('div', 'ff-pos', String(r.pos)));
+      // Ordinal, with the suffix styled small: the NUMBER is the
+      // thing you read across the room.
+      const pos = el('div', 'ff-pos', String(r.pos));
+      pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.pos)));
+      row.appendChild(pos);
       const c = el('canvas', 'ff-spin');
       c.width = 104; c.height = 104;
       row.appendChild(c);
@@ -261,8 +387,10 @@ flow.init = function (state, opts) {
   document.head.appendChild(style);
   buildMenu();
   buildFinish();
+  buildPause();
   elMenu.style.display = 'none';
   elFinish.style.display = 'none';
+  elPause.style.display = 'none';
   flow.go('menu');
 };
 

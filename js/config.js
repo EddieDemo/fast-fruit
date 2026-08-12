@@ -52,6 +52,9 @@ const DEFAULTS = Object.freeze({
   friction: 0.95,          // Coulomb μ at contact
   rollingResistance: 0.025, // contact losses; also damps contact bounce at speed
   restitution: 0.18,       // NEUTRAL bounciness (flare stick centred)
+  ringLog: 1,              // DEBUG BUILD: ring-vs-reality logger ON —
+                           // one line per event to console + RINGLOG;
+                           // turn off (or set 0 here) after the hunt
   practiceSplat: 1,        // practice mode: tint the airborne player by
                            // predicted landing fate (green/amber/red);
                            // flipping the flare mid-air flips the verdict
@@ -218,6 +221,7 @@ const SCHEMA = [
   { key: 'restitution',    min: 0,    max: 0.9,   step: 0.02 },
   { key: 'bounceMax',      min: 0.3,  max: 0.95,  step: 0.01 },
   { key: 'practiceSplat',  min: 0,    max: 1,     step: 1 },
+  { key: 'ringLog',        min: 0,    max: 1,     step: 1 },
 
   { group: 'Melon' },
   { key: 'semiMajor',      min: 20,   max: 90,    step: 1 },

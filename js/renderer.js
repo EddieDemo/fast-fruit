@@ -445,7 +445,7 @@ function createRenderer(canvas) {
         drawMelon(ctx, sx, sy, d.angle, d.squash, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
         ctx.globalAlpha = 1;
       }
-      drawPlace(ctx, sx, sy, d.place, zoom);
+      drawPlace(ctx, sx, sy, d.place, zoom, d.isPlayer);
     }
 
     // ---- Speed lines: streaks behind the player at terminal pace ----
@@ -480,59 +480,175 @@ function createRenderer(canvas) {
 
     // Practice mode: the splat verdict ring around the airborne player.
     drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
+    ringLogFrame(state);
 
     // The visible thumbstick sits on top of everything: it's UI glass.
     drawInputSticks(ctx);
   }
 
-  // ---- Practice-mode splat predictor (Eddie, 2026-08-11) ----
-  // HONEST BY CONSTRUCTION, and only possible because severity is now
-  // orientation-independent: once airborne, the flight path is pure
-  // ballistics (air torque spins the body, never bends the path), the
-  // terrain is fixed, so the impact is sealed at launch — the ONLY
-  // live variable is the flare. This ring integrates the same
-  // gravity/damping the sim uses, finds the terrain crossing, and
-  // judges the landing with the REAL damage law at the player's
-  // CURRENT restitution: push the stick up mid-air and red flips
-  // green before your eyes, which is the whole lesson. Amber covers
-  // the honest uncertainty band (contact geometry and rotational
-  // give, ~+-20%). Presentation tier: Math.* welcome, sim untouched.
+  // ---- Practice-mode splat predictor v3 (2026-08-11) ----
+  // v1 and v2 both IMITATED the solver and both lied (Eddie's field
+  // log was the conviction: EP1 exact at w=0, scatter 0.16x-2.3x at
+  // race spin — the contact-point term w x r turns any approximation
+  // of the contact geometry into large vn error, and the energy law
+  // SQUARES it). v3 stops imitating: it clones the player body (all
+  // scalars) and the current input, and steps the clone through the
+  // sim's OWN stepBody (exported as stepBodyClone, sink null) over
+  // the real terrain at the real dt — the forecast is the sim's own
+  // arithmetic, exact by construction, tracking the worst severity
+  // across the bounce chain (up to 2.5s, early-out when the verdict
+  // seals RED or the chain settles). Inputs are HELD at their current
+  // values: the ring answers "what happens if you keep doing exactly
+  // this", and moving the flare mid-air re-answers it live. Verdict
+  // is BINARY by design ruling. Scope, by design: the ring judges the
+  // LANDING — a bot torpedoing you mid-air is not a fall.
+  // Presentation tier; the sim is untouched (clone only).
+  function predictSplat(state, m) {
+    const dt = 1 / CONFIG.physicsHz;
+    const stepClone = window.FF.stepBodyClone;
+    if (!stepClone) return { worst: 0, T: 1, splat: false, trace: null };
+    // Clone the body (all-scalar) and the input (so smoothing evolves
+    // exactly as it would with the current stick HELD).
+    const c = Object.assign({}, m);
+    const inp = {
+      rawAxis: state.input.rawAxis, torqueAxis: state.input.torqueAxis || 0,
+      rawBounce: state.input.rawBounce || 0, bounceAxis: state.input.bounceAxis || 0,
+    };
+    const mr = 1 / (m.invM * CONFIG.mass);
+    const T = CONFIG.smashThreshold * (mr === 1 ? 1 : Math.pow(mr, CONFIG.sizeToughness / 3));
+    const trace = arguments.length > 2 && arguments[2] ? [] : null;
+    // SCOPE: the ring judges THE FALL — the landing and its bounce
+    // chain — not the racing that follows. Without a hard stop, the
+    // clone rolls on for seconds and any wall it drives into seals a
+    // RED the player rightly calls a lie (field-logged: rolling never
+    // tripped the old airborne-only settle test). The fall is OVER
+    // after a quarter-second of continuous sub-lethal ground contact.
+    // SCOPE (final, from Eddie's second field log): the ring judges
+    // THE NEXT LANDING — its contact cluster only. The clone steps
+    // until the first contact, holds through the cluster (severity
+    // peaks over 2-3 ticks; short air gaps tolerated), and stops the
+    // moment the body either rolls on or rebounds clean. Judging any
+    // further was the residual lie: a multi-landing budget spans 3-4
+    // skips at race pace and SLIDES as you bounce, so the verdict
+    // blinked about events seconds away while each immediate landing
+    // was benign — the log showed every FIRST-landing prediction
+    // exact to the unit, and every wrong verdict borrowed from the
+    // future. A bleed chain is judged bounce-by-bounce instead, since
+    // the ring re-asks after every rebound — better tempering
+    // pedagogy anyway. Cheaper too: the sim stops at the landing.
+    let worst = 0, lethal = false, contacted = false, groundSince = 0, airGap = 0;
+    for (let i = 0; i < 400; i++) {
+      stepClone(c, inp, state.terrain, dt);
+      if (c.hitSeverity > 0) {
+        contacted = true; airGap = 0; groundSince++;
+        if (trace && c.hitSeverity > 50) trace.push({ dt: i, sev: Math.round(c.hitSeverity), vy: Math.round(c.vy) });
+        if (c.hitSeverity > worst) worst = c.hitSeverity;
+        // A hit only KILLS after spawn protection expires — the smash
+        // rule's own grace, honoured here too.
+        if (c.hitSeverity >= T && state.tick + i + 1 > m.protectTick) lethal = true;
+        if (lethal && !trace) break; // verdict sealed
+        if (groundSince > 10) break; // rolled on: the landing is judged
+      } else if (contacted) {
+        airGap++;
+        if (airGap > 6) break; // rebounded clean: the landing is judged
+      }
+    }
+    return { worst, T, splat: lethal, trace };
+  }
+  window.FF.predictSplat = predictSplat; // harness-testable
+
+  // ---- RING DEBUG LOGGER (CONFIG.ringLog) ----
+  // One compact line per event into the console AND window.RINGLOG.
+  // Race full-right with practiceSplat on, then in the console run:
+  //   copy(RINGLOG.join('\n'))
+  // and paste the result back. Episode grammar:
+  //   EP n LAUNCH t=.. pos=.. v=.. w=.. e=.. pred=worst/T RED|GRN
+  //   EP n FLIP t=.. pred=..        (verdict changed mid-air)
+  //   EP n PRE t=.. pred=..  pc=[+ticks:vn:sev ...]  (last frame
+  //        before contact, with the predictor's IMAGINED contacts)
+  //   EP n HIT t=.. sev=.. T=.. died=0|1   (each REAL contact)
+  //   EP n END SETTLED|DIED launch=.. pre=.. actualMax=.. [MISMATCH]
+  const RL = { ep: 0, air: false, lastPred: null, launch: null, hits: 0, maxSev: 0, maxPair: 0, t0: 0 };
+  function rlog(s) {
+    if (!window.RINGLOG) window.RINGLOG = [];
+    window.RINGLOG.push(s);
+    console.log('[ring] ' + s);
+  }
+  function ringLogFrame(state) {
+    if (!CONFIG.ringLog) return;
+    const m = state.melon;
+    if (m.alive && (m.pairSeverity || 0) > RL.maxPair) RL.maxPair = m.pairSeverity;
+    if (!m.alive) {
+      if (RL.air || RL.hits) {
+        const pairKill = RL.maxPair > RL.maxSev;
+        rlog('EP ' + RL.ep + ' END DIED' + (pairKill ? '(PAIR: bot collision — outside the ring\'s scope)' : '')
+          + ' launch=' + (RL.launch ? RL.launch.v : '?')
+          + ' pre=' + (RL.lastPred ? (RL.lastPred.splat ? 'RED' : 'GRN') + ':' + Math.round(RL.lastPred.worst) : '?')
+          + ' actualMax=' + Math.round(RL.maxSev)
+          + (RL.lastPred && !RL.lastPred.splat && !pairKill ? ' MISMATCH(green-splat)' : ''));
+        RL.air = false; RL.hits = 0; RL.maxSev = 0; RL.maxPair = 0; RL.lastPred = null; RL.launch = null;
+      }
+      return;
+    }
+    const air = m.hitSeverity === 0;
+    if (air) {
+      const p = predictSplat(state, m, true);
+      const v = p.splat ? 'RED' : 'GRN';
+      if (!RL.air) {
+        RL.ep++; RL.t0 = state.tick; RL.hits = 0; RL.maxSev = 0;
+        RL.launch = { v, worst: p.worst };
+        rlog('EP ' + RL.ep + ' LAUNCH t=' + state.tick
+          + ' pos=(' + Math.round(m.x) + ',' + Math.round(m.y) + ')'
+          + ' v=(' + Math.round(m.vx) + ',' + Math.round(m.vy) + ')'
+          + ' w=' + m.omega.toFixed(1) + ' ang=' + (m.angle % 6.283).toFixed(2)
+          + ' e=' + (m.restitution !== undefined ? m.restitution.toFixed(2) : '?')
+          + ' axis=' + (state.input.torqueAxis || 0).toFixed(2)
+          + ' pred=' + Math.round(p.worst) + '/' + Math.round(p.T) + ' ' + v);
+      } else if (RL.lastPred && RL.lastPred.splat !== p.splat) {
+        rlog('EP ' + RL.ep + ' FLIP t=' + state.tick + ' pred=' + Math.round(p.worst) + ' ' + v);
+      }
+      RL.lastPred = p;
+      RL.air = true;
+    } else {
+      if (RL.air) {
+        // First frame of contact: dump the pre-contact prediction.
+        const p = RL.lastPred;
+        let pc = '';
+        if (p && p.trace) pc = ' pc=[' + p.trace.slice(0, 4).map(c => '+' + c.dt + ':' + c.sev + '@vy' + c.vy).join(' ') + ']';
+        rlog('EP ' + RL.ep + ' PRE t=' + (state.tick - 1) + ' pred=' + (p ? Math.round(p.worst) : '?')
+          + ' ' + (p ? (p.splat ? 'RED' : 'GRN') : '?') + pc);
+        RL.air = false;
+      }
+      if (m.hitSeverity > RL.maxSev * 1.0001 || (m.hitSeverity > 50 && RL.hits < 8)) {
+        if (m.hitSeverity > 50) {
+          RL.hits++;
+          const mr = 1 / (m.invM * CONFIG.mass);
+          const T = CONFIG.smashThreshold * (mr === 1 ? 1 : Math.pow(mr, CONFIG.sizeToughness / 3));
+          rlog('EP ' + RL.ep + ' HIT t=' + state.tick + ' sev=' + Math.round(m.hitSeverity)
+            + ' T=' + Math.round(T) + ' vy@hit=' + Math.round(m.vy) + ' w=' + m.omega.toFixed(1));
+        }
+        if (m.hitSeverity > RL.maxSev) RL.maxSev = m.hitSeverity;
+      }
+      // Settled: a stretch of grounded ticks closes the episode.
+      if (state.tick - RL.t0 > 3 && RL.hits > 0 && m.hitSeverity < 50) {
+        rlog('EP ' + RL.ep + ' END SETTLED launch=' + (RL.launch ? RL.launch.v : '?')
+          + ' pre=' + (RL.lastPred ? (RL.lastPred.splat ? 'RED' : 'GRN') + ':' + Math.round(RL.lastPred.worst) : '?')
+          + ' actualMax=' + Math.round(RL.maxSev)
+          + (RL.lastPred && RL.lastPred.splat ? ' MISMATCH(red-survived)' : ''));
+        RL.hits = 0; RL.maxSev = 0; RL.lastPred = null; RL.launch = null;
+      }
+    }
+  }
+
   function drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {
     if (!CONFIG.practiceSplat) return;
     const m = state.melon;
     // Grounded = rolling contact dissipates a whisper every tick, so
     // hitSeverity > 0 IS the grounded test; airborne fires nothing.
     if (!m.alive || m.hitSeverity > 0) return;
-    // Ballistic integration, sim constants, coarse fixed step.
-    const dt = 1 / 60;
-    let x = m.x, y = m.y, vx = m.vx, vy = m.vy;
-    let hit = null;
-    for (let i = 0; i < 240; i++) {
-      const damp = Math.max(0, 1 - CONFIG.linearDamping * dt);
-      vy += CONFIG.gravity * dt;
-      vx *= damp; vy *= damp;
-      x += vx * dt; y += vy * dt;
-      const gy = terrainYAt(state.terrain, x);
-      if (gy !== null && y + m.b >= gy) { hit = { x, y, vx, vy, gy }; break; }
-    }
-    if (!hit) return;
-    // Surface normal from the local slope.
-    const g1 = terrainYAt(state.terrain, hit.x - 4), g2 = terrainYAt(state.terrain, hit.x + 4);
-    if (g1 === null || g2 === null) return;
-    let nx = -(g2 - g1), ny = -8;
-    const nn = Math.hypot(nx, ny); nx /= nn; ny /= nn;
-    const vn = hit.vx * nx + hit.vy * ny; // negative = approaching
-    if (vn >= 0) return;
-    const RIGD = window.FF.damage;
-    const e = RIGD.bodyRestitution(m);
-    const E = RIGD.dissipated(vn, m.invM, e); // flat-contact kn ~ invM
-    const sev = RIGD.severityFromE(E, m);
-    const mr = 1 / (m.invM * CONFIG.mass);
-    const T = CONFIG.smashThreshold * (mr === 1 ? 1 : Math.pow(mr, CONFIG.sizeToughness / 3));
-    let col;
-    if (sev > T * 1.15) col = '255, 92, 74';        // red: splat
-    else if (sev < T * 0.85) col = '92, 235, 110';  // green: clean
-    else col = '255, 196, 84';                       // amber: on the line
+    const p = predictSplat(state, m);
+    // BINARY, by design ruling: a fall either kills or it doesn't.
+    const col = p.splat ? '255, 92, 74' : '92, 235, 110';
     const sx = toScreenX(ix), sy = toScreenY(iy);
     const r = (Math.max(m.a, m.b) + 14) * zoom;
     ctx.save();
@@ -543,6 +659,7 @@ function createRenderer(canvas) {
     ctx.stroke();
     ctx.restore();
   }
+
 
   // ---- The floating thumbstick (Eddie, 2026-08-11) ----
   // Draws whatever input.js is actually doing — same anchors, same
@@ -701,12 +818,62 @@ function createRenderer(canvas) {
   // rotates with the body. Geist Mono 400 per the design spec.
   // Place number floats ONE GRID CELL (1m) above the body, in the
   // racer's own color — a label over the fruit, not a tattoo on it.
-  function drawPlace(ctx, sx, sy, n, zoom) {
-    ctx.font = `400 ${Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom))}px "Geist Mono", ui-monospace, monospace`;
-    ctx.textAlign = 'center';
+  // English ordinal suffix. The teens are the classic trap (eleventh,
+  // not eleven-first), so 11/12/13 are special-cased before the
+  // last-digit rule — a 12+ racer field would hit it.
+  function ordinalSuffix(n) {
+    const t = n % 100;
+    if (t >= 11 && t <= 13) return 'th';
+    const d = n % 10;
+    return d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
+  }
+
+  // The place palette, shared in spirit with the finish screen's
+  // (.ff-pos rules in flow.js): podium gold/silver/bronze, the
+  // player's sacred green, bone white for the rest, with the suffix a
+  // step quieter. Kept in sync BY HAND — two renderers, one language.
+  const PLACE_COLORS = {
+    1: [255, 213, 74],    // gold
+    2: [216, 226, 230],   // silver
+    3: [224, 160, 106],   // bronze
+    0: [207, 232, 207],   // the rest: bone
+  };
+  const PLACE_YOU = [57, 255, 95];
+  const PLACE_SUF = [127, 163, 131];
+
+  function drawPlace(ctx, sx, sy, n, zoom, isPlayer) {
+    // Ordinal, drawn as TWO pieces so the numeral keeps its full size
+    // and the suffix rides small on its shoulder — the number is what
+    // you read at a glance mid-race; the suffix only has to be
+    // legible. Styled to match the finish screen: BOLD numeral in the
+    // podium/player colour, lighter dimmer suffix. Alpha stays
+    // moderate because these labels live over the moving track — the
+    // finish screen can afford full strength on a dark panel, a race
+    // label cannot without shouting over the terrain.
+    // The pair is measured and centred as a UNIT, so "1st" and "12th"
+    // both sit dead centre over their fruit (centring on the numeral
+    // alone would shift the label sideways on every overtake).
+    const size = Math.max(9, Math.round(CONFIG.semiMinor * 0.8 * zoom));
+    const num = String(n);
+    const suf = ordinalSuffix(n);
+    const fNum = `700 ${size}px "Geist Mono", ui-monospace, monospace`;
+    const fSuf = `600 ${Math.max(7, Math.round(size * 0.62))}px "Geist Mono", ui-monospace, monospace`;
+    const c = isPlayer ? PLACE_YOU : (PLACE_COLORS[n] || PLACE_COLORS[0]);
+    const s = isPlayer ? PLACE_YOU : PLACE_SUF;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-    ctx.fillText(String(n), sx, sy - 100 * zoom);
+    ctx.font = fNum;
+    const wNum = ctx.measureText(num).width;
+    ctx.font = fSuf;
+    const wSuf = ctx.measureText(suf).width;
+    const x0 = sx - (wNum + wSuf) / 2;
+    const y = sy - 100 * zoom;
+    ctx.font = fNum;
+    ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.62)`;
+    ctx.fillText(num, x0, y);
+    ctx.font = fSuf;
+    ctx.fillStyle = `rgba(${s[0]}, ${s[1]}, ${s[2]}, 0.45)`;
+    ctx.fillText(suf, x0 + wNum, y - size * 0.17);
   }
 
   function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit) {

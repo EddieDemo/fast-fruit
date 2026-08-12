@@ -849,5 +849,12 @@ function resolveContact(m, c, invM, invI) {
   return { jn, vn, kn: knOut, e: eOut };
 }
 
-Object.assign(window.FF, { step });
+// stepBodyClone: the per-body step exported for PREDICTION — the
+// practice ring steps a CLONE of the player through this exact
+// function (sink null: no FX side effects), so its forecast is the
+// sim's own arithmetic. Imitation predictors kept diverging: at race
+// spin rates the contact-point term (w x r) turns any approximation
+// of the contact geometry into large vn error, squared by the energy
+// law (field-logged 2026-08-11, EP1 exact at w=0, chaos at w=15-37).
+Object.assign(window.FF, { step, stepBodyClone: (m, inp, terrain, dt) => stepBody(m, inp, terrain, dt, null) });
 })();

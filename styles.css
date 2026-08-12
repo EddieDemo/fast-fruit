@@ -91,10 +91,13 @@ html, body {
 #respawn-btn:active { color: var(--panel-accent); }
 
 /* ---------- Shader Studio (dev) ---------- */
+/* Bottom-left: the only empty corner (HUD top-left, toggles top-right,
+   multiplayer bottom-right). At right:56px this dev button sat ON TOP
+   of the tune panel's controls with z-index 30 winning every tap. */
 #studio-btn {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: 56px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: max(10px, env(safe-area-inset-left));
   z-index: 30;
   background: var(--panel-bg, #161616);
   color: #ddd;
