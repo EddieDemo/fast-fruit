@@ -46,6 +46,42 @@
 // thresholds and sliders; SEV_SCALE keeps severity in the familiar
 // thousands. A display constant with zero physical meaning.
 //
+// ---- THE CLUSTER LEDGER (2026-08-13, replacing per-tick max) ----
+// A landing is judged as ONE event: every unit of energy dissipated
+// within its CONTACT CLUSTER — every contact, every tick — is summed,
+// and the total is what faces the threshold. Under the old rule the
+// tick's worst single blow was judged alone, which made the verdict a
+// function of how the solver happened to slice the event: a wedge
+// landing split over two walls read at roughly HALF its honest energy
+// (measured: a 6 m drop reads 98% of lethal on flat, 41% in a 35-
+// degree vee under max — but 75% in true total energy), and a landing
+// smeared across ticks by corner geometry was forgiven the same way.
+// Energy absorbed is additive and rind does not heal between tick 3
+// and tick 4 of one landing; the cluster total IS the physical
+// quantity. Equal-energy events now get equal verdicts regardless of
+// how the discretization sliced them.
+//
+// THE BOUNDARY (promoted from pilot.js, where the predictor ratified
+// it in the field): a cluster ends when the body ROLLS ON (more than
+// CLUSTER_ROLL_TICKS consecutive contact ticks — the fall is over,
+// the racing has resumed) or REBOUNDS CLEAN (more than
+// CLUSTER_GAP_TICKS contact-free ticks — the next landing is a new
+// event). The gap rule is what PRESERVES THE FLARE: measured
+// inter-bounce gaps run 54-171 ticks against the 6-tick boundary, so
+// every rebound of a bleed chain opens its own ledger and tempering a
+// big drop across several landings remains the survival skill the
+// energy law created. The roll rule is the noise guard: resting
+// contact trickles ~0.3 severity per tick, and a ledger capped at 10
+// contact ticks can never accumulate it into a phantom death
+// (measured worst trickle cluster: 6% of lethal).
+//
+// One implementation, three readers: the smash rule advances the
+// ledger, the splat predictor advances a CLONE's ledger through the
+// same function, and the oracle brain acts on the predictor — so the
+// law, the forecast and the AI cannot drift. Ledger fields live on
+// the body and are SIM STATE: pinned arithmetic, identical on every
+// peer, saved and restored by the resume snapshot.
+//
 // Deterministic: pinned arithmetic + dpow only, same on every peer.
 // ============================================================
 
@@ -136,6 +172,67 @@ function pairShares(eA, eB) {
   return [dA / s, dB / s];
 }
 
+// ---- The cluster ledger ------------------------------------------
+// Boundary constants. These ARE the pilot's field-ratified landing
+// scope (see the predictor's history in pilot.js); they live here now
+// because the boundary is part of the law, not of the forecast.
+const CLUSTER_ROLL_TICKS = 10;  // contact ticks: after this, it's racing
+const CLUSTER_GAP_TICKS = 6;    // air ticks: after this, next landing is new
+
+// Advance a body's ledger by one tick. tickSev is the tick's TOTAL
+// severity (terrain sum + pair share sum; zero while spawn-protected,
+// which is what keeps protected hits free exactly as the old rule
+// did). Returns null while the cluster is open or absent, and
+// { total, ticks } on the tick the cluster CLOSES — the caller judges
+// the running total (m.clusterE) for death every contact tick, and
+// the closed total for near-miss commentary once per event.
+//
+// Called from exactly two places: the smash rule (real bodies) and
+// predictSplat (clones). The clone carries the live ledger in, which
+// is correct by design: a short skip's open cluster continues into
+// the predicted landing, exactly as the law will judge it.
+function clusterStep(m, tickSev) {
+  if (tickSev > 0) {
+    if (!m.clusterOpen) {
+      m.clusterOpen = 1;
+      m.clusterE = 0;
+      m.clusterN = 0;
+      m.clusterGround = 0;
+    }
+    m.clusterE += tickSev;
+    m.clusterN++;
+    m.clusterGround++;
+    m.clusterAir = 0;
+    if (m.clusterGround > CLUSTER_ROLL_TICKS) return closeCluster(m);
+    return null;
+  }
+  if (m.clusterOpen) {
+    m.clusterGround = 0;
+    m.clusterAir++;
+    if (m.clusterAir > CLUSTER_GAP_TICKS) return closeCluster(m);
+  }
+  return null;
+}
+
+function closeCluster(m) {
+  // pairE rides out with the close: the caller accumulates it before
+  // stepping the ledger, and resetCluster wipes it along with the
+  // rest — so the certificate must be handed the value, not the field.
+  const out = { total: m.clusterE, ticks: m.clusterN, pairE: m.clusterPairE || 0 };
+  resetCluster(m);
+  return out;
+}
+
+// A fresh body gets a fresh ledger (respawn, race build).
+function resetCluster(m) {
+  m.clusterOpen = 0;
+  m.clusterE = 0;
+  m.clusterN = 0;
+  m.clusterGround = 0;
+  m.clusterAir = 0;
+  m.clusterPairE = 0;
+}
+
 // The flare stick's mapping (Phase B): a smoothed bounce axis in
 // [-1, +1] becomes this body's restitution. Neutral (0) is EXACTLY
 // the live CONFIG value — a passive player's physics doesn't move a
@@ -175,5 +272,5 @@ function restitutionToSurvive(sev, T, e0) {
   return Math.sqrt(need2);
 }
 
-window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, SEV_SCALE };
+window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, clusterStep, resetCluster, SEV_SCALE, CLUSTER_ROLL_TICKS, CLUSTER_GAP_TICKS };
 })();

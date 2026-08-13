@@ -76,41 +76,33 @@ function predictSplat(state, m, trace, inputOverride) {
   const mr = 1 / (m.invM * CONFIG.mass);
   const T = CONFIG.smashThreshold * (mr === 1 ? 1 : dpow(mr, CONFIG.sizeToughness / 3));
   const traceOut = trace ? [] : null;
-  // SCOPE: the ring judges THE FALL — the landing and its bounce
-  // chain — not the racing that follows. Without a hard stop, the
-  // clone rolls on for seconds and any wall it drives into seals a
-  // RED the player rightly calls a lie (field-logged: rolling never
-  // tripped the old airborne-only settle test). The fall is OVER
-  // after a quarter-second of continuous sub-lethal ground contact.
-  // SCOPE (final, from Eddie's second field log): the ring judges
-  // THE NEXT LANDING — its contact cluster only. The clone steps
-  // until the first contact, holds through the cluster (severity
-  // peaks over 2-3 ticks; short air gaps tolerated), and stops the
-  // moment the body either rolls on or rebounds clean. Judging any
-  // further was the residual lie: a multi-landing budget spans 3-4
-  // skips at race pace and SLIDES as you bounce, so the verdict
-  // blinked about events seconds away while each immediate landing
-  // was benign — the log showed every FIRST-landing prediction
-  // exact to the unit, and every wrong verdict borrowed from the
-  // future. A bleed chain is judged bounce-by-bounce instead, since
-  // the ring re-asks after every rebound — better tempering
-  // pedagogy anyway. Cheaper too: the sim stops at the landing.
-  let worst = 0, lethal = false, contacted = false, groundSince = 0, airGap = 0;
+  // SCOPE: the ring judges THE NEXT LANDING — its contact cluster
+  // only (ratified across two of Eddie's field logs; a multi-landing
+  // budget borrowed verdicts from events seconds away while each
+  // immediate landing was benign). Since 2026-08-13 the cluster IS
+  // the law's own judged unit: the smash rule sums dissipated energy
+  // across a contact cluster and judges the total, and the boundary
+  // (roll-on / rebound-clean) lives in damage.clusterStep. So the
+  // forecast below no longer runs a private copy of that machinery —
+  // it advances the CLONE's ledger through the same function the
+  // smash rule uses. The clone carried the live ledger in
+  // (Object.assign above), which is correct by design: a short skip's
+  // open cluster continues into the predicted landing, exactly as the
+  // law will judge it. One boundary, three readers (rule, ring,
+  // oracle) — none can drift.
+  let worst = 0, lethal = false;
   for (let i = 0; i < 400; i++) {
     stepClone(c, inp, state.terrain, dt);
-    if (c.hitSeverity > 0) {
-      contacted = true; airGap = 0; groundSince++;
-      if (traceOut && c.hitSeverity > 50) traceOut.push({ dt: i, sev: Math.round(c.hitSeverity), vy: Math.round(c.vy) });
-      if (c.hitSeverity > worst) worst = c.hitSeverity;
-      // A hit only KILLS after spawn protection expires — the smash
-      // rule's own grace, honoured here too.
-      if (c.hitSeverity >= T && state.tick + i + 1 > m.protectTick) lethal = true;
-      if (lethal && !traceOut) break; // verdict sealed
-      if (groundSince > 10) break; // rolled on: the landing is judged
-    } else if (contacted) {
-      airGap++;
-      if (airGap > 6) break; // rebounded clean: the landing is judged
-    }
+    // Spawn protection zeroes the contribution, mirroring the smash
+    // rule's own grace: protected hits are free.
+    const tickSev = (state.tick + i + 1 <= m.protectTick) ? 0 : c.hitSeverity;
+    if (traceOut && c.hitSeverity > 50) traceOut.push({ dt: i, sev: Math.round(c.hitSeverity), vy: Math.round(c.vy) });
+    const closed = damage.clusterStep(c, tickSev);
+    const running = closed ? closed.total : (c.clusterOpen ? c.clusterE : 0);
+    if (running > worst) worst = running;
+    if (running >= T && tickSev > 0) lethal = true;
+    if (lethal && !traceOut) break;  // verdict sealed
+    if (closed) break;               // the landing is judged
   }
   return { worst, T, splat: lethal, trace: traceOut };
 }

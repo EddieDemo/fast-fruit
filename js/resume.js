@@ -35,7 +35,8 @@
 // ============================================================
 
 const KEY = 'ff.resume.v1';
-const VERSION = 3;          // bump on ANY change to the stored shape
+const VERSION = 4;          // bump on ANY change to the stored shape
+                            // v4 (2026-08-13): the cluster ledger
 const HEARTBEAT_MS = 2000;
 const MAX_AGE_MS = 36 * 60 * 60 * 1000;   // a day and a half
 
@@ -57,6 +58,14 @@ function packBody(m) {
     // decide whether it is airborne, so dropping it would have every
     // bot briefly believe it had landed.
     at: m.airTicks || 0,
+    // THE CLUSTER LEDGER IS INTEGRATED STATE (2026-08-13): a landing
+    // is judged as one summed event, so a body saved mid-cluster (a
+    // skip, a bounce inside the gap window) carries half a judged
+    // landing. Dropping it would resume a race that forgives the
+    // interrupted event — the same class of lie as resuming with the
+    // controls mid-swing.
+    cl: [m.clusterOpen ? 1 : 0, m.clusterE || 0, m.clusterN || 0,
+         m.clusterGround || 0, m.clusterAir || 0, m.clusterPairE || 0],
   };
 }
 
@@ -87,9 +96,18 @@ function applyBody(FF, m, p) {
   // Transient per-step fields must NOT be restored: they describe the
   // tick that was interrupted, and a stale severity would fire a
   // death overlay or a ticker line for a blow that already resolved.
-  m.hitSeverity = 0; m.pairSeverity = 0; m.squash = 0;
+  m.hitSeverity = 0; m.pairSeverity = 0; m.pairWorst = 0; m.squash = 0;
   m.grounded = false;
   m.airTicks = p.at || 0;
+  // The cluster ledger, restored whole (defaults for pre-v4 shapes
+  // can't occur — older versions are discarded at peek).
+  const cl = p.cl || [0, 0, 0, 0, 0, 0];
+  m.clusterOpen = cl[0] || 0;
+  m.clusterE = cl[1] || 0;
+  m.clusterN = cl[2] || 0;
+  m.clusterGround = cl[3] || 0;
+  m.clusterAir = cl[4] || 0;
+  m.clusterPairE = cl[5] || 0;
 }
 
 function save(state, opts) {

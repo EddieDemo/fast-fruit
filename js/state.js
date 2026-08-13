@@ -189,11 +189,75 @@ function createBody(x, y, scale, fruit) {
     pinY: null,
     respawnAtTick: 0,  // tick at which a dead body revives
     protectTick: 0,    // smash-immune until tick exceeds this
-    hitSeverity: 0,    // worst terrain-contact severity this step
-    pairSeverity: 0,   // worst melon-contact severity this step
+    hitSeverity: 0,    // TOTAL terrain severity this step (all contacts)
+    pairSeverity: 0,   // TOTAL melon-contact severity this step
+    pairWorst: 0,      // the single worst pair blow (blame breadcrumbs ride it)
     hitNx: 0, hitNy: -1,   // escape normal of the worst terrain blow
     pairNx: 0, pairNy: -1, // escape normal of the worst rival blow
     hitJn: 0, pairJn: 0,   // raw impulse of those blows (the drama budget)
+    // ---- The cluster ledger (damage.js clusterStep) ----
+    // SIM STATE: a landing is judged as one event — dissipated energy
+    // summed across its contact cluster — so the running ledger is as
+    // integrated as a velocity. Clones (finish-line fast-forward, the
+    // splat predictor) carry it via plain scalar copy; the resume
+    // snapshot stores and restores it.
+    clusterOpen: 0,    // 1 while a contact cluster is accumulating
+    clusterE: 0,       // running severity total of the open cluster
+    clusterN: 0,       // contact ticks in the open cluster
+    clusterGround: 0,  // consecutive contact ticks (roll-on boundary)
+    clusterAir: 0,     // contact-free ticks since last hit (gap boundary)
+    clusterPairE: 0,   // the traffic share of the open cluster's total
+
+    // ---- THE SCHEMA IS DECLARED, NOT ACCRETED (2026-08-13) --------
+    // Every field the sim or presentation will EVER write on a body is
+    // declared here, at neutral values, so all bodies share ONE hidden
+    // class for the life of the page. These used to be bolted on
+    // lazily by whichever system touched a body first — names.js added
+    // name, physics added restitution and the flight ledger on first
+    // use, racewatch added deathCount on first splat — in an order
+    // that depended on WHAT HAPPENED to that body. To the JS engine,
+    // property order is object identity: each ordering is a distinct
+    // hidden class, so every race rebuild dealt fresh shape variants
+    // into the hottest loops in the game (stepBody, the solvers, the
+    // renderer's body pass), whose inline caches went megamorphic
+    // after the first rebuild and never recovered for the life of the
+    // page. Measured (2026-08-13, headless 4-leg cup): leg 1 settles
+    // ~420ms/1000 ticks, legs 2-4 settle 590-720 — the SAME leg run
+    // four times degrades identically, heap flat, invariant to leg
+    // order and tick resets; with this block, all four legs settle
+    // 310-360, flat forever AND ~25% faster than leg 1 ever was. This
+    // was the "races 3 and 4 feel wrong until I refresh" bug: a
+    // refresh hands the engine fresh caches. Field notes:
+    //   * neutral values are chosen so every existing falsy-guard
+    //     (`m.x || 0`, `=== undefined ? fallback`) behaves identically
+    //   * flight anchors start at the SPAWN y, the value the launch
+    //     edge would write on the first airborne tick anyway
+    //   * restitution starts at the live neutral; stepBody overwrites
+    //     it every tick a body steps, so this is a placeholder shape
+    //     slot, never a stale physics value
+    // ADDING A BODY FIELD? Declare it here first. A lazy write
+    // elsewhere will still work — and will quietly re-open this bug.
+    finishTick: null,        // stamped at the line (main.js observer)
+    restitution: CONFIG.restitution, // the flare's product (physics, per tick)
+    flareAxisAtHit: 0,       // certificate breadcrumb (physics)
+    airTicks: 0,             // flight ledger (physics)
+    flightTicks: 0,
+    flightApexY: y,
+    launchY: y,
+    chainIndex: 0,
+    lastFlightTicks: 0,
+    lastFallPx: 0,
+    hitRxn: 0,               // r x n at the worst blow (the spin term's lever)
+    hitOmegaPre: 0,          // spin at that blow's approach
+    recentPacePx: null,      // pace window (racewatch -> finish estimator)
+    deathCount: 0,           // splats this race (racewatch -> estimator)
+    name: '',                // the cast (names.js)
+    bodyColor: null,         // pigment (resetBots / the player's dressing)
+    patKey: null,            // rind pattern key (the player's dressing)
+    pairOtherName: '',       // traffic blame breadcrumbs (pair solver)
+    pairOtherE: 0,
+    pairIStiffened: false,
+    pairShare: 0,
   };
 }
 

@@ -492,7 +492,9 @@ function createRenderer(canvas) {
     // the reborn melon falls out beneath it.
     drawPuffs(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 
-    // Practice mode: the splat verdict ring around the airborne player.
+    // The danger rim: the shipped landing-fate signal, worn by the body.
+    drawDangerRim(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
+    // Dev only (CONFIG.practiceSplat): the binary verdict ring.
     drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
     ringLogFrame(state);
 
@@ -588,6 +590,87 @@ function createRenderer(canvas) {
         RL.hits = 0; RL.maxSev = 0; RL.lastPred = null; RL.launch = null;
       }
     }
+  }
+
+  // ---- THE DANGER RIM (CONFIG.dangerRim, 2026-08-13) ----
+  // The shipped, in-race landing-fate signal. Eddie's constraints
+  // shaped it: the verdict lives ON THE PLAYER OBJECT (not the stick,
+  // not an instrument circle — the practice ring stays a dev tool),
+  // and it must be readable mid-air. So: an outline hugging the
+  // body's own silhouette, rotating with it, in three states —
+  //
+  //   nothing  the landing you are committed to is survivable AS HELD
+  //   AMBER    it kills as held, but flare saves it: flare up until
+  //            the amber goes out — the rim extinguishing IS the
+  //            confirmation, a feedback loop that teaches the flare
+  //            without a word of text
+  //   RED      no stick position survives this one (the need exceeds
+  //            bounceMax): the only play left is steering for
+  //            shallower ground — honest exoneration, same doctrine
+  //            as the coach line's "nothing would have saved that"
+  //
+  // Driven by pilot.predictSplat — the SAME clone-stepping forecast
+  // the oracle brain races on, so showing it to the player is parity
+  // with our own AI, not an assist. Because the clone holds the LIVE
+  // inputs, moving the flare (or the spin — the certificate's spinVn
+  // term measured a 3x severity swing from spin phase alone) re-asks
+  // and re-answers: both survival levers become legible through one
+  // signal. Presentation tier: reads state, clones, never writes sim.
+  //
+  // COST: the prediction re-asks on the oracle's own cadence (10
+  // ticks) while airborne, plus a faster path when the flare moves,
+  // floored at 3 ticks so a fast swipe can't ask every frame. One
+  // extra predicting body under the budget The Rindfather already
+  // pays. The tapered egg draws an ellipse rim — a glow, not a
+  // collider; the approximation is invisible at 6px of padding.
+  const RIM = { askTick: -1e9, askAxis: 0, verdict: 0 };
+  const RIM_REASK_TICKS = 10;   // the oracle's own re-ask cadence
+  const RIM_INPUT_TICKS = 3;    // floor for input-triggered re-asks
+  function drawDangerRim(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {
+    if (!CONFIG.dangerRim) return;
+    // The rim coaches a landing the player is about to make; under
+    // autopilot they are making none, and on the held grid the hover
+    // is not a fall.
+    if (window.FF.autopilot && !window.FF.autopilot.playerIsDriving()) return;
+    if (window.FF.gridStart && window.FF.gridStart.isHolding && window.FF.gridStart.isHolding()) return;
+    const m = state.melon;
+    if (!m.alive || m.hitSeverity > 0) { RIM.askTick = -1e9; RIM.verdict = 0; return; }
+    const ax = state.input.bounceAxis || 0;
+    const since = state.tick - RIM.askTick;
+    if (since >= RIM_REASK_TICKS || (since >= RIM_INPUT_TICKS && Math.abs(ax - RIM.askAxis) > 0.12)) {
+      RIM.askTick = state.tick;
+      RIM.askAxis = ax;
+      const p = window.FF.pilot.predictSplat(state, m);
+      if (!p.splat) {
+        RIM.verdict = 0;
+      } else {
+        const D = window.FF.damage;
+        const need = D.restitutionToSurvive(p.worst, p.T, D.bodyRestitution(m));
+        // null = unreachable at any bounciness; above bounceMax = the
+        // stick tops out short of it. Both are honest REDs — an amber
+        // that full flare cannot actually extinguish would be the rim
+        // promising a save it can't deliver.
+        RIM.verdict = (need === null || need > CONFIG.bounceMax) ? 2 : 1;
+      }
+    }
+    if (!RIM.verdict) return;
+    const col = RIM.verdict === 2 ? '255, 92, 74' : '255, 213, 74';
+    const sx = toScreenX(ix), sy = toScreenY(iy);
+    const pad = 6;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(iangle);
+    // Two strokes, no shadowBlur: a glow a phone can afford. World-
+    // scaled weights, same doctrine as the practice ring's stroke.
+    ctx.beginPath();
+    ctx.ellipse(0, 0, (m.a + pad) * zoom, (m.b + pad) * zoom, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${col}, 0.20)`;
+    ctx.lineWidth = Math.max(2.5, 7 * zoom);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(${col}, 0.85)`;
+    ctx.lineWidth = Math.max(1.1, 2.4 * zoom);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {

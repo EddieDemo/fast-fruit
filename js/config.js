@@ -47,6 +47,13 @@ const DEFAULTS = Object.freeze({
   // race spin dies in ~0.35s — decisive but AIMABLE. (5 reversed in
   // 0.09s and was unusably twitchy; 0.65 took 0.53s and felt sluggish.)
   inputResponse: 24,       // how fast input eases to target (1/s)
+  bounceResponse: 48,      // the FLARE's own easing (2026-08-13).
+  // Steering is a steering skill; the flare is a TIMING skill. At the
+  // shared 24/s a panic flick reached 90% deflection 92ms after the
+  // thumb did, so last-instant saves were judged at roughly half the
+  // deflection the player was holding. 48 halves the lag (~46ms to
+  // 90%) without touching the steering feel. Thumb-sweep on device
+  // before locking, per house law.
 
   // --- Surface interaction ---
   friction: 0.95,          // Coulomb μ at contact
@@ -58,9 +65,19 @@ const DEFAULTS = Object.freeze({
   ghosts: 0,               // ghost racer + challenge codes: OFF for now
                            // (kept in the code; flip to 1 to bring the
                            // ghost, its banner and share button back)
-  practiceSplat: 1,        // practice mode: tint the airborne player by
-                           // predicted landing fate (green/amber/red);
-                           // flipping the flare mid-air flips the verdict
+  practiceSplat: 0,        // THE PRACTICE RING IS A DEV TOOL (Eddie's
+                           // ruling, 2026-08-13): off by default, flip
+                           // via the tune panel when debugging the
+                           // predictor. The player-facing signal is
+                           // dangerRim below.
+  dangerRim: 1,            // the shipped landing-fate signal: a rim on
+                           // the airborne player's BODY (renderer.js)
+                           // driven by the same predictor the oracle
+                           // brain races on. Three states: nothing =
+                           // this landing is safe as held; amber = it
+                           // kills as held but flare saves it; red =
+                           // no stick position survives, steer. Moving
+                           // the flare mid-air re-answers it live.
   bounceMax: 0.7,          // full-flare ceiling — capped well below 1: e=1
                            // is immortality under the energy law, and big
                            // drops must still demand the multi-bounce bleed
@@ -110,12 +127,15 @@ const PRESETS = Object.freeze({
     gravity: 2400,
     semiMajor: 46, semiMinor: 36,
     motorTorque: 75000, maxAngVel: 55, brakeBoost: 1.3,
-    airTorqueScale: 1, inputResponse: 24,
+    airTorqueScale: 1, inputResponse: 24, bounceResponse: 48,
     friction: 0.95, rollingResistance: 0.025,
     restitution: 0.18, restitutionThreshold: 90,
     linearDamping: 0.035, angularDamping: 0.12,
     squashStrength: 0.00006, cameraLerp: 5.5,
-    smashThreshold: 2081, curvExponent: 1.25, // energy units (damage.js); calibrated 2026-08-11 on the TIP-FIRST marginal (4.0m drop), the event class that actually kills
+    smashThreshold: 2175, curvExponent: 1.25, // energy units (damage.js); calibrated 2026-08-11 on the TIP-FIRST marginal (4.0m drop), the event class that actually kills.
+    // 2026-08-13: carried onto the cluster law by Loose 1's swept
+    // ratio (2081 x 2300/2200) — proportional, NOT independently
+    // swept; re-tune if this preset returns to active duty.
   }),
   // Bouncier, floatier, a touch more out-of-control at speed:
   // higher restitution + lower bounce threshold, less grip and
@@ -124,7 +144,7 @@ const PRESETS = Object.freeze({
     gravity: 2400,
     semiMajor: 46, semiMinor: 36,
     motorTorque: 80000, maxAngVel: 60, brakeBoost: 1.3,
-    airTorqueScale: 1, inputResponse: 24,
+    airTorqueScale: 1, inputResponse: 24, bounceResponse: 48,
     friction: 0.9, rollingResistance: 0.018,
     restitution: 0.34, restitutionThreshold: 55,
     linearDamping: 0.028, angularDamping: 0.09,
@@ -153,7 +173,20 @@ const PRESETS = Object.freeze({
   // landing, not just tips, so the threshold sits higher than the
   // tip-weighted law needed. Bounciness is armour; where you land no
   // longer matters, what you are does.
-  smashThreshold: 2200,
+  // CLUSTER-LAW RECALIBRATION (2026-08-13): severity is now the SUM
+  // of dissipated energy across a landing's contact cluster (see
+  // damage.js), which charges wedge landings and corner-split hits
+  // their honest total — so the threshold rises to hold the carnage
+  // baseline. Swept 6 seeds x 45s vs the max-rule build on identical
+  // tracks: max-rule 33.5 deaths/race; cluster at 2200 -> 37.2, 2300
+  // -> 31.7 (chosen: first value at/under baseline, slightly
+  // forgiving, same call as the 4450 pick). NOTE: sweep ran in the
+  // headless harness, whose absolute death rates run far above the
+  // 4.95/race noted at the 2026-08-11 calibration — environment
+  // difference unresolved (terrain recipe? policy vintage?). The
+  // RATIO is robust (both rules shared the environment); re-sweep on
+  // the canonical harness before locking.
+  smashThreshold: 2300,
   // Size-toughness exponent k: a body's effective threshold scales as
   // s^k (via its mass ratio). k=0: raw square-cube (big melons ~34%
   // more land-fragile at s=1.15). k=2: area-law structural honesty —
@@ -219,7 +252,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-13c';
+const BUILD = '2026-08-13e';
 
 const CONFIG = { ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
@@ -242,6 +275,7 @@ const SCHEMA = [
   { key: 'brakeBoost',     min: 1,    max: 4,     step: 0.1 },
   { key: 'airTorqueScale', min: 0,    max: 12,    step: 0.25 },
   { key: 'inputResponse',  min: 2,    max: 40,    step: 1 },
+  { key: 'bounceResponse', min: 2,    max: 96,    step: 2 },
 
   { group: 'World' },
   { key: 'gravity',        min: 400,  max: 5000,  step: 50 },
@@ -251,6 +285,7 @@ const SCHEMA = [
   { key: 'bounceMax',      min: 0.3,  max: 0.95,  step: 0.01 },
   { key: 'ghosts',         min: 0,    max: 1,     step: 1 },
   { key: 'practiceSplat',  min: 0,    max: 1,     step: 1 },
+  { key: 'dangerRim',      min: 0,    max: 1,     step: 1 },
   { key: 'ringLog',        min: 0,    max: 1,     step: 1 },
 
   { group: 'Melon' },

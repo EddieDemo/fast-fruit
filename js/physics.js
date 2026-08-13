@@ -109,7 +109,7 @@ function step(state, dt) {
   bodyList.length = 0;
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
-  for (const m of bodyList) m.pairSeverity = 0;
+  for (const m of bodyList) { m.pairSeverity = 0; m.pairWorst = 0; }
   if (bodyList.length > 1) {
     const PAIR_ITERS = 3;
     const period = state.period; // set in track mode, null in endless
@@ -127,13 +127,11 @@ function step(state, dt) {
     applySmashRule(state.players[i].melon, state, tick, i === state.localSlot, i);
   }
   for (let i = 0; i < state.bots.length; i++) {
-    // Bots race by the SAME rules and the same throttle as the player:
-    // hold right, forever — the air pump included (spinning up mid-
-    // flight to convert into speed on landing). An earlier policy
-    // braked them out of over-rev; it also locked them out of the
-    // game's central speed mechanic and handed the player a structural
-    // 43% pace advantage. Deaths are the honest price of that speed.
-    state.bots[i].input.rawAxis = 1;
+    // Bot throttle policy lives in the BRAIN REGISTRY ('cruise' holds
+    // right forever, air pump included — deaths are the honest price
+    // of that speed; see pilot.js). A rawAxis stomp that used to sit
+    // here was a fossil of the pre-brain era: written after the step,
+    // overwritten by the brain before the next one, deciding nothing.
     applySmashRule(state.bots[i].melon, state, tick, false, state.players.length + i);
   }
 
@@ -161,13 +159,38 @@ function emit(state, type, payload) {
 
 function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
   if (!m.alive) return;
-  const sev = Math.max(m.hitSeverity, m.pairSeverity);
-  if (tick <= m.protectTick || sev <= 0) return;
+  // ---- THE CLUSTER LEDGER (2026-08-13; the law's rationale lives in
+  // damage.js). The tick's contribution is the SUM of its sources —
+  // terrain and traffic add into the same rind, which is what finally
+  // charges the sandwich (landed on WHILE landing) honestly. Spawn
+  // protection zeroes the contribution rather than skipping the
+  // machinery: protected hits are free exactly as before, and the
+  // boundary counters stay coherent through the protected window.
+  const tickSev = tick <= m.protectTick ? 0 : m.hitSeverity + m.pairSeverity;
+  // The pair share of the cluster, kept so a death can say whether
+  // traffic or terrain owned the event. Accumulated BEFORE the ledger
+  // steps, because a step that closes the cluster resets the field —
+  // the close carries the value out (closed.pairE) for exactly that
+  // reason.
+  if (tickSev > 0) {
+    if (!m.clusterOpen) m.clusterPairE = 0;
+    m.clusterPairE += m.pairSeverity;
+  }
+  const closed = damage.clusterStep(m, tickSev);
+  const running = closed ? closed.total : (m.clusterOpen ? m.clusterE : 0);
+  if (running <= 0) return;
+  // Cluster facts for the certificate: at death the cluster is still
+  // open (revive resets it); at a roll-triggered close they ride the
+  // close itself.
+  const clPairE = closed ? closed.pairE : m.clusterPairE;
+  const clTicks = closed ? closed.ticks : m.clusterN;
   // Per-body threshold: rind strength scales with size^k (mass ratio
   // is s^3, so T scales by mr^(k/3)). Pinned dpow: lockstep-safe.
   const mr = 1 / (m.invM * CONFIG.mass); // mass ratio = s^3; 1.0 for the player
   const T = CONFIG.smashThreshold * (mr === 1 ? 1 : dpow(mr, CONFIG.sizeToughness / 3));
-  if (sev >= T) {
+  if (running >= T && tickSev > 0) {
+    // Death lands the TICK the running total crosses — mid-cluster,
+    // immediate — never deferred to the cluster's close.
     // Burst BEFORE clearing the body: fragments inherit its velocity
     // field (v + w x r) at the instant of death.
     debris.spawnFromBody(m, state, tick, bodyIndex);
@@ -176,17 +199,21 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     // The certificate is built for EVERY body: the ticker commentates
     // the whole field, not just the local player. Only the player's
     // lands in state.lastDeath (the death overlay's single slot).
-    const cert = makeCertificate(m, state, tick, sev, T, isPlayer);
+    const cert = makeCertificate(m, state, tick, running, T, isPlayer, clPairE, clTicks);
     if (isPlayer) state.lastDeath = cert;
     emit(state, 'death', cert);
-  } else if (sev > 0) {
-    const near = sev >= T * NEAR_MISS_RATIO;
+  } else if (closed) {
+    // Near-miss commentary fires ONCE per cluster, at its close, on
+    // the final total — the number the law actually judged. (The old
+    // per-tick emission could re-announce the same landing.) Worst
+    // case the flash arrives CLUSTER_GAP_TICKS late: 50ms, invisible.
+    const near = closed.total >= T * NEAR_MISS_RATIO;
     // A blow is newsworthy if it was nearly lethal OR if the player's
     // flare is the only reason it wasn't (see sevAtNeutral above).
     // Building the certificate is the cheapest way to ask the second
     // question, so only do it when the first is plausible.
     if (near || m.restitution > CONFIG.restitution) {
-      const cert = makeCertificate(m, state, tick, sev, T, isPlayer);
+      const cert = makeCertificate(m, state, tick, closed.total, T, isPlayer, clPairE, clTicks);
       if (near || cert.flareSaved) {
         if (isPlayer && near) state.fx.flash = 1; // near-miss: teach the envelope
         emit(state, 'nearMiss', cert);
@@ -206,7 +233,12 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
 // shape-toughness law those numbers no longer cause anything, and a
 // classifier reading them was inventing tip-first stories about
 // deaths that had nothing to do with orientation.
-function makeCertificate(m, state, tick, sev, T, isPlayer) {
+// sev is the CLUSTER TOTAL (2026-08-13): the number the law judged.
+// The counterfactuals below rescale it by (1 - e^2) exactly as they
+// rescaled a single blow — every tick of the cluster carried the same
+// factor — with the same standing caveat as ever: exact at fixed
+// trajectory (a different e would also have bounced differently).
+function makeCertificate(m, state, tick, sev, T, isPlayer, clPairE, clTicks) {
   const e = damage.bodyRestitution(m);
   // Counterfactual: the same dissipated energy re-judged at full
   // flare. severity ~ (1 - e^2), so the ratio is exact.
@@ -226,8 +258,12 @@ function makeCertificate(m, state, tick, sev, T, isPlayer) {
     tick,
     isPlayer: !!isPlayer,
     name: m.name || '',
-    byPair: m.pairSeverity >= m.hitSeverity,
+    // Traffic owned the event if the pair share carried the MAJORITY
+    // of the cluster's energy — a cluster-level fact now, not the
+    // single tick the verdict happened to land on.
+    byPair: (clPairE || 0) * 2 >= sev,
     severity: sev,
+    clusterTicks: clTicks || 1,           // how many contact ticks the event spanned
     threshold: T,
     overkill: sev / T,                    // 1.02 = squeaker, 4 = vaporised
     survived: sev < T,
@@ -263,6 +299,15 @@ function makeCertificate(m, state, tick, sev, T, isPlayer) {
     fruit: m.fruit || 'watermelon',
     vn: Math.abs(state.telemetry.lastImpactVn || 0),
     speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
+    // THE SPIN TERM: omega x (r x n) at the cluster's worst terrain
+    // blow — the contact-point speed the body's SPIN contributed, in
+    // px/s. Negative = the spin drove the contact point INTO the
+    // ground (a topspin landing: harder than the fall looked);
+    // positive = the spin carried it away (backspin armour). Measured
+    // to swing an identical landing between 37% and 111% of lethal —
+    // the single biggest severity factor, and until now the only one
+    // the certificate could not name. Zero for pure pair events.
+    spinVn: (m.hitOmegaPre || 0) * (m.hitRxn || 0),
   };
 }
 
@@ -280,6 +325,20 @@ function reviveIfDue(m, state, tick) {
   m.grounded = false;
   m.hitSeverity = 0;
   m.pairSeverity = 0;
+  m.pairWorst = 0;
+  // A fresh body gets a fresh ledger: the death's half-judged cluster
+  // must not lie in wait for the next life.
+  damage.resetCluster(m);
+  // ...and a fresh FLIGHT ledger. A body that died mid-air kept its
+  // old airTicks, so the respawn drop never opened a new flight
+  // record and the first post-respawn landing inherited the DEATH
+  // flight's apex and chain index — a fabricated fall height and a
+  // spurious "died on the rebound" classification waiting to happen.
+  m.airTicks = 0;
+  m.flightTicks = 0;
+  m.chainIndex = 0;
+  m.lastFlightTicks = 0;
+  m.lastFallPx = 0;
   m.protectTick = tick + CONFIG.spawnProtectTicks;
 }
 
@@ -397,21 +456,29 @@ function resolveMelonPair(A, B, period) {
     // out from under you. Written every pair contact, read only by
     // the certificate.
     const aStiffer = eA <= eB;
-    // Blame rides with the DOMINANT contact only. A deep overlap
+    // Severity ACCUMULATES (2026-08-13): every pair contact in the
+    // tick adds into the body's total — two rivals sandwiching one
+    // melon are charged together, as the energy actually arrives.
+    // Iterations can't double-count: a resolved contact's vn is
+    // non-negative on the next pass and dissipates zero.
+    A.pairSeverity += sevA;
+    B.pairSeverity += sevB;
+    // Blame rides with the DOMINANT contact only (tracked separately
+    // in pairWorst now that pairSeverity is a sum). A deep overlap
     // produces a second contact point in the same tick whose approach
     // speed is tiny — the restitution gate zeroes both bodies' e
     // there, so writing blame unconditionally let that trivial touch
     // overwrite the real collision's story with a meaningless 50/50
     // (measured: a rigid player's share read 0.50 instead of 0.53).
-    if (sevA > A.pairSeverity) {
-      A.pairSeverity = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn;
+    if (sevA > A.pairWorst) {
+      A.pairWorst = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn;
       A.pairOtherName = B.name || '';
       A.pairOtherE = eB;
       A.pairIStiffened = aStiffer;
       A.pairShare = shA;
     }
-    if (sevB > B.pairSeverity) {
-      B.pairSeverity = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn;
+    if (sevB > B.pairWorst) {
+      B.pairWorst = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn;
       B.pairOtherName = A.name || '';
       B.pairOtherE = eA;
       B.pairIStiffened = !aStiffer;
@@ -458,11 +525,16 @@ function stepBody(m, inp, terrain, dt, sink) {
   // ---- 1. Input smoothing (ease torqueAxis toward rawAxis) ----
   const ease = Math.min(1, CONFIG.inputResponse * dt);
   inp.torqueAxis += (inp.rawAxis - inp.torqueAxis) * ease;
-  // The flare axis smooths identically, then maps onto the body's
-  // restitution through the damage law. UNIFORM: bots hold rawBounce
-  // 0 forever, which maps to exactly the live CONFIG restitution —
+  // The flare smooths on its OWN, snappier constant (2026-08-13):
+  // steering is a steering skill, but the flare is a TIMING skill —
+  // at the shared rate a panic flick reached 90% deflection 92ms
+  // after the thumb did, so last-instant saves were judged at half
+  // the deflection the player was holding. Falls back to the shared
+  // rate for configs that predate the split. Bots hold rawBounce 0
+  // forever, which maps to exactly the live CONFIG restitution —
   // full throttle at neutral bounce, no special case (Eddie's spec).
-  inp.bounceAxis += ((inp.rawBounce || 0) - inp.bounceAxis) * ease;
+  const bEase = Math.min(1, (CONFIG.bounceResponse || CONFIG.inputResponse) * dt);
+  inp.bounceAxis += ((inp.rawBounce || 0) - inp.bounceAxis) * bEase;
   m.restitution = damage.bounceToRestitution(inp.bounceAxis);
   m.flareAxisAtHit = inp.bounceAxis; // certificate breadcrumb (presentation)
 
@@ -527,8 +599,8 @@ function stepBody(m, inp, terrain, dt, sink) {
   // ---- 5. Collide & resolve ----
   const wasGrounded = m.grounded;
   let grounded = false;
-  let strongestE = 0;
-  let strongestCurvR = 1;
+  let strongestE = 0;   // the tick's worst SINGLE blow: FX direction, telemetry
+  let sumE = 0;         // the tick's TOTAL dissipation: what the law charges
   let impactNormalAngle = 0;
   let impactVn = 0;
   m.hitSeverity = 0;
@@ -549,13 +621,20 @@ function stepBody(m, inp, terrain, dt, sink) {
         if (!contact.hit) continue;
         grounded = true;
 
+        const omegaPre = m.omega; // spin AT approach: the certificate's spin term
         const applied = resolveContact(m, contact, invM, invI);
-        // The tick's defining blow is the one that DISSIPATED the most
-        // energy (the damage law's currency), not the biggest impulse.
         const ev = damage.dissipated(applied.vn, applied.kn, applied.e);
+        // The law charges the tick's TOTAL: every contact's dissipation
+        // adds (a wedge landing's two walls both count — under the old
+        // max a 35-degree vee read at barely half its honest energy).
+        // Iterations can't double-count: once a contact's approach is
+        // resolved, its vn is non-negative and dissipates zero.
+        sumE += ev;
+        // The worst SINGLE blow still picks the event's direction and
+        // telemetry — drama follows the biggest hit, damage follows
+        // the total.
         if (ev > strongestE) {
           strongestE = ev;
-          strongestCurvR = contact.curvR;
           impactNormalAngle = Math.atan2(contact.ny, contact.nx);
           impactVn = applied.vn;
           // Escape direction of the blow (away from the ground) —
@@ -564,8 +643,9 @@ function stepBody(m, inp, terrain, dt, sink) {
           m.hitNx = contact.nx;
           m.hitNy = contact.ny;
           m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
+          m.hitRxn = applied.rxn;     // r x n at the blow: the spin term's lever
+          m.hitOmegaPre = omegaPre;   // certificate breadcrumb (presentation)
         }
-        m.lastHitCurvR = contact.curvR; // death-certificate breadcrumb
       }
     }
   }
@@ -599,7 +679,6 @@ function stepBody(m, inp, terrain, dt, sink) {
       m.flightApexY = m.y;
       m.launchY = m.y;
       m.chainIndex = 0;
-      m.chainWorst = 0;
     }
     m.flightTicks = (m.flightTicks || 0) + 1;
     if (m.y < (m.flightApexY === undefined ? m.y : m.flightApexY)) m.flightApexY = m.y;
@@ -610,10 +689,12 @@ function stepBody(m, inp, terrain, dt, sink) {
     // Fall height in px: apex to the ground we just met.
     m.lastFallPx = Math.max(0, m.y - (m.flightApexY === undefined ? m.y : m.flightApexY));
   }
-  if (strongestE > 0) {
-    // Severity is orientation-independent now (shape toughness);
-    // curvR survives only as telemetry/FX flavour.
-    m.hitSeverity = damage.severityFromE(strongestE, m);
+  if (sumE > 0) {
+    // hitSeverity is the tick's TOTAL severity now (2026-08-13): the
+    // exact quantity the cluster ledger accumulates, so squash below
+    // stays a truthful preview of how close to bursting — a wedge
+    // landing deforms for BOTH walls, as it should.
+    m.hitSeverity = damage.severityFromE(sumE, m);
 
     // ---- Per-body STRAIN (deformation): every melon, not just the
     // player. Strain is severity per unit mass — impulse scaled by the
@@ -992,10 +1073,14 @@ function resolveContact(m, c, invM, invI) {
 
   // --- Normal impulse ---
   const vn = cvx * c.nx + cvy * c.ny; // negative = approaching
+  // r x n: the contact's lever about the COM. It appears twice in the
+  // physics — the spin's contribution to vn is exactly omega*(r x n),
+  // and the same quantity squared sits in kn — and once in the
+  // certificate, as the spin term the death screen can finally name.
+  const rCrossN = rx * c.ny - ry * c.nx;
   let jn = 0, knOut = 0, eOut = 0;
   if (vn < 0) {
     const e = -vn > CONFIG.restitutionThreshold ? damage.bodyRestitution(m) : 0;
-    const rCrossN = rx * c.ny - ry * c.nx;
     const kn = invM + rCrossN * rCrossN * invI;
     jn = (-(1 + e) * vn) / kn;
     knOut = kn; eOut = e;
@@ -1042,7 +1127,7 @@ function resolveContact(m, c, invM, invI) {
     m.y += c.ny * corr;
   }
 
-  return { jn, vn, kn: knOut, e: eOut };
+  return { jn, vn, kn: knOut, e: eOut, rxn: rCrossN };
 }
 
 // stepBodyClone: the per-body step exported for PREDICTION — the
