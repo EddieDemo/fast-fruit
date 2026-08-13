@@ -22,6 +22,10 @@
 //          The press must be FRESH: a thumb still down from the last
 //          race (or a rage-tap on the results screen) must not
 //          launch the next one.
+//          The FIELD IS SILENT until the player presses: bots hold
+//          full throttle forever, so without this they would be
+//          revving at a player who has not touched the screen yet.
+//          The press starts everyone together.
 //   COUNT  3 - 2 - 1 - GO, measured in TICKS. Bodies are pinned in x
 //          AND y while on the grid: they hover half a metre up,
 //          level with each other on uneven ground, and are released
@@ -67,6 +71,13 @@ const state = {
 };
 
 function phase() { return state.phase; }
+
+// Should the bots hold still? True through the pan and the waiting
+// grid; false from the moment the countdown starts. Read by the pilot
+// pass in physics.js, which is the one place bot input is written.
+function silenceBots() {
+  return state.phase === 'pan' || state.phase === 'ready';
+}
 function isHolding() {
   return state.phase === 'pan' || state.phase === 'ready' || state.phase === 'count';
 }
@@ -179,7 +190,7 @@ function caption(gameState) {
 
 window.FF.gridStart = {
   begin, update, arm, start, noteRelease, cancel, release, phase, isHolding,
-  cameraOffset, caption,
+  silenceBots, cameraOffset, caption,
   PAN_TICKS, COUNT_TICKS, GO_HOLD_TICKS, PAN_AHEAD_PX,
 };
 })();

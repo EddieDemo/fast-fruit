@@ -84,6 +84,22 @@ function step(state, dt) {
         const cmd = b.brain.drive(b.melon, { state, tick: state.tick, index: bi, input: b.input });
         if (cmd) { b.input.rawAxis = cmd.axis; b.input.rawBounce = cmd.bounce; }
       }
+      // ---- THE FIELD FOLLOWS THE PLAYER ONTO THE REV ----
+      // Bots hold full throttle forever, so on a pinned grid they
+      // would be revving before the player has even touched the
+      // screen — a field already straining at the line while the
+      // player is still deciding where to put their thumb. Silencing
+      // them until the countdown starts makes the grid a moment
+      // rather than a scene in progress, and the player's own press
+      // is what sets the whole field going.
+      //
+      // Locomotion is unaffected: every racer is released at GO
+      // regardless, so this changes the theatre and not the race.
+      if (window.FF.gridStart && window.FF.gridStart.silenceBots
+        && window.FF.gridStart.silenceBots()) {
+        b.input.rawAxis = 0;
+        b.input.rawBounce = 0;
+      }
       stepBody(b.melon, b.input, state.terrain, dt, null);
     }
   }

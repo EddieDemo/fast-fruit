@@ -166,6 +166,17 @@ function restore(state, rebuild) {
   const FF = window.FF;
   if (snap.cup && FF.cup && FF.cup.resume) FF.cup.resume(snap.cup);
   if (rebuild) rebuild(snap.track, snap.bots.length);
+  // ---- THE REBUILD ARMS A GRID START; A RESUMED RACE MUST NOT HAVE
+  // ONE. rebuild() builds a fresh race, and a fresh race now lines up
+  // on the grid: gridstart.begin() pins every body AT THE START LINE.
+  // The bodies are then overwritten with their saved positions — but
+  // the PINS still held the grid coordinates, so the first stepped
+  // tick snapped the whole field back to the line. From the player's
+  // side: resume, unpause, and the race has restarted.
+  //
+  // A resumed race is already under way, so it gets no ceremony: the
+  // sequence is cancelled outright, which also releases the pins.
+  if (FF.gridStart && FF.gridStart.cancel) FF.gridStart.cancel();
   if (state.bots.length !== snap.bots.length) { clear(); return null; }
 
   applyBody(FF, state.melon, snap.player);

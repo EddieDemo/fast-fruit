@@ -37,7 +37,11 @@ const OVERTAKE_GAP_TICKS = 150; // 1.25s between overtake lines
 const STREAK_STEP_M = 250;    // milestone spacing for a clean run
 const AIR_MIN_TICKS = 150;    // 1.25s aloft before a flight is news
 const AIR_GAP_TICKS = 240;    // 2s between airtime lines
-const RIVAL_GAP_TICKS = 300;  // 2.5s between rivals' stories
+// 4s between rivals' stories. Was 2.5s, which measured at ten lines
+// in a sixty-second race once the grid start bunched the field —
+// chatty enough to compete with the player's own commentary. The
+// gate (podium, or anyone ahead of you) stays; only the pace slows.
+const RIVAL_GAP_TICKS = 480;
 
 let lastPlace = null;         // player's last CONFIRMED place
 let pendingPlace = null;      // a place we're waiting to see stick
@@ -278,13 +282,15 @@ function subscribeRivals() {
   window.FF.events.on('death', (c) => {
     if (c.isPlayer) return;
     const place = lastKnownPlace(c.name);
-    // NEWS = the sharp end, or anyone AHEAD OF YOU. A podium-only
-    // gate measured out at one line per fifteen rival deaths, which
-    // left the field feeling empty — and it ignored the deaths that
-    // matter most to the player: a rival ahead of you dying is a
-    // place you just gained.
+    // NEWS = the sharp end, or the melon you are actually CHASING.
+    // Three gates have been tried: podium-only fired once per fifteen
+    // rival deaths and left the field feeling empty; "anyone ahead of
+    // you" went too far the other way, calling seventy per cent of
+    // deaths and competing with the player's own commentary. The
+    // rival immediately in front is the one whose death changes the
+    // player's race, and it tells the better story.
     if (!place) return;
-    if (place > 3 && place >= myPlace) return;
+    if (place > 3 && place !== myPlace - 1) return;
     if (lastRivalTick > -1e8 && curTick - lastRivalTick < RIVAL_GAP_TICKS) return;
     lastRivalTick = curTick;
     window.FF.events.emit('rivalDown', {
