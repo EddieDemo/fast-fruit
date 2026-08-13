@@ -180,6 +180,10 @@ function createBody(x, y, scale, fruit) {
 
     // Smash life-cycle (physics.js owns these after creation):
     alive: true,
+    // Grid pin: while set, x and y are held here (see gridstart.js).
+    // null for every body outside the pre-race sequence.
+    pinX: null,
+    pinY: null,
     respawnAtTick: 0,  // tick at which a dead body revives
     protectTick: 0,    // smash-immune until tick exceeds this
     hitSeverity: 0,    // worst terrain-contact severity this step
@@ -199,7 +203,19 @@ function createBody(x, y, scale, fruit) {
 // race starts when they cross the line. Placement is a pure function
 // of grid index and terrain, identical on every lockstep peer.
 const METRE = 100;      // world px per metre
-const GRID_DROP = 200;  // spawn height: body bottom 2 m above ground
+// Spawn height: the body's BOTTOM this far above the ground. Was 2 m
+// (a visible drop onto the grid); now 0.25 m, so the field is already
+// composed when the camera arrives rather than raining into place.
+// Paired with the grid's y-pin (gridstart.js): while pinned the
+// melons hold this height instead of settling, which keeps the row
+// level on uneven terrain.
+//
+// The height is not only cosmetic: a hovering body has NO ground
+// contact, so nothing opposes the motor and a revving melon spins to
+// its limit, landing at GO with real speed. Lower hover means less
+// drop time before the wheels bite, so the launch advantage shrinks
+// with this number — measured below.
+const GRID_DROP = 25;
 
 function gridPlace(state, melon, gridIndex, lineX, fallbackY) {
   const gx = lineX - (gridIndex + 0.5) * METRE; // centre of the metre

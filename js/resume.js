@@ -175,6 +175,28 @@ function restore(state, rebuild) {
     applyInput(b.input, (snap.botInputs || [])[i]);
     if (b.brain && b.brain.load) b.brain.load((snap.botBrains || [])[i]);
   });
+
+  // ---- PRESENTATION MUST BE TOLD TOO ----
+  // rebuild() puts a fresh grid on the start line before the bodies
+  // are overwritten, which leaves two stale views of the world:
+  //
+  //   THE CAMERA has already been initialised at the start line, so
+  //   it lerps from there to wherever the race actually is — a snap
+  //   to the finish line and back, every resume.
+  //
+  //   THE INTERPOLATION BUFFER (prevMelon) still holds the grid pose,
+  //   so the first rendered frame blends between the start line and
+  //   the restored position.
+  //
+  // Neither is sim state, which is exactly why neither was restored;
+  // both have to be re-pointed at the world that now exists.
+  if (state.camera) state.camera.initialized = false;   // re-centre, don't chase
+  const sync = (holder) => {
+    if (holder && holder.prevMelon && holder.melon) Object.assign(holder.prevMelon, holder.melon);
+  };
+  for (const pl of state.players) sync(pl);
+  for (const b of state.bots) sync(b);
+  if (state.prevMelon && state.melon) Object.assign(state.prevMelon, state.melon);
   state.tick = snap.tick;
   state.raceStartX = snap.startX;
   state.raceStartTick = snap.startTick;

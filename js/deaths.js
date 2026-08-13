@@ -219,6 +219,21 @@ function buildToggle() {
   });
   document.body.appendChild(btn);
   applyClean();
+  // CLEAN MODE hides the tuning cockpit and the telemetry HUD rows —
+  // a developer's switch, not a player's, so it lives behind the
+  // same gate as the panel it controls.
+  if (window.FF.devtools) {
+    window.FF.devtools.register({
+      show: () => { btn.style.display = ''; },
+      hide: () => {
+        btn.style.display = 'none';
+        // A player must never be left in cockpit mode by a gate that
+        // closed while it was on.
+        clean = true;
+        applyClean();
+      },
+    });
+  }
 }
 if (typeof document !== 'undefined' && document.body) buildToggle();
 

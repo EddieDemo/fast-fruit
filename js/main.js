@@ -151,8 +151,17 @@ function respawnRace(opts) {
   // recorder would happily bank an autopilot lap as the player's.
   if (exhibition) {
     if (window.FF.ghost.stopRecording) window.FF.ghost.stopRecording();
+    // Scenery does not line up on a grid and count itself down.
+    if (window.FF.gridStart) window.FF.gridStart.cancel();
   } else {
     window.FF.ghost.onRaceStart(state);
+    // Netplay starts on the lockstep clock, not a local ceremony.
+    if (window.FF.gridStart && !netSession) {
+      // A thumb still down from the last race must not launch this
+      // one: begin() is told, and only a fresh press counts.
+      const touching = !!(window.FF.getInputSticks && window.FF.getInputSticks(0).length);
+      window.FF.gridStart.begin(state, { touching });
+    }
   }
   if (opts && opts.roster) CONFIG.botRoster = savedRoster;
 }
@@ -184,23 +193,25 @@ let netSession = null;
 window.FF.currentModeName = () => modeName;
 window.FF.selectTrackByName = selectMode;
 
-// ---- Daily indicator ----
-// The toggle is retired: the daily IS the game now, so the control
-// that switched away from it would only ever be a way to leave the
-// only track there is. selectMode survives for the harnesses and for
-// a future track picker.
-(function buildDailyLabel() {
-  if (typeof document === 'undefined' || !document.body) return;
-  const btn = document.createElement('button');
-  btn.id = 'daily-btn';
-  btn.disabled = true;
-  btn.textContent = 'daily';
-  btn.classList.add('active');
-  btn.title = "today's track — everyone races this one";
-  document.body.appendChild(btn);
-})();
+// The daily indicator is RETIRED. It labelled a choice that no
+// longer exists — there is one track a day and no way to leave it —
+// so it was a permanent caption on a screen that needs its space for
+// racing. dailyTrackName() still names the day on the menu, where a
+// player is actually deciding something.
 
 // ---- The naming ceremony: one-time, first boot ----
+// The gate reads the URL and the stored preference BEFORE any
+// dev-only module registers, so nothing flashes on screen for a
+// player between boot and the first apply().
+if (window.FF.devtools) {
+  window.FF.devtools.init();
+  // The ring logger writes a console line per airborne episode: a
+  // debugging instrument, not a shipped feature.
+  window.FF.devtools.register({
+    show: () => { CONFIG.ringLog = 1; },
+    hide: () => { CONFIG.ringLog = 0; },
+  });
+}
 if (window.FF.studio) window.FF.studio.init();
 
 window.FF.melon.maybeAskName((name) => {
@@ -243,6 +254,24 @@ window.FF.modes = {
 
 respawnRace();
 initInput(state, canvas);
+// During the pan a touch means "I'm ready": it plants the stick AND
+// skips the rest of the camera move. Never ignored — an input that
+// does nothing reads as broken on a touch screen.
+canvas.addEventListener('pointerdown', () => {
+  if (window.FF.gridStart) window.FF.gridStart.arm(state);
+}, { passive: true });
+for (const ev of ['pointerup', 'pointercancel']) {
+  canvas.addEventListener(ev, () => {
+    if (window.FF.gridStart) window.FF.gridStart.noteRelease();
+  }, { passive: true });
+}
+window.addEventListener('keyup', () => {
+  if (window.FF.gridStart) window.FF.gridStart.noteRelease();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' || e.code === 'KeyP') return;
+  if (window.FF.gridStart) window.FF.gridStart.arm(state);
+});
 initDebugPanel(state);
 const renderer = createRenderer(canvas);
 const hud = createHud(state);
@@ -276,6 +305,9 @@ if (window.FF.flow) window.FF.flow.init(state, {
     respawnRace();
   },
   isNetplay: () => !!netSession,
+  // The live terrain provider, so the finish-line fast-forward can
+  // generate track ahead of bodies that are still racing.
+  provider: () => provider,
   // The exhibition's hooks: main.js owns track providers and race
   // setup, so it hands the module a way to ask rather than letting it
   // reach into the plumbing.
@@ -299,10 +331,11 @@ if (window.FF.flow) window.FF.flow.init(state, {
   },
 });
 
-document.getElementById('respawn-btn').addEventListener('click', () => {
-  if (netSession) return; // a solo respawn would desync a lockstep race
-  respawnRace();
-});
+// The floating restart button is RETIRED: it did exactly what the
+// pause screen's RESTART already does, and a one-tap race reset
+// sitting permanently over the play area is a mis-tap waiting to
+// happen. Restarting is a decision, so it lives behind pause with
+// the other decisions.
 
 // ---- Lap accounting (tick-accurate: called after every physics step) ----
 // ---- THE OBSERVER STEP ----
@@ -320,6 +353,12 @@ document.getElementById('respawn-btn').addEventListener('click', () => {
 // cooldowns, airtime, streak sampling) was running on half the data
 // it was tuned against. Both were the same mistake: an observer
 // sampling frames while measuring ticks.
+// The pre-race sequence advances on the SIM clock, before the step
+// it governs.
+function gridTick() {
+  if (window.FF.gridStart) window.FF.gridStart.update(state);
+}
+
 function observeTick() {
   if (window.FF.raceWatch) window.FF.raceWatch.update(state);
 }
@@ -431,6 +470,7 @@ function frame(now) {
         // Autopilot writes the same input fields the stick does, so
         // the sim cannot tell the difference (no-op while a human is
         // driving).
+        gridTick();
         if (window.FF.autopilot) window.FF.autopilot.drive(state);
         step(state, stepDt);
         checkLapCrossings();

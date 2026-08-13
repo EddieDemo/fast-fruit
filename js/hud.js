@@ -9,6 +9,28 @@ const { CONFIG } = window.FF;
 
 const UPDATE_INTERVAL = 1 / 10; // seconds
 
+// ---- THE HUD PUBLISHES ITS OWN FOOTPRINT --------------------------
+// The dev lane sits beneath the HUD and the ticker sits beside it, so
+// both need to know how big it is. A hard-coded guess was wrong the
+// moment the cockpit toggle revealed extra telemetry rows: the HUD
+// grew and the dev stack was left underneath it.
+//
+// Measuring is the only honest answer — the HUD knows its own size,
+// so it publishes it as CSS variables and every lane resolves against
+// them. Any future HUD row is handled without touching a lane rule.
+function publishHudBox(el) {
+  if (!el || typeof document === 'undefined') return;
+  const write = () => {
+    const r = el.getBoundingClientRect();
+    const root = document.documentElement.style;
+    root.setProperty('--hud-h', Math.round(r.height + 10) + 'px');
+    root.setProperty('--hud-w', Math.round(r.width) + 'px');
+  };
+  write();
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(write).observe(el);
+  window.addEventListener('resize', write);
+}
+
 function createHud(state) {
   const elTime = document.getElementById('hud-time');
   const elDist = document.getElementById('hud-dist');
@@ -76,6 +98,7 @@ function createHud(state) {
     return `${mins}:${rem < 10 ? '0' : ''}${rem.toFixed(1)}`;
   }
 
+  publishHudBox(document.getElementById('hud'));
   return { update };
 }
 

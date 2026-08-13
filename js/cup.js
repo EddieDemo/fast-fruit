@@ -33,6 +33,11 @@
 
 const KEY = 'ff.cup.v1';
 const LEGS = 4;
+// What a leg costs a racer who could not finish it. Large enough that
+// no finished lap can outweigh it, finite so the totals stay
+// readable. Applies to the PLAYER too: a cup where you failed to
+// finish a leg should not tie-break ahead of one where you did.
+const DNF_PENALTY_SEC = 3600;
 
 // 12 -> 1. One point per place, the whole way down.
 function pointsFor(place, fieldSize) {
@@ -97,7 +102,9 @@ function completeLeg(result) {
     track: active.tracks[active.leg],
     place: result.place,
     points: pointsFor(result.place, fieldSize),
-    timeSec: result.timeSec === undefined ? null : result.timeSec,
+    timeSec: (result.timeSec === undefined || result.timeSec === null || result.dnf)
+      ? null : result.timeSec,
+    dnf: !!result.dnf,
     splats: result.splats || 0,
     fieldSize,
   });
@@ -109,7 +116,17 @@ function completeLeg(result) {
       name: row.name || '?', isPlayer: !!row.isPlayer, points: 0, timeSec: 0, legs: 0,
     });
     e.points += pointsFor(row.pos, fieldSize);
-    if (row.timeSec !== null && row.timeSec !== undefined) e.timeSec += row.timeSec;
+    // TIME IS A TIEBREAK, so a missing time must count as the WORST
+    // outcome, never as zero. Treating "did not finish" as no time at
+    // all is what let the slowest melons win the tiebreak: they
+    // contributed nothing to their own total. A DNF leg is charged a
+    // full penalty instead.
+    if (row.timeSec !== null && row.timeSec !== undefined && !row.dnf) {
+      e.timeSec += row.timeSec;
+    } else {
+      e.timeSec += DNF_PENALTY_SEC;
+      e.dnfs = (e.dnfs || 0) + 1;
+    }
     e.legs++;
   }
   active.leg++;
@@ -134,12 +151,13 @@ function playerPlace() {
 
 function totals() {
   if (!active) return { points: 0, timeSec: 0, legs: 0 };
-  let points = 0, timeSec = 0, timed = 0;
+  let points = 0, timeSec = 0, timed = 0, dnfs = 0;
   for (const r of active.results) {
     points += r.points;
-    if (r.timeSec !== null) { timeSec += r.timeSec; timed++; }
+    if (r.timeSec !== null && !r.dnf) { timeSec += r.timeSec; timed++; }
+    else { timeSec += DNF_PENALTY_SEC; dnfs++; }
   }
-  return { points, timeSec, timed, legs: active.results.length };
+  return { points, timeSec, timed, dnfs, legs: active.results.length };
 }
 
 function isComplete() { return !!active && active.results.length >= LEGS; }
@@ -197,7 +215,7 @@ function finish() {
 }
 
 window.FF.cup = {
-  LEGS, pointsFor, begin, current, isRunning, isComplete, trackForLeg,
+  LEGS, pointsFor, DNF_PENALTY_SEC, begin, current, isRunning, isComplete, trackForLeg,
   completeLeg, totals, table, playerPlace, finish, abandon, dayRecord, resume,
   nameSeed: () => (active ? active.nameSeed : null),
   _load: load,

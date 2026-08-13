@@ -29,6 +29,8 @@ let stateRef = null;
 let respawnFn = null;
 let netplayFn = null;   // () => true while a lockstep session is live
 let exhibitionHooks = null;
+let providerFn = null;      // () => the live track provider, for fast-forward
+let lastResolved = null;    // the resolved finish times for this race
 let startLegFn = null;      // (trackName) => build a race on that track
 let rebuildFn = null;       // (trackName, botCount) => rebuild for a restore
 let practiceMode = true;    // true until a cup is started
@@ -95,10 +97,63 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   border-top: 1px solid #1f3a24; padding-top: 8px; margin-top: 2px; }
 .ff-dayline { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
   color: var(--c-faint); text-align: center; margin-top: 8px; }
+.ff-finish-note { color: var(--c-faint); }
+/* Pause hub: settings and the controls reminder. */
+.ff-settings { margin: 2px 0 4px; }
+.ff-set-row { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 7px 0; border-bottom: 1px solid #14261a; }
+.ff-set-k { font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  color: var(--c-dim); }
+.ff-set-v { min-width: 62px; padding: 6px 10px; border-radius: 7px;
+  background: #0d1f12; border: 1px solid #23402a; color: var(--c-faint);
+  font: inherit; font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  cursor: pointer; }
+.ff-set-v.on { background: #123018; border-color: #2a5a34; color: var(--c-accent); }
+.ff-controls { margin: 12px 0 4px; }
+.ff-controls-body { margin-top: 6px; font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro); color: var(--c-faint); line-height: 1.9; }
+.ff-ctl-up { color: rgba(92, 235, 110, 0.85); }
+.ff-ctl-down { color: rgba(255, 122, 82, 0.85); }
+@media (max-height: 560px) {
+  .ff-controls { margin-top: 8px; }
+  .ff-controls-body { line-height: 1.6; }
+}
+/* The cup rows are places rows; only their second line differs. */
+.ff-cup-rows { margin-top: 2px; }
 .ff-cup-head { font-size: var(--fs-label); letter-spacing: var(--tr-label);
   color: var(--c-accent); text-align: center; padding: 2px 0 8px; }
 /* 'abandon cup' is deliberately the quietest thing on the screen:
    possible, never accidental. */
+/* The countdown: centred, unmissable, and out of the way of the
+   thumb — it is above the play area, not on it. pointer-events none
+   throughout, because a touch during the pan means "ready" and must
+   reach the canvas. */
+.ff-count { position: fixed; inset: 0; z-index: 12; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; }
+.ff-count-text { font-family: var(--mono, ui-monospace, monospace);
+  color: var(--c-text); text-shadow: 0 0 24px rgba(0,0,0,0.8);
+  animation: ff-count-pop 260ms ease-out; }
+.ff-count-count { font-size: clamp(64px, 18vw, 140px); font-weight: 700;
+  letter-spacing: -0.04em; }
+.ff-count-go { font-size: clamp(56px, 15vw, 120px); font-weight: 700;
+  letter-spacing: 0.06em; color: var(--c-accent);
+  text-shadow: 0 0 30px rgba(57, 255, 95, 0.45); }
+.ff-count-hint { font-size: var(--fs-lead); letter-spacing: 0.18em;
+  color: var(--c-dim); animation: ff-count-breathe 2.2s ease-in-out infinite; }
+@keyframes ff-count-pop {
+  from { transform: scale(1.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes ff-count-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.ff-confirm { z-index: 50; }
+.ff-confirm-panel { max-width: min(86vw, 360px); }
+.ff-confirm-title { color: var(--c-text); }
+/* The destructive choice is the QUIET one, and it is red. */
+.ff-btn.ff-danger { color: #ff8a72; }
+.ff-btn.ff-danger:active { color: #ff5c4a; }
 .ff-btn.ff-quiet { background: none; border: none; color: var(--c-faint);
   font-size: var(--fs-micro); letter-spacing: var(--tr-micro); padding: 8px; }
 .ff-stat-row { display: flex; align-items: center; justify-content: space-between;
@@ -202,14 +257,33 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
    LEFT of respawn (which is centred) and daily (at 50%+34), mirroring
    daily's offset on the other side. Styling matches the cluster by
    using the same custom properties, so a theme change carries. */
+/* TOP-RIGHT: the player's corner. The dev lane runs down the left
+   edge (styles.css), so opening the gate can never shift or cover
+   this. */
+/* THE TARGET IS BIGGER THAN THE GLYPH. A ~30px button in the corner
+   furthest from a racing thumb is a miss waiting to happen, and
+   platform guidance puts the minimum touch target near 44px. The
+   visible pill stays small — it is chrome over a game — while the
+   TAPPABLE area is padded out to 56px and pushed to the very corner,
+   so the whole corner works, not just the pill.
+   Implemented as transparent padding rather than a bigger button:
+   growing the pill would cost screen; growing the padding costs
+   nothing visible. */
 #ff-pause-btn { position: fixed; z-index: 10;
-  top: max(10px, env(safe-area-inset-top));
-  right: calc(50% + 34px);
+  top: 0; right: 0;
+  padding: calc(var(--lane-t, 10px) + 6px) calc(var(--lane-r, 10px) + 6px) 16px 16px;
+  min-width: 56px; min-height: 56px;
+  box-sizing: content-box;
+  background: none; border: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: flex; align-items: flex-start; justify-content: flex-end; }
+/* The visible pill lives inside that target. */
+#ff-pause-btn .ff-pause-pill { display: inline-block;
   background: var(--panel-bg, #161616); color: var(--panel-fg, #ddd);
-  border: none; border-radius: 10px; padding: 8px 12px;
+  border-radius: 10px; padding: 8px 12px;
   font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-body);
-  line-height: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-#ff-pause-btn:active { color: var(--panel-accent, #39ff5f); }
+  line-height: 1; }
+#ff-pause-btn:active .ff-pause-pill { color: var(--panel-accent, #39ff5f); }
 #ff-pause-btn[hidden] { display: none; }
 
 /* LANDSCAPE PHONES: short viewports. Everything that costs vertical
@@ -246,7 +320,7 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
 
 // ---- Standings: captured at the instant the player finishes ----
 // Pure function so the harness can test the ranking without a DOM.
-function computeStandings(state) {
+function computeStandings(state, resolved) {
   const rows = [];
   const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
   const startTick = state.raceStartTick || 0;
@@ -256,8 +330,18 @@ function computeStandings(state) {
     // for anyone still out on track when the standings were captured
     // — shown as a dash, because inventing a time for an unfinished
     // racer would be the one dishonest number on the screen.
-    timeSec: (m.finishTick === undefined || m.finishTick === null)
-      ? null : (m.finishTick - startTick) / hz,
+    // A racer still on track when the flag fell has no stamp of its
+    // own; finishline.js fast-forwards the rest of the race on a
+    // clone and supplies the REAL time it would have set. Only a
+    // body that could not finish at all stays null — and it is
+    // marked DNF, which sorts LAST on time rather than first.
+    timeSec: (m.finishTick !== undefined && m.finishTick !== null)
+      ? (m.finishTick - startTick) / hz
+      : (resolved && resolved.byName[m.name] && !resolved.byName[m.name].dnf
+        ? resolved.byName[m.name].timeSec
+        : null),
+    dnf: !!(resolved && resolved.byName[m.name] && resolved.byName[m.name].dnf
+      && (m.finishTick === undefined || m.finishTick === null)),
     fruit: m.fruit || 'watermelon',
     color: m.bodyColor || '#37a01c',
     patKey: m.patKey || m.name || 'x',
@@ -297,6 +381,105 @@ function ordinalSuffix(n) {
   return d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
 }
 
+// ---- THE COUNTDOWN CAPTION ----------------------------------------
+// A DOM overlay rather than canvas text: it inherits the type scale
+// and the colour tokens, so the one piece of typography every player
+// sees before every race is styled by the same law as everything
+// else. Driven from the render loop, but its CONTENT comes from the
+// sim's tick count — the numbers are not animated on wall time.
+let elCount = null;
+let lastCaption = '';
+function buildCountdown() {
+  elCount = el('div', 'ff-count');
+  elCount.appendChild(el('div', 'ff-count-text', ''));
+  document.body.appendChild(elCount);
+  elCount.style.display = 'none';
+}
+
+function updateCountdown(state) {
+  if (!elCount || !window.FF.gridStart) return;
+  const cap = window.FF.gridStart.caption(state);
+  const text = cap ? cap.text : '';
+  if (text !== lastCaption) {
+    lastCaption = text;
+    const node = elCount.firstChild;
+    node.textContent = text;
+    node.className = 'ff-count-text' + (cap ? ' ff-count-' + cap.kind : '');
+    elCount.style.display = text ? 'flex' : 'none';
+    // Re-trigger the pop each time the number changes.
+    if (text) {
+      node.style.animation = 'none';
+      void node.offsetWidth;
+      node.style.animation = '';
+    }
+  }
+}
+
+// ---- CONFIRM ------------------------------------------------------
+// One dialog, reused by anything destructive. Deliberately NOT a
+// browser confirm(): that blocks the frame loop, cannot be styled,
+// and reads as a webpage rather than a game.
+//
+// The defaults are chosen to be safe: CANCEL is the primary, styled
+// button and the destructive action is the quiet one — the reverse of
+// the screen it was opened from, so muscle memory cannot carry a
+// player through it. Tapping the backdrop cancels; Escape cancels.
+let elConfirm = null;
+function buildConfirm() {
+  elConfirm = el('div', 'ff-screen ff-confirm');
+  const panel = el('div', 'ff-panel ff-confirm-panel');
+  const head = el('div', 'ff-head');
+  const title = el('h1', 'ff-title ff-confirm-title', '');
+  const body = el('p', 'ff-sub', '');
+  head.appendChild(title);
+  head.appendChild(body);
+  panel.appendChild(head);
+  const keep = el('button', 'ff-btn', '');
+  const go = el('button', 'ff-btn ff-quiet ff-danger', '');
+  const foot = el('div', 'ff-foot');
+  foot.appendChild(keep);
+  foot.appendChild(go);
+  panel.appendChild(foot);
+  elConfirm.appendChild(panel);
+  document.body.appendChild(elConfirm);
+  elConfirm.style.display = 'none';
+  elConfirm._title = title;
+  elConfirm._body = body;
+  elConfirm._keep = keep;
+  elConfirm._go = go;
+  // The backdrop cancels; a tap inside the panel must not.
+  elConfirm.addEventListener('click', (e) => { if (e.target === elConfirm) confirmClose(); });
+  panel.addEventListener('click', (e) => e.stopPropagation());
+  keep.addEventListener('click', confirmClose);
+  // ONE permanent listener that reads the pending action, rather than
+  // re-assigning onclick per call: a handler that is swapped each
+  // time is a handler that can be left pointing at the previous
+  // question if a close path ever misses.
+  go.addEventListener('click', () => {
+    const fn = confirmPending;
+    confirmClose();
+    if (fn) fn();
+  });
+}
+
+function confirmClose() {
+  if (elConfirm) elConfirm.style.display = 'none';
+  confirmPending = null;
+}
+
+let confirmPending = null;
+function confirmAsk(opts) {
+  if (!elConfirm) return;
+  elConfirm._title.textContent = opts.title || 'ARE YOU SURE?';
+  elConfirm._body.textContent = opts.body || '';
+  elConfirm._keep.textContent = opts.cancel || 'CANCEL';
+  elConfirm._go.textContent = opts.confirm || 'CONFIRM';
+  confirmPending = opts.onConfirm || null;
+  elConfirm.style.display = 'flex';
+}
+
+function confirmIsOpen() { return !!elConfirm && elConfirm.style.display !== 'none'; }
+
 // ---- DOM scaffolding ----
 let elMenu = null, elFinish = null;
 function el(tag, cls, text) {
@@ -310,9 +493,14 @@ function buildMenu() {
   elMenu = el('div', 'ff-screen ff-menu-screen');
   const panel = el('div', 'ff-panel');
   const head = el('div', 'ff-head');
-  head.appendChild(el('h1', 'ff-title', 'FAST FRUIT'));
+  const title = el('h1', 'ff-title', 'FAST FRUIT');
+  head.appendChild(title);
   head.appendChild(el('p', 'ff-sub', 'pick your racer'));
   panel.appendChild(head);
+  // THE HANDLE for developer tools: five taps here. Outside the play
+  // area, on a screen you choose to visit, mirroring the build-number
+  // convention every phone owner has already met.
+  if (window.FF.devtools) window.FF.devtools.arm(title);
 
   // Two blocks so one media query can flip portrait-above-papers into
   // portrait-beside-papers without touching the DOM.
@@ -483,6 +671,7 @@ function buildMenu() {
 }
 
 let elPause = null, elPauseBtn = null;
+let elFinishNote = null, elFinishTitle = null;
 let fromMenuOrRetry = true; // set by the paths that BEGIN a race
 function buildPause() {
   elPause = el('div', 'ff-screen');
@@ -491,8 +680,60 @@ function buildPause() {
   head.appendChild(el('h1', 'ff-title', 'PAUSED'));
   head.appendChild(el('p', 'ff-sub', 'the world is frozen'));
   panel.appendChild(head);
+
+  // ---- PAUSE AS A HUB ----------------------------------------------
+  // The settings that used to sit as permanent corner buttons live
+  // here instead. A phone whose whole input model is "one thumb,
+  // anywhere" cannot afford eight persistent controls around the play
+  // area; genre norm is two or three, and pause is where a player is
+  // NOT under pressure. It is also the natural home for the controls
+  // reminder — the flare is otherwise invisible to anyone who never
+  // reads the one-time hint.
+  const body = el('div', 'ff-body');
+  const settings = el('div', 'ff-settings');
+  body.appendChild(settings);
+
+  const toggles = [];
+  const addToggle = (label, get, set) => {
+    const row = el('div', 'ff-set-row');
+    row.appendChild(el('div', 'ff-set-k', label));
+    const val = el('button', 'ff-set-v', '');
+    const paint = () => {
+      const on = !!get();
+      val.textContent = on ? 'ON' : 'OFF';
+      val.classList.toggle('on', on);
+    };
+    val.addEventListener('click', () => { set(); paint(); });
+    row.appendChild(val);
+    settings.appendChild(row);
+    toggles.push(paint);
+    paint();
+  };
+  addToggle('SOUND',
+    () => !(window.FF.audio && window.FF.audio.isMuted && window.FF.audio.isMuted()),
+    () => { if (window.FF.audio && window.FF.audio.toggleMuted) window.FF.audio.toggleMuted(); });
+  addToggle('TRAINING RING',
+    () => !!window.FF.CONFIG.practiceSplat,
+    () => { window.FF.CONFIG.practiceSplat = window.FF.CONFIG.practiceSplat ? 0 : 1; });
+
+  const controls = el('div', 'ff-controls');
+  controls.appendChild(el('div', 'ff-set-k', 'CONTROLS'));
+  const ctl = el('div', 'ff-controls-body');
+  ctl.appendChild(el('div', null, '\u25C0  drag anywhere to spin  \u25B6'));
+  const flare = el('div', null, '\u25B2  bouncy \u2014 survives big falls');
+  flare.className = 'ff-ctl-up';
+  ctl.appendChild(flare);
+  const dead = el('div', null, '\u25BC  dead \u2014 no bounce, lands heavy');
+  dead.className = 'ff-ctl-down';
+  ctl.appendChild(dead);
+  controls.appendChild(ctl);
+  body.appendChild(controls);
+  panel.appendChild(body);
+  elPause._toggles = toggles;
+
   const resume = el('button', 'ff-btn', 'RESUME');
   const restart = el('button', 'ff-btn ff-secondary', 'RESTART RACE');
+  elPause._restart = restart;
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
   const foot = el('div', 'ff-foot');
   foot.appendChild(resume);
@@ -502,7 +743,23 @@ function buildPause() {
   elPause.appendChild(panel);
   document.body.appendChild(elPause);
   resume.addEventListener('click', () => flow.go('race'));
-  restart.addEventListener('click', () => { if (respawnFn) respawnFn(); fromMenuOrRetry = true; flow.go('race'); });
+  restart.addEventListener('click', () => {
+    // MID-CUP, RESTART MEANS THE WHOLE ATTEMPT. Restarting a single
+    // leg would let a player re-roll a bad race and keep the good
+    // ones, and a points table assembled from cherry-picked legs is
+    // not a result. Unlimited ATTEMPTS were always the design; per-leg
+    // retries are a different, weaker thing.
+    const c = window.FF.cup;
+    if (!practiceMode && c && c.isRunning() && startLegFn) {
+      if (window.FF.resume) window.FF.resume.clear();
+      c.begin();
+      startLegFn(c.trackForLeg(0));
+    } else if (respawnFn) {
+      respawnFn();
+    }
+    fromMenuOrRetry = true;
+    flow.go('race');
+  });
   menu.addEventListener('click', () => {
     // Leaving for the menu ends the run: nothing left to resume, and
     // an orphaned snapshot would offer to restore a race the player
@@ -516,8 +773,9 @@ function buildPause() {
 
   // The button itself: visible only while racing (a pause control on
   // the pause screen would be a trap).
-  elPauseBtn = el('button', null, 'II');
+  elPauseBtn = el('button', null, '');
   elPauseBtn.id = 'ff-pause-btn';
+  elPauseBtn.appendChild(el('span', 'ff-pause-pill', 'II'));
   elPauseBtn.setAttribute('aria-label', 'Pause');
   elPauseBtn.hidden = true;
   document.body.appendChild(elPauseBtn);
@@ -528,6 +786,8 @@ function buildPause() {
   // Escape/P toggle for desktop; ignored while the studio has focus.
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape' && e.code !== 'KeyP') return;
+    // A dialog owns Escape while it is open.
+    if (confirmIsOpen()) { if (e.code === 'Escape') confirmClose(); return; }
     if (flow.state === 'race') flow.go('pause');
     else if (flow.state === 'pause') flow.go('race');
   });
@@ -537,7 +797,16 @@ function buildFinish() {
   elFinish = el('div', 'ff-screen ff-finish-screen');
   const panel = el('div', 'ff-panel');
   const head = el('div', 'ff-head');
-  head.appendChild(el('h1', 'ff-title', 'FINISH'));
+  const finishTitle = el('h1', 'ff-title', 'FINISH');
+  head.appendChild(finishTitle);
+  // WHAT THIS RESULT COUNTED FOR. A practice race ends on the same
+  // screen as a cup race and records nothing — a player who notices
+  // their stats did not move will assume a bug, not a rule. Saying so
+  // costs one line and removes the doubt entirely.
+  const finishNote = el('p', 'ff-sub ff-finish-note', '');
+  head.appendChild(finishNote);
+  elFinishNote = finishNote;
+  elFinishTitle = finishTitle;
   // Three tabs: the result, the race, and your run. PLACES leads
   // because it answers the question everyone has at the flag; the
   // other two are for the curious, and burying them behind a tap is
@@ -595,13 +864,32 @@ function buildFinish() {
     fromMenuOrRetry = true;
     flow.go('race');
   });
+  // ABANDONING IS DESTRUCTIVE AND SILENT: it throws away every leg
+  // already raced, and nothing on screen would say so afterwards. A
+  // quiet button made it hard to hit BY ACCIDENT; a confirm makes it
+  // impossible — and, more usefully, it states the cost in the one
+  // moment the player is deciding.
   quit.addEventListener('click', () => {
-    // Records nothing — not even the legs already run.
-    if (window.FF.resume) window.FF.resume.clear();
-    if (window.FF.cup) window.FF.cup.abandon();
-    practiceMode = true;
-    if (respawnFn) respawnFn();
-    flow.go('menu');
+    const c = window.FF.cup;
+    const legs = (c && c.current()) ? c.current().results.length : 0;
+    confirmAsk({
+      title: 'ABANDON CUP?',
+      body: legs === 1
+        ? 'One race already run. It will not be recorded.'
+        : legs > 1
+          ? legs + ' races already run. None of them will be recorded.'
+          : 'Nothing will be recorded.',
+      confirm: 'ABANDON',
+      cancel: 'KEEP RACING',
+      onConfirm: () => {
+        // Records nothing — not even the legs already run.
+        if (window.FF.resume) window.FF.resume.clear();
+        if (window.FF.cup) window.FF.cup.abandon();
+        practiceMode = true;
+        if (respawnFn) respawnFn();
+        flow.go('menu');
+      },
+    });
   });
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
@@ -695,12 +983,108 @@ function startSpinners() {
 // ---- The machine ----
 const SCREENS = {};
 flow.register = function (name, screen) { SCREENS[name] = screen; };
+// ---- THE BACK BUTTON -------------------------------------------
+// On mobile web, back is a SYSTEM-LEVEL expectation: Android users
+// press it constantly, and until now it left the game entirely —
+// mid-cup, with a race in progress. Each screen pushes a history
+// entry, and a popstate walks the machine backwards instead of
+// leaving the page.
+//
+// WHAT BACK MEANS, per screen:
+//   race   -> pause      (never straight to the menu: a back press is
+//                         not a decision to abandon a race)
+//   pause  -> race       (it is a modal; back dismisses it)
+//   finish -> menu       (mid-cup it is ignored — leaving abandons the
+//                         attempt, which must stay deliberate)
+//   menu   -> leave      (the only screen where back exits the game)
+//
+// The guard flag stops the pushState we perform in response to a
+// popstate from being read as another navigation.
+let historyDepth = 0;
+let handlingPop = false;
+
+function pushHistory(name) {
+  if (typeof history === 'undefined' || !history.pushState) return;
+  if (handlingPop) return;
+  try {
+    historyDepth++;
+    history.pushState({ ff: name, d: historyDepth }, '');
+  } catch (_) {}
+}
+
+// ---- AUTO-PAUSE ----------------------------------------------------
+// The most common interruption on a phone is not a button press: it
+// is a call, a notification, or switching apps. The game should pause
+// itself for those rather than simulating on into a race the player
+// cannot see — and it is the one "control" that needs no reach at
+// all, which matters when the pause button sits in the corner
+// furthest from a racing thumb.
+//
+// Solo only: a lockstep race's clock belongs to every peer, and one
+// player's notification is not grounds for stopping everyone else's.
+function initAutoPause() {
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  const pauseIfRacing = () => {
+    if (flow.state !== 'race') return;
+    if (netplayFn && netplayFn()) return;
+    flow.go('pause');
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseIfRacing();
+  });
+  // Safari on iOS is unreliable about visibilitychange when the app
+  // is backgrounded from a gesture; blur catches what it misses, and
+  // pausing twice is a no-op.
+  window.addEventListener('blur', pauseIfRacing);
+}
+
+function initHistory() {
+  if (typeof window === 'undefined' || !window.addEventListener) return;
+  // A base entry, so the FIRST back press has somewhere to land
+  // rather than leaving immediately.
+  pushHistory('menu');
+  window.addEventListener('popstate', () => {
+    handlingPop = true;
+    try {
+      // A dialog is the topmost thing on screen: back closes it and
+      // goes no further.
+      if (confirmIsOpen()) { confirmClose(); pushHistory(flow.state); return; }
+      const s = flow.state;
+      if (s === 'race') {
+        flow.go('pause');
+        pushHistory('pause');      // stay inside the game
+      } else if (s === 'pause') {
+        flow.go('race');
+        pushHistory('race');
+      } else if (s === 'finish') {
+        if (window.FF.cup && window.FF.cup.isRunning() && !practiceMode) {
+          // Mid-cup: refuse. Abandoning must be a deliberate tap.
+          pushHistory('finish');
+        } else {
+          if (window.FF.resume) window.FF.resume.clear();
+          if (window.FF.cup) window.FF.cup.abandon();
+          if (respawnFn) respawnFn();
+          fromMenuOrRetry = true;
+          flow.go('menu');
+        }
+      } else {
+        // On the menu, back means back: let the browser leave, but
+        // keep one entry so a stray press does not exit instantly.
+        pushHistory('menu');
+      }
+    } finally {
+      handlingPop = false;
+    }
+  });
+}
+
 flow.go = function (name) {
   const prev = SCREENS[flow.state];
   if (prev && prev.exit) prev.exit();
   flow.state = name;
   const next = SCREENS[name];
   if (next && next.enter) next.enter();
+  pushHistory(name);
 };
 
 flow.register('menu', {
@@ -770,6 +1154,13 @@ flow.register('pause', {
     if (window.FF.resume && stateRef) {
       window.FF.resume.save(stateRef, { netplay: !!(netplayFn && netplayFn()) });
     }
+    for (const paint of (elPause._toggles || [])) paint();
+    // Label the truth: mid-cup this restarts the ATTEMPT, not the leg.
+    if (elPause._restart) {
+      const c = window.FF.cup;
+      elPause._restart.textContent = (!practiceMode && c && c.isRunning())
+        ? 'RESTART CUP' : 'RESTART RACE';
+    }
     elPause.style.display = 'flex';
   },
   exit() { elPause.style.display = 'none'; },
@@ -797,7 +1188,13 @@ flow.register('finish', {
     // measurement, no second source of truth.
     const M = window.FF.melon;
     if (M && M.recordRace) {
-      const rowsNow = computeStandings(stateRef);
+      // Resolve everyone's finish before reading the standings: the
+      // race is over for the player, not for the field.
+      const resolved = (window.FF.finishLine && window.FF.finishLine.resolve)
+        ? window.FF.finishLine.resolve(stateRef, { provider: providerFn && providerFn() })
+        : null;
+      lastResolved = resolved;
+      const rowsNow = computeStandings(stateRef, resolved);
       const mine = rowsNow.find(r => r.isPlayer);
       const rw = window.FF.raceWatch;
       const sum = (rw && rw.summary) ? rw.summary(stateRef) : {};
@@ -820,6 +1217,7 @@ flow.register('finish', {
             place: mine.pos,
             fieldSize: rowsNow.length,
             timeSec: mine.timeSec,
+            dnf: !!mine.dnf,
             splats: sum.deaths || 0,
             standings: rowsNow,   // the whole field, for the points table
           });
@@ -845,7 +1243,7 @@ flow.register('finish', {
     const rows = elFinish._rows;
     rows.textContent = '';
     spinners.length = 0;
-    for (const r of computeStandings(stateRef)) {
+    for (const r of computeStandings(stateRef, lastResolved)) {
       const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
       // Ordinal, with the suffix styled small: the NUMBER is the
       // thing you read across the room.
@@ -857,7 +1255,7 @@ flow.register('finish', {
       row.appendChild(c);
       const nm = el('div', 'ff-rname', r.name);
       if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
-      nm.appendChild(el('div', 'ff-rtime', fmtTime(r.timeSec)));
+      nm.appendChild(el('div', 'ff-rtime', r.dnf ? 'DNF' : fmtTime(r.timeSec)));
       row.appendChild(nm);
       rows.appendChild(row);
       clearCanvas(c);
@@ -866,10 +1264,34 @@ flow.register('finish', {
     fillFacts();
     fillSummary();
     const cupping = !practiceMode && window.FF.cup && window.FF.cup.current();
+    // After the places rows: both tabs push into the same spinner
+    // list, which is emptied once at the top of enter().
     fillCup();
     // Mid-cup the standings that matter are the CUP's, so that tab
     // leads; a single race still opens on its own result.
     setCupMode(!!cupping, cupping && window.FF.cup.isComplete());
+    if (elFinishNote) {
+      const c = window.FF.cup;
+      if (practiceMode) {
+        elFinishNote.textContent = 'practice \u00b7 nothing recorded';
+      } else if (c && c.isComplete()) {
+        const rec = c.dayRecord();
+        const t = c.totals();
+        elFinishNote.textContent = 'cup complete \u00b7 ' + t.points + ' pts'
+          + (rec && rec.attempts > 1
+            ? '  \u00b7  best ' + rec.bestPoints + ' in ' + rec.attempts + ' tries'
+            : '');
+      } else if (c && c.current()) {
+        elFinishNote.textContent = 'race ' + c.current().leg + ' of ' + c.LEGS;
+      } else {
+        elFinishNote.textContent = '';
+      }
+      elFinishNote.style.display = elFinishNote.textContent ? '' : 'none';
+    }
+    if (elFinishTitle) {
+      elFinishTitle.textContent = (!practiceMode && window.FF.cup && window.FF.cup.isComplete())
+        ? 'CUP COMPLETE' : 'FINISH';
+    }
     showTab(cupping ? 'cup' : 'places');
     startSpinners();
   },
@@ -889,14 +1311,15 @@ function showTab(key) {
     panes[k].classList.toggle('on', k === key);
     btns[k].classList.toggle('on', k === key);
   }
-  // Spinners live in the PLACES pane; a hidden canvas would keep the
-  // rAF loop alive for nothing, and isConnected can't see display:none.
+  // Spinners live in the PLACES and CUP panes; a hidden canvas would
+  // keep the rAF loop alive for nothing, and isConnected cannot see
+  // display:none.
   // SCOPED TO THIS SCREEN: leaving the finish on the RACE or YOU tab
   // used to strand this flag as true, so the menu's portrait never
   // animated and simply showed whatever pixels the canvas still held
   // from before the race — a stale bitmap, stretched by CSS, which
   // reads exactly like "low fidelity and won't rotate".
-  spinnersPaused = key !== 'places';
+  spinnersPaused = !(key === 'places' || key === 'cup');
   if (!spinnersPaused) startSpinners();
 }
 
@@ -913,14 +1336,46 @@ function fillCup() {
     c.isComplete() ? 'FINAL \u00b7 ' + t.points + ' pts'
       : 'AFTER ' + legs + ' OF ' + c.LEGS + '  \u00b7  ' + t.points + ' pts');
   box.appendChild(head);
+
+  // SAME SHAPE AS THE PLACES TAB. A cup standing is a standing: the
+  // player reads it the same way, so it gets the same tiered ordinal,
+  // the same rotating body, and the same quiet second line. Only the
+  // CONTENT differs — points and cumulative time instead of one
+  // race's finish. (The rows live in their own container so the
+  // podium's :nth-child tiering counts rows, not the heading above
+  // them.)
+  const list = el('div', 'ff-rows ff-cup-rows');
+  box.appendChild(list);
+
+  // The cup's cast is fixed for all four legs, so a racer's
+  // appearance can be looked up from this race's standings by name —
+  // no second source of truth for what a melon looks like.
+  const look = new Map();
+  for (const s of computeStandings(stateRef, lastResolved)) {
+    look.set(s.isPlayer ? '\u0000you' : s.name, s);
+  }
+
   for (const r of rows) {
-    const row = el('div', 'ff-fact' + (r.isPlayer ? ' ff-you' : ''));
-    row.appendChild(el('div', 'ff-fact-l', ordinal(r.pos)));
-    const right = el('div', 'ff-fact-r');
-    right.appendChild(el('div', 'ff-fact-n', r.isPlayer ? 'YOU' : r.name));
-    right.appendChild(el('div', 'ff-fact-v', r.points + ' pts  \u00b7  ' + fmtTime(r.timeSec)));
-    row.appendChild(right);
-    box.appendChild(row);
+    const key = r.isPlayer ? '\u0000you' : r.name;
+    const s = look.get(key);
+    const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
+    const pos = el('div', 'ff-pos', String(r.pos));
+    pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.pos)));
+    row.appendChild(pos);
+    const cv = el('canvas', 'ff-spin');
+    cv.width = 104; cv.height = 104;   // hint; syncCanvasSize owns it
+    row.appendChild(cv);
+    const nm = el('div', 'ff-rname', r.isPlayer ? (s ? s.name : 'YOU') : r.name);
+    if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
+    nm.appendChild(el('div', 'ff-rtime',
+      r.points + ' pts  \u00b7  ' + (r.dnfs ? fmtTime(r.timeSec) + '  \u00b7  ' + r.dnfs + ' DNF' : fmtTime(r.timeSec))));
+    row.appendChild(nm);
+    list.appendChild(row);
+    clearCanvas(cv);
+    if (s) {
+      spinners.push({ canvas: cv, angle: r.pos * 0.7, a: s.a, b: s.b,
+        color: s.color, patKey: s.patKey, fruit: s.fruit });
+    }
   }
 }
 
@@ -1001,6 +1456,7 @@ function fillSummary() {
 // Called every frame after lap logic: fires the finish screen ONCE
 // per race, at the tick the player crossed the line.
 flow.onFrame = function (state) {
+  updateCountdown(state);
   if (flow.state !== 'race') return;
   const ft = state.race && state.race.finishedTick;
   if (ft !== null && ft !== undefined && ft !== finishHandledTick) {
@@ -1014,14 +1470,19 @@ flow.init = function (state, opts) {
   respawnFn = (opts && opts.respawn) || null;
   netplayFn = (opts && opts.isNetplay) || null;
   exhibitionHooks = (opts && opts.exhibition) || null;
+  providerFn = (opts && opts.provider) || null;
   startLegFn = (opts && opts.startLeg) || null;
   rebuildFn = (opts && opts.rebuild) || null;
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
+  buildConfirm();
+  buildCountdown();
   buildMenu();
   buildFinish();
   buildPause();
+  initHistory();
+  initAutoPause();
   elMenu.style.display = 'none';
   elFinish.style.display = 'none';
   elPause.style.display = 'none';

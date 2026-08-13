@@ -303,9 +303,20 @@ function buildToggle() {
   });
   document.body.appendChild(btn);
 }
-if (typeof document !== 'undefined' && document.body) buildToggle();
+// The floating corner toggle is RETIRED: sound is a setting, and
+// settings live on the pause screen now. A phone whose entire input
+// model is "one thumb, anywhere" cannot afford eight persistent
+// controls around the play area. buildToggle survives unused for a
+// build that wants the old chrome back.
 
 window.FF = window.FF || {};
-window.FF.audio = { update, setMuted, stats };
+window.FF.audio = {
+  update, setMuted, stats,
+  isMuted: () => muted,
+  // Toggling from a UI control must also UNLOCK the audio context:
+  // browsers only allow that inside a user gesture, and the pause
+  // screen's tap is one.
+  toggleMuted: () => { setMuted(!muted); unlock(); return muted; },
+};
 
 })();

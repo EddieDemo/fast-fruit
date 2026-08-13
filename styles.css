@@ -1,3 +1,33 @@
+/* ---------- SCREEN LANES ----------
+   Fixed controls live in named lanes so nothing has to guess where
+   anything else is. Two rules:
+
+     PLAYER controls own the corners: HUD top-left, pause top-right,
+     multiplayer bottom-right.
+
+     DEV controls stack VERTICALLY down the left edge, beneath the
+     HUD. Vertical is the important word: the old arrangement offset
+     dev buttons horizontally from the right edge, so a button whose
+     label changed width ('tune' -> 'close') could overlap its
+     neighbour. A vertical stack is immune to label width.
+
+   Because the lanes are declared once here, turning the dev gate on
+   can never shift or cover a player control. */
+:root {
+  --lane-t: max(10px, env(safe-area-inset-top));
+  --lane-r: max(10px, env(safe-area-inset-right));
+  --lane-l: max(10px, env(safe-area-inset-left));
+  --lane-b: max(10px, env(safe-area-inset-bottom));
+  /* MEASURED, not guessed: hud.js publishes the real box (see
+     publishHudBox). These are only the fallbacks for the first frame
+     and for any build without the HUD. The cockpit toggle reveals
+     extra telemetry rows, so a fixed 76px left the dev stack sitting
+     underneath the taller HUD. */
+  --hud-h: 76px;
+  --hud-w: 128px;
+  --dev-step: 40px;       /* vertical pitch of the dev stack */
+  --dev-top: calc(var(--lane-t) + var(--hud-h));
+}
 /* ============================================================
    Fast Fruit — Stage 1
    The canvas is the game. Everything else is overlay chrome.
@@ -96,8 +126,8 @@ html, body {
    of the tune panel's controls with z-index 30 winning every tap. */
 #studio-btn {
   position: fixed;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  left: max(10px, env(safe-area-inset-left));
+  top: calc(var(--dev-top) + var(--dev-step) * 2);
+  left: var(--lane-l);
   z-index: 30;
   background: var(--panel-bg, #161616);
   color: #ddd;
@@ -390,7 +420,7 @@ html, body {
 #ghost-banner {
   display: none;
   position: fixed;
-  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  top: calc(var(--lane-t) + 46px);
   left: 50%;
   transform: translateX(-50%);
   background: var(--panel-bg);
@@ -463,8 +493,9 @@ html, body {
 /* ---------- Clean mode / cockpit toggle ---------- */
 #cockpit-toggle {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: calc(max(10px, env(safe-area-inset-right)) + 88px);
+  top: calc(var(--dev-top) + var(--dev-step));
+  left: var(--lane-l);
+  right: auto;
   z-index: 10;
   background: var(--panel-bg);
   color: var(--panel-dim);
@@ -479,10 +510,14 @@ body.clean .cockpit-only { display: none; }
 body.clean #debug-root { display: none; }
 
 /* ---------- Sound toggle ---------- */
+/* Retired (sound is a pause-screen setting). Rule kept for a build
+   that wants the old chrome; parked in the dev lane so it cannot
+   collide with the pause button if it ever returns. */
 #snd-toggle {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
+  top: calc(var(--dev-top) + var(--dev-step) * 3);
+  left: var(--lane-l);
+  right: auto;
   z-index: 10;
   background: var(--panel-bg);
   color: var(--panel-fg);
@@ -584,8 +619,9 @@ body.clean #debug-root { display: none; }
 /* ---------- Debug tuning panel ---------- */
 #debug-root {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
+  top: var(--dev-top);
+  left: var(--lane-l);
+  right: auto;
   z-index: 10;
   font-family: var(--mono);
   font-size: var(--fs-body);

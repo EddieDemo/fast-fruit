@@ -492,6 +492,22 @@ function stepBody(m, inp, terrain, dt, sink) {
   m.y += m.vy * dt;
   m.angle += m.omega * dt;
 
+  // ---- GRID PIN (pre-race) ----
+  // A pinned body may spin and bounce but cannot travel: x is held at
+  // the grid slot it was placed in. That is what lets a melon REV on
+  // the line — building angular momentum, hopping on its own
+  // elliptical geometry — without dragging itself, or the melon in
+  // front of it, over the line. Applied after integration and again
+  // after contacts below, because a neighbour's shove arrives there.
+  if (m.pinX !== null && m.pinX !== undefined) {
+    m.x = m.pinX;
+    m.vx = 0;
+  }
+  if (m.pinY !== null && m.pinY !== undefined) {
+    m.y = m.pinY;
+    m.vy = 0;
+  }
+
   // ---- 5. Collide & resolve ----
   const wasGrounded = m.grounded;
   let grounded = false;
@@ -537,6 +553,18 @@ function stepBody(m, inp, terrain, dt, sink) {
       }
     }
   }
+  // Contacts (terrain and neighbours) can move a pinned body; hold it
+  // again so a revving pack cannot push the front row over the line,
+  // and so a melon hovering on the grid is not knocked off its mark.
+  if (m.pinX !== null && m.pinX !== undefined) {
+    m.x = m.pinX;
+    m.vx = 0;
+  }
+  if (m.pinY !== null && m.pinY !== undefined) {
+    m.y = m.pinY;
+    m.vy = 0;
+  }
+
   m.grounded = grounded;
   // ---- FLIGHT LEDGER (presentation telemetry, every body) ----
   // The commentary layer needs to know the SHAPE of an event, not

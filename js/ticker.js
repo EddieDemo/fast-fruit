@@ -37,8 +37,24 @@ const LIFE_MS = 2600;
 const GAP_MS = 900;      // don't stack near-identical events
 
 const CSS = `
+/* The top band is free now that the respawn and daily buttons are
+   gone, so commentary rises to sit on the same line as the HUD and
+   the pause button. It is BOUNDED by both: the width budget is the
+   screen minus the HUD (measured, published by hud.js) on the left
+   and a pause-sized margin on the right — doubled, because a centred
+   element grows in both directions. Without that, a long line would
+   slide under the HUD on a narrow phone. */
 #ff-ticker { position: fixed; z-index: 9; pointer-events: none;
-  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  /* NARROW SCREENS KEEP IT BELOW THE HUD. A centred element grows
+     both ways, so sharing the top band with a 128px HUD leaves only
+     ~86px of usable width on a 390px phone — not enough for a line
+     like "NEARLY PULP — 97% OF LETHAL". Rising there would be a
+     worse layout wearing the right idea. */
+  /* ...and below the DEV LANE when it exists: in portrait the stack
+     runs down the left edge at exactly the height a centred ticker
+     would occupy. --dev-lane-h is 0px for every player, so this costs
+     them nothing. */
+  top: calc(var(--lane-t, 10px) + var(--hud-h, 76px) + var(--dev-lane-h, 0px));
   left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   font-family: var(--mono, ui-monospace, monospace); }
@@ -55,6 +71,17 @@ const CSS = `
   border-color: rgba(92, 235, 110, 0.35); }
 .ff-tick.record { color: rgba(255, 213, 74, 0.95);
   border-color: rgba(255, 213, 74, 0.35); }
+/* WIDE ENOUGH TO SHARE THE LINE: on landscape phones and up, the top
+   band has real room beside the HUD, so commentary rises to sit on
+   the same line as the HUD and the pause button — bounded by both, so
+   a long line can never slide under either. (540px of budget on an
+   844px landscape phone, against 86px in portrait.) */
+@media (min-width: 700px) {
+  #ff-ticker {
+    top: var(--lane-t, max(10px, env(safe-area-inset-top)));
+    max-width: calc(100vw - (var(--hud-w, 128px) + var(--lane-l, 10px) + 14px) * 2);
+  }
+}
 `;
 
 let root = null;

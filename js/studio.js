@@ -251,6 +251,10 @@ function refreshPalette(baseColor, fruit) {
   for (const sel of assignSelects) if (sel.value !== assignTarget) sel.value = assignTarget;
 }
 
+// The studio is DEV-ONLY furniture: it registers with the gate rather
+// than appearing for everyone. Its button is created either way (so
+// nothing has to be built lazily at the moment of unlock) but stays
+// hidden until the gate opens.
 function ensureDom() {
   if (btn) return;
   btn = document.createElement('button');
@@ -259,6 +263,15 @@ function ensureDom() {
   btn.title = 'Shader Studio (dev)';
   btn.addEventListener('click', toggle);
   document.body.appendChild(btn);
+  if (window.FF.devtools) {
+    window.FF.devtools.register({
+      show: () => { btn.style.display = ''; },
+      hide: () => {
+        btn.style.display = 'none';
+        if (active) toggle();   // never leave the studio open behind a closed gate
+      },
+    });
+  }
 
   // Two panels: colour generation on the LEFT, assignment and lighting
   // on the RIGHT. In portrait they collapse into one panel with a tab

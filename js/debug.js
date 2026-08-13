@@ -15,6 +15,15 @@ const { resetMelon } = window.FF;
 
 function initDebugPanel(state) {
   const root = document.getElementById('debug-root');
+  // The tune panel is a bank of live physics sliders — indispensable
+  // in development, unreadable to a player. It registers with the
+  // gate rather than shipping visible.
+  if (window.FF.devtools) {
+    window.FF.devtools.register({
+      show: () => { root.style.display = ''; },
+      hide: () => { root.style.display = 'none'; },
+    });
+  }
 
   const toggle = document.createElement('button');
   toggle.className = 'debug-toggle';

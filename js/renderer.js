@@ -141,11 +141,25 @@ function createRenderer(canvas) {
     // low = long dreamy lag, high = locked. Vertical stays centered:
     // jump arcs need vision both ways.
     const cam = state.camera;
-    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom;
+    // The pre-race pan: the camera starts up the track and travels
+    // back to the grid. Expressed as an OFFSET on the normal follow
+    // target, so the follow behaviour is unchanged and the pan cannot
+    // fight it. Duration is fixed in ticks (gridstart.js), not in the
+    // lerp coefficient, so tuning the camera never changes how long
+    // the ceremony lasts.
+    const panOffset = (window.FF.gridStart && window.FF.gridStart.cameraOffset)
+      ? window.FF.gridStart.cameraOffset(state) : 0;
+    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom + panOffset;
     if (!cam.initialized) {
       cam.x = targetX;
       cam.y = iy;
       cam.initialized = true;
+    } else if (panOffset > 0) {
+      // Snap to the pan's own easing: two easings fighting (the pan's
+      // and the follow lerp) would make the ceremony's length depend
+      // on the camera tuning.
+      cam.x = targetX;
+      cam.y += (iy - cam.y) * Math.min(1, CONFIG.cameraLerp * dtFrame);
     } else {
       const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
       cam.x += (targetX - cam.x) * k;
@@ -592,7 +606,15 @@ function createRenderer(canvas) {
     const r = (Math.max(m.a, m.b) + 14) * zoom;
     ctx.save();
     ctx.strokeStyle = `rgba(${col}, 0.55)`;
-    ctx.lineWidth = 3;
+    // The ring belongs to the MELON, so its stroke is a world
+    // measurement like its radius — not a fixed screen width. A flat
+    // 3px looked right at desktop zoom 1 and heavy on a phone, where
+    // zoom is ~0.52: the melon shrank and the line did not. The floor
+    // keeps it from disappearing entirely if the view ever zooms far
+    // out. The coefficient is DESKTOP'S OWN look preserved: 3px at
+    // zoom 1 is 5% of the ring's radius, so 3 * zoom holds that 5%
+    // everywhere rather than inventing a new weight.
+    ctx.lineWidth = Math.max(1.25, 3 * zoom);
     ctx.beginPath();
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
     ctx.stroke();
