@@ -1452,11 +1452,24 @@ function createRenderer(canvas) {
   // Tint a pattern MASK with a colour, cached per (mask, colour). The
   // mask's alpha becomes the coverage; 'source-in' paints the colour
   // through it. This is what gives every band its own pattern colour.
+  //
+  // LRU for the same reason as the raster cache below: this used to
+  // CLEAR ENTIRELY at capacity, which throws away the tints of the
+  // twelve bodies currently on screen along with the stale ones —
+  // every band of every racer rebuilt on the next frame, in one
+  // spike. Each raster spawns several tints (one per band it paints),
+  // so the capacity is proportionally larger. Touch-on-hit + evict
+  // oldest keeps the live set resident.
+  const TINT_CAP = 400;
   const tintCache = new Map();
   function tintedPattern(raster, color) {
     const ck = raster.id + '|' + color;
     let t = tintCache.get(ck);
-    if (t) return t;
+    if (t) {
+      tintCache.delete(ck);
+      tintCache.set(ck, t);
+      return t;
+    }
     const cv = document.createElement('canvas');
     cv.width = raster.canvas.width; cv.height = raster.canvas.height;
     const c = cv.getContext('2d');
@@ -1465,8 +1478,12 @@ function createRenderer(canvas) {
     c.fillStyle = color;
     c.fillRect(0, 0, cv.width, cv.height);
     t = cv;
-    if (tintCache.size > 400) tintCache.clear(); // bounded
     tintCache.set(ck, t);
+    while (tintCache.size > TINT_CAP) {
+      const oldest = tintCache.keys().next().value;
+      if (oldest === undefined || oldest === ck) break;
+      tintCache.delete(oldest);
+    }
     return t;
   }
 
@@ -1486,13 +1503,45 @@ function createRenderer(canvas) {
   // alongside instead of inflating every melon on screen.
   const RSCALE = 2;      // default supersample for in-race bodies
   const RSCALE_MAX = 8;  // ceiling: the island field is per-pixel work
+  // ---- LRU, NOT COST-MAX (2026-08-13) ------------------------------
+  // Capacity holds a full grid's live rasters plus a finish screen's
+  // spinners without pressure. Eviction is least-recently-USED, which
+  // a Map gives for free: iteration follows insertion order, so
+  // re-inserting on every hit keeps the live set at the young end and
+  // the oldest key is always the first one out.
+  //
+  // WHY THE OLD POLICY FAILED (browser-profiled, four-leg cup): it
+  // evicted the most EXPENSIVE entry, to protect the one 8x menu
+  // portrait from being churned out by cheap racing bodies. But a cup
+  // mints ~25 NEW keys per leg — the cast keeps its names while each
+  // leg deals fresh sizes from its own seed, and size is in the key —
+  // so by leg 3 the map was full of stale entries from earlier legs
+  // and screens. Among same-scale entries "most expensive" is just
+  // "biggest body", so inserting one live racer evicted ANOTHER live
+  // racer: a rotating famine across the twelve bodies actually on
+  // screen, each rebuilding its per-pixel island field over and over.
+  // Measured: leg 1 zero misses and a locked 16.7ms frame; legs 3-4
+  // ~1500 misses each, buildMarbleStripes going 0.6% -> 54% of CPU,
+  // frame time 42ms. Refreshing emptied the cache, which is exactly
+  // why a reload "fixed" it. Under LRU the on-screen field is touched
+  // every frame and so is never the eviction candidate, stale legs
+  // age out in order, and the portrait survives precisely as long as
+  // a screen is still drawing it — the protection the cost heuristic
+  // was reaching for, without the pathology.
+  const RASTER_CAP = 64;
   const rasterCache = new Map();
   function patternRaster(key, fruit, a, b, scale) {
     const species = fruit || 'watermelon';
     const rs = Math.max(1, Math.min(RSCALE_MAX, scale || RSCALE));
     const ck = key + '|' + species + '|' + (a | 0) + '|' + rs.toFixed(2);
     let rst = rasterCache.get(ck);
-    if (rst !== undefined) return rst;
+    if (rst !== undefined) {
+      // TOUCH: delete + re-insert moves this key to the young end of
+      // the Map's iteration order. That is the whole LRU bookkeeping.
+      rasterCache.delete(ck);
+      rasterCache.set(ck, rst);
+      return rst;
+    }
     if (typeof document === 'undefined') { rasterCache.set(ck, null); return null; }
     const pad = 4; // stroke overhang room (body clip trims at draw time)
     const w = Math.ceil(a * 2) + pad * 2, h = Math.ceil(b * 2) + pad * 2;
@@ -1509,21 +1558,20 @@ function createRenderer(canvas) {
     else if (species === 'honeydew') drawCrackle(octx, a, b, key);
     else buildMarbleStripes(octx, cv, a, b, key, w, h, rs);
     rst = { canvas: cv, w, h, id: ck, scale: rs };
-    // Eviction prefers the EXPENSIVE entries: one 8x portrait raster
-    // outweighs dozens of racing bodies, so a naive clear-all would
-    // keep rebuilding the costly one while cheap entries churn.
-    if (rasterCache.size > 48) {
-      let worst = null, worstCost = -1;
-      for (const [k, v] of rasterCache) {
-        if (!v || k === ck) continue;
-        const cost = v.scale * v.scale * v.w * v.h;
-        if (cost > worstCost) { worstCost = cost; worst = k; }
-      }
-      if (worst) rasterCache.delete(worst);
-    }
     rasterCache.set(ck, rst);
+    // Evict from the OLD end until we are back at capacity. A loop,
+    // not a single delete: the cap can be lowered live by a future
+    // memory-pressure hook without this needing to know.
+    while (rasterCache.size > RASTER_CAP) {
+      const oldest = rasterCache.keys().next().value;
+      if (oldest === undefined || oldest === ck) break;
+      rasterCache.delete(oldest);
+    }
     return rst;
   }
+  // Dev instrumentation: the browser rig reads these to assert that a
+  // cup's later legs stop missing. Zero cost when nobody looks.
+  window.FF.rasterStats = () => ({ size: rasterCache.size, cap: RASTER_CAP });
 
   // ---- Watermelon pattern: loose island field on the stripe scaffold ----
   // Option P, chosen by Eddie from the 2026-08-10 nine-option bracket
