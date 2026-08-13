@@ -71,7 +71,10 @@ function createState() {
       lapLengthPx: 0,
       laps: 0,
       lapIndex: 0,       // floor(distance / lapLength)
-      lapStartTick: 0,
+      // The tick the field was released (gridstart.js). Pace is
+    // measured from here, not from the race's construction.
+    goTick: null,
+    lapStartTick: 0,
       splits: [],        // completed lap durations, in ticks
       bestLapTicks: null,
       finishedTick: null,

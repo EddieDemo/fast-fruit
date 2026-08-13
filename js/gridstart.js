@@ -154,6 +154,13 @@ function update(gameState) {
       state.phase = 'go';
       state.startedAt = gameState.tick;
       release();              // one tick, everyone
+      // WHEN RACING ACTUALLY BEGAN. The pan, and a wait of any length
+      // for the player's thumb, sit inside elapsed race time — so a
+      // pace measured from the race's start tick is divided by dead
+      // time nobody was moving through. The finish estimator needs
+      // the moment the field was released, not the moment the world
+      // was built.
+      if (gameState.race) gameState.race.goTick = gameState.tick;
     }
     return;
   }

@@ -42,6 +42,8 @@ const AIR_GAP_TICKS = 240;    // 2s between airtime lines
 // chatty enough to compete with the player's own commentary. The
 // gate (podium, or anyone ahead of you) stays; only the pace slows.
 const RIVAL_GAP_TICKS = 480;
+const PACE_WINDOW_TICKS = 240;   // 2s: long enough to smooth a bounce,
+                                 // short enough to notice a crash
 
 let lastPlace = null;         // player's last CONFIRMED place
 let pendingPlace = null;      // a place we're waiting to see stick
@@ -98,6 +100,13 @@ function subscribeBook() {
     if (c.isPlayer) book.deaths++;
     const s = statsByName(c.name);
     if (s) { s.deaths++; if (c.severity > s.biggestHit) s.biggestHit = c.severity; }
+  });
+  // A body's own death count, on the body: the finish estimator needs
+  // a crash RATE, and this is the module already watching for deaths.
+  window.FF.events.on('death', (c) => {
+    for (const [body] of placeByName) {
+      if ((body.name || '') === c.name) { body.deathCount = (body.deathCount || 0) + 1; break; }
+    }
   });
   window.FF.events.on('nearMiss', (c) => {
     if (!c.isPlayer) return;
@@ -170,6 +179,25 @@ function update(state) {
   // ---- Places, remembered for rivals' stories ----
   placeByName.clear();
   for (let i = 0; i < field.length; i++) placeByName.set(field[i], i + 1);
+
+  // ---- RECENT PACE ----
+  // A rolling window of ground covered, so the finish estimator can
+  // tell a melon that is limping from one that merely limped early.
+  // Sampled here because this is the module that already watches
+  // every body every tick.
+  if (!state._paceMark || tick - state._paceMark.tick >= PACE_WINDOW_TICKS) {
+    const prev = state._paceMark;
+    if (prev) {
+      const dt = (tick - prev.tick) / ((window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120);
+      for (const body of field) {
+        const was = prev.x.get(body);
+        if (was !== undefined && dt > 0) body.recentPacePx = Math.max(0, (body.x - was) / dt);
+      }
+    }
+    const x = new Map();
+    for (const body of field) x.set(body, body.x);
+    state._paceMark = { tick, x };
+  }
 
   // ---- Field sampling: the quantities no event can carry ----
   for (const body of field) {

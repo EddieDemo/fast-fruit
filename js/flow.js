@@ -128,15 +128,28 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    thumb — it is above the play area, not on it. pointer-events none
    throughout, because a touch during the pan means "ready" and must
    reach the canvas. */
+/* The settle scrim: fades in at the flag, holds under the results,
+   and clears fast on the way out — slow to arrive, quick to leave, so
+   a retry loop never feels like it is dimming at you. */
+.ff-fade { position: fixed; inset: 0; z-index: 8; pointer-events: none;
+  background: rgba(5, 8, 5, 0.72); opacity: 0;
+  transition: opacity 250ms ease-out; }
+.ff-fade.out { transition-duration: 120ms; }
+/* The panel arrives with the fade rather than snapping in. */
+.ff-screen.ff-finish-screen { animation: ff-panel-in 250ms ease-out; }
+@keyframes ff-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
 .ff-count { position: fixed; inset: 0; z-index: 12; pointer-events: none;
   display: flex; align-items: center; justify-content: center; }
 .ff-count-text { font-family: var(--mono, ui-monospace, monospace);
   color: var(--c-text); text-shadow: 0 0 24px rgba(0,0,0,0.8);
   animation: ff-count-pop 260ms ease-out; }
-.ff-count-count { font-size: clamp(64px, 18vw, 140px); font-weight: 700;
-  letter-spacing: -0.04em; }
-.ff-count-go { font-size: clamp(56px, 15vw, 120px); font-weight: 700;
-  letter-spacing: 0.06em; color: var(--c-accent);
+.ff-count-count { font-size: var(--fs-colossal); font-weight: var(--fw-bold);
+  letter-spacing: var(--tr-colossal); }
+.ff-count-go { font-size: var(--fs-banner); font-weight: var(--fw-bold);
+  letter-spacing: var(--tr-banner); color: var(--c-accent);
   text-shadow: 0 0 30px rgba(57, 255, 95, 0.45); }
 .ff-count-hint { font-size: var(--fs-lead); letter-spacing: 0.18em;
   color: var(--c-dim); animation: ff-count-breathe 2.2s ease-in-out infinite; }
@@ -351,7 +364,22 @@ function computeStandings(state, resolved) {
   });
   for (const p of state.players) push(p.melon, p.melon === state.melon);
   for (const b of state.bots) push(b.melon, false);
-  rows.sort((r, q) => q.x - r.x);
+  // PLACE FOLLOWS TIME. Ordering by distance-at-the-flag was the old
+  // rule, from before finish times existed for everyone: it put a
+  // melon five metres further along ahead of one running a faster
+  // pace, and then printed both their times underneath — a standing
+  // that visibly contradicted its own numbers.
+  //
+  // Now the finishing order IS the order of finish times: measured
+  // for anyone who crossed, projected for the rest (finishline.js).
+  // A racer with no time at all (DNF) sorts last, and distance is the
+  // final tiebreak so two identical times still order sensibly.
+  rows.sort((r, q) => {
+    const rt = (r.dnf || r.timeSec === null || r.timeSec === undefined) ? Infinity : r.timeSec;
+    const qt = (q.dnf || q.timeSec === null || q.timeSec === undefined) ? Infinity : q.timeSec;
+    if (rt !== qt) return rt - qt;
+    return q.x - r.x;
+  });
   rows.forEach((r, i) => { r.pos = i + 1; });
   return rows;
 }
@@ -387,8 +415,30 @@ function ordinalSuffix(n) {
 // sees before every race is styled by the same law as everything
 // else. Driven from the render loop, but its CONTENT comes from the
 // sim's tick count — the numbers are not animated on wall time.
+let elFade = null;
 let elCount = null;
 let lastCaption = '';
+// The scrim that dims the race while the result settles. It is the
+// same veil the panels sit on, brought in early so the moment reads
+// as intentional rather than as a stall.
+function buildFade() {
+  elFade = el('div', 'ff-fade');
+  document.body.appendChild(elFade);
+  elFade.style.display = 'none';
+}
+
+function clearFade() {
+  if (!elFade) return;
+  elFade.classList.add('out');      // 120ms leaving, 250ms arriving
+  elFade.style.opacity = '0';
+  setTimeout(() => {
+    if (elFade.style.opacity === '0') {
+      elFade.style.display = 'none';
+      elFade.classList.remove('out');
+    }
+  }, 160);
+}
+
 function buildCountdown() {
   elCount = el('div', 'ff-count');
   elCount.appendChild(el('div', 'ff-count-text', ''));
@@ -607,10 +657,13 @@ function buildMenu() {
     if (window.FF.cup && window.FF.dailyTrackName) {
       const day = window.FF.dailyTrackName().replace('Daily ', '');
       const rec = window.FF.cup.dayRecord();
-      dayLine.textContent = rec && rec.bestPoints !== null
+      // The build stamp rides along: a screenshot of the menu now
+      // says which build produced everything else in the screenshot.
+      const build = window.FF.BUILD ? '  \u00b7  ' + window.FF.BUILD : '';
+      dayLine.textContent = (rec && rec.bestPoints !== null
         ? day + '  \u00b7  best ' + rec.bestPoints + ' pts in ' + rec.attempts
           + (rec.attempts === 1 ? ' try' : ' tries')
-        : day + '  \u00b7  not raced yet';
+        : day + '  \u00b7  not raced yet') + build;
     }
     const st = M._load();
     const cur = M.active();
@@ -1093,6 +1146,7 @@ flow.register('menu', {
     // panel. Started here and stopped on exit, so it can never
     // outlive the screen that owns it.
     if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
+    clearFade();
     elMenu.style.display = 'flex';
     elMenu._refresh();
     spinners.length = 0;
@@ -1129,6 +1183,7 @@ flow.register('menu', {
 
 flow.register('race', {
   enter() {
+    clearFade();          // a new race is never dimmed
     if (elPauseBtn) elPauseBtn.hidden = false;
     // Commentary records are RACE-scoped: "biggest hit survived"
     // means this race, not this session. Only a fresh start clears
@@ -1188,12 +1243,9 @@ flow.register('finish', {
     // measurement, no second source of truth.
     const M = window.FF.melon;
     if (M && M.recordRace) {
-      // Resolve everyone's finish before reading the standings: the
-      // race is over for the player, not for the field.
-      const resolved = (window.FF.finishLine && window.FF.finishLine.resolve)
-        ? window.FF.finishLine.resolve(stateRef, { provider: providerFn && providerFn() })
-        : null;
-      lastResolved = resolved;
+      // The times were resolved during the settle beat (see
+      // beginSettle): by here they are a fact, not a computation.
+      const resolved = lastResolved;
       const rowsNow = computeStandings(stateRef, resolved);
       const mine = rowsNow.find(r => r.isPlayer);
       const rw = window.FF.raceWatch;
@@ -1296,6 +1348,7 @@ flow.register('finish', {
     startSpinners();
   },
   exit() {
+    clearFade();
     if (window.FF.autopilot) window.FF.autopilot.disengage();
     // Release the tab-scoped pause: it is meaningless once this
     // screen is gone, and leaving it set froze the next screen's
@@ -1455,13 +1508,87 @@ function fillSummary() {
 // ---- Hooks for main.js ----
 // Called every frame after lap logic: fires the finish screen ONCE
 // per race, at the tick the player crossed the line.
+// ---- SETTLING: the beat between the flag and the results ----------
+// Crossing the line used to build the finish screen in the same
+// frame, which meant fast-forwarding the rest of the field
+// synchronously — a visible stall.
+//
+// Now the crossing starts a JOB and a FADE. The world keeps running
+// underneath (the autopilot has the wheel, so the melon races on
+// rather than coasting), the job is pumped a slice per frame, and the
+// screen is presented the moment the last racer's time lands. When
+// resolution is quick — the common case — the fade is all you see.
+const SETTLE_FADE_MS = 250;
+const SETTLE_MAX_FRAMES = 30;   // ~0.5s at 60fps: the clock-free backstop
+let settling = null;   // { startedAt }
+
+function cancelSettle() {
+  if (!settling) return;
+  settling = null;
+  if (window.FF.finishLine && window.FF.finishLine.clear) window.FF.finishLine.clear();
+  clearFade();
+}
+
+function beginSettle(state) {
+  // Hand the wheel over AT THE CROSSING, not when the screen opens:
+  // otherwise the melon coasts neutrally through the fade.
+  if (window.FF.autopilot) {
+    window.FF.autopilot.engage(state, { netplay: !!(netplayFn && netplayFn()) });
+  }
+  // THE FIELD'S TIMES ARE PROJECTED, NOT SIMULATED. Fast-forwarding
+  // the rest of the race was exact but cost a spike the player paid
+  // for a number they cannot perceive — and it got worse with every
+  // bot that thinks. The estimator is free (see finishline.js), and
+  // measurement showed the thing that actually matters is untouched:
+  // across every sampled race the PLAYER's own place was identical
+  // to the simulated outcome, because everyone ahead of them has
+  // genuinely finished and everyone behind must finish later.
+  // Disagreement is confined to the order of the tail, where no
+  // observable truth exists once we stop simulating.
+  lastResolved = (window.FF.finishLine && window.FF.finishLine.estimate)
+    ? window.FF.finishLine.estimate(state)
+    : null;
+  settling = {
+    startedAt: (typeof performance !== 'undefined' ? performance.now() : Date.now()),
+    frames: 0,
+  };
+  if (elFade) {
+    elFade.style.display = 'block';
+    requestAnimationFrame(() => { elFade.style.opacity = '1'; });
+  }
+}
+
+function pumpSettle(state) {
+  if (!settling) return;
+  settling.frames++;
+  // Nothing to compute any more: the beat exists purely so the result
+  // arrives through a fade rather than snapping over a bright race.
+  const done = true;
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  // Hold for the fade even if the work finished instantly: arriving
+  // mid-fade would snap the panel in over a half-faded world.
+  //
+  // FRAMES ARE THE BACKSTOP. The hold is measured in wall time, which
+  // is right for an animation — but a clock that does not advance
+  // (a frozen tab, a stubbed environment) would leave the player
+  // staring at a dimmed race for ever. A frame count cannot stall the
+  // same way, so whichever arrives first releases the screen.
+  const held = (now - settling.startedAt) >= SETTLE_FADE_MS
+    || settling.frames >= SETTLE_MAX_FRAMES;
+  if (done && held) {
+    settling = null;
+    flow.go('finish');
+  }
+}
+
 flow.onFrame = function (state) {
   updateCountdown(state);
+  if (settling) { pumpSettle(state); return; }
   if (flow.state !== 'race') return;
   const ft = state.race && state.race.finishedTick;
   if (ft !== null && ft !== undefined && ft !== finishHandledTick) {
     finishHandledTick = ft;
-    flow.go('finish');
+    beginSettle(state);
   }
 };
 
@@ -1476,6 +1603,7 @@ flow.init = function (state, opts) {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
+  buildFade();
   buildConfirm();
   buildCountdown();
   buildMenu();

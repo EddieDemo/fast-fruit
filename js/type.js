@@ -56,6 +56,18 @@ const STEPS = {
   lead: { min: 15, max: 18, track: '0.02em' },
   title: { min: 18, max: 22, track: '0.06em' },
   hero: { min: 22, max: 28, track: '0.04em' },
+  // ---- SCENERY TIER ----
+  // The countdown over the grid is not interface: it is read from
+  // across the room, at a glance, over a moving world. It gets its
+  // own pair of rungs rather than a hand-rolled clamp (which is what
+  // it had until the lint caught it).
+  //
+  // The GAP between hero and banner is deliberate — a tier boundary,
+  // not a missing step. Filling it would invite interface text to
+  // creep into scenery sizes, which is exactly the drift the scale
+  // exists to prevent. Within the tier the 1.25 ratio continues.
+  banner: { min: 44, max: 72, track: '0.02em', tier: 'scenery' },
+  colossal: { min: 55, max: 90, track: '-0.03em', tier: 'scenery' },
 };
 
 // Fluid between the bounds across a REAL viewport range: min at a

@@ -1,34 +1,3 @@
-
-/* ---------- SCREEN LANES ----------
-   Fixed controls live in named lanes so nothing has to guess where
-   anything else is. Two rules:
-
-     PLAYER controls own the corners: HUD top-left, pause top-right,
-     multiplayer bottom-right.
-
-     DEV controls stack VERTICALLY down the left edge, beneath the
-     HUD. Vertical is the important word: the old arrangement offset
-     dev buttons horizontally from the right edge, so a button whose
-     label changed width ('tune' -> 'close') could overlap its
-     neighbour. A vertical stack is immune to label width.
-
-   Because the lanes are declared once here, turning the dev gate on
-   can never shift or cover a player control. */
-:root {
-  --lane-t: max(10px, env(safe-area-inset-top));
-  --lane-r: max(10px, env(safe-area-inset-right));
-  --lane-l: max(10px, env(safe-area-inset-left));
-  --lane-b: max(10px, env(safe-area-inset-bottom));
-  /* MEASURED, not guessed: hud.js publishes the real box (see
-     publishHudBox). These are only the fallbacks for the first frame
-     and for any build without the HUD. The cockpit toggle reveals
-     extra telemetry rows, so a fixed 76px left the dev stack sitting
-     underneath the taller HUD. */
-  --hud-h: 76px;
-  --hud-w: 128px;
-  --dev-step: 40px;       /* vertical pitch of the dev stack */
-  --dev-top: calc(var(--lane-t) + var(--hud-h));
-}
 /* ============================================================
    Fast Fruit — Stage 1
    The canvas is the game. Everything else is overlay chrome.
@@ -76,7 +45,7 @@ html, body {
   color: var(--panel-fg);
   border-radius: 10px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   line-height: 1.7;
   pointer-events: none;
   min-width: 128px;
@@ -95,7 +64,7 @@ html, body {
   padding: 0 24px calc(28px + env(safe-area-inset-bottom));
   pointer-events: none;
   color: rgba(255, 255, 255, 0.75);
-  font-size: var(--fs-body);
+  font-size: 14px;
   font-weight: 600;
   text-shadow: 0 1px 3px rgba(0,0,0,0.4);
   transition: opacity 0.6s ease;
@@ -114,7 +83,7 @@ html, body {
   border: none;
   border-radius: 10px;
   padding: 8px 16px;
-  font-size: var(--fs-lead);
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -127,15 +96,15 @@ html, body {
    of the tune panel's controls with z-index 30 winning every tap. */
 #studio-btn {
   position: fixed;
-  top: calc(var(--dev-top) + var(--dev-step) * 2);
-  left: var(--lane-l);
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: max(10px, env(safe-area-inset-left));
   z-index: 30;
   background: var(--panel-bg, #161616);
   color: #ddd;
   border: none;
   border-radius: 10px;
   padding: 7px 10px;
-  font-size: var(--fs-body);
+  font-size: 14px;
   cursor: pointer;
 }
 #studio-btn.active { outline: 1px solid #00ff00; }
@@ -165,7 +134,7 @@ html, body {
   border-radius: 12px;
   padding: 10px;
   font-family: var(--mono);
-  font-size: var(--fs-label);
+  font-size: 11px;
   color: #ccc;
 }
 #studio-tabs { display: none; }
@@ -184,14 +153,14 @@ html, body {
   #studio-tabs button {
     flex: 1;
     background: #161616;
-    color: var(--c-dim);
+    color: #8f8;
     border: 1px solid #2a2a2a;
     border-radius: 8px;
     padding: 6px;
     font-family: var(--mono);
-    font-size: var(--fs-label);
+    font-size: 11px;
   }
-  #studio-tabs button.on { background: #223; color: var(--c-accent); }
+  #studio-tabs button.on { background: #223; color: #0f0; }
   #studio-panels .studio-panel { width: auto; flex: 1; }
   #studio-panels[data-tab="left"] #studio-panel-right { display: none; }
   #studio-panels[data-tab="right"] #studio-panel-left { display: none; }
@@ -206,19 +175,19 @@ html, body {
 }
 #studio-panels .studio-head button {
   background: #222;
-  color: var(--c-accent);
+  color: #0f0;
   border: 1px solid #333;
   border-radius: 6px;
   padding: 3px 8px;
   font-family: var(--mono);
-  font-size: var(--fs-micro);
+  font-size: 10px;
   cursor: pointer;
 }
 #studio-panels .studio-group { margin: 10px 0 4px; }
 #studio-panels .studio-group-title {
   color: #888;
   letter-spacing: 0.12em;
-  font-size: var(--fs-micro);
+  font-size: 10px;
   margin-bottom: 4px;
   text-transform: uppercase;
 }
@@ -231,9 +200,9 @@ html, body {
 }
 #studio-panels .studio-row > span:first-child { flex: 0 0 92px; }
 #studio-panels .studio-slider { display: flex; align-items: center; gap: 5px; flex: 1; }
-#studio-panels .studio-slider input[type=range] { flex: 1; accent-color: var(--c-accent); }
-#studio-panels .studio-val { width: 34px; text-align: right; color: var(--c-dim); }
-#studio-panels select, #studio-panels input[type=checkbox] { accent-color: var(--c-accent); }
+#studio-panels .studio-slider input[type=range] { flex: 1; accent-color: #00ff00; }
+#studio-panels .studio-val { width: 34px; text-align: right; color: #8f8; }
+#studio-panels select, #studio-panels input[type=checkbox] { accent-color: #00ff00; }
 
 /* Dual-handle range: one bar per channel, handles may cross */
 #studio-panels .dual-wrap {
@@ -278,11 +247,11 @@ html, body {
 #studio-panels .dual-num {
   width: 44px;
   background: #0e0e0e;
-  color: var(--c-dim);
+  color: #8f8;
   border: 1px solid #2a2a2a;
   border-radius: 4px;
   font-family: var(--mono);
-  font-size: var(--fs-micro);
+  font-size: 10px;
   padding: 2px 3px;
   text-align: center;
 }
@@ -306,7 +275,7 @@ html, body {
 #studio-panels .pal-swatch {
   height: 26px;
   border-radius: 3px;
-  font-size: var(--fs-micro);
+  font-size: 8px;
   line-height: 26px;
   text-align: center;
   color: rgba(0, 0, 0, 0.5);
@@ -324,7 +293,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-size: var(--fs-micro);
+  font-size: 9px;
 }
 #studio-panels .pal-field i {
   color: #777;
@@ -337,22 +306,22 @@ html, body {
   width: 100%;
   min-width: 0;
   background: #0e0e0e;
-  color: var(--c-dim);
+  color: #8f8;
   border: 1px solid #2a2a2a;
   border-radius: 3px;
   font-family: var(--mono);
-  font-size: var(--fs-micro);
+  font-size: 9px;
   padding: 1px 2px;
   cursor: ns-resize;
 }
 #studio-panels select.studio-slot {
   flex: 1;
   background: #1a1a1a;
-  color: var(--c-dim);
+  color: #8f8;
   border: 1px solid #333;
   border-radius: 5px;
   font-family: var(--mono);
-  font-size: var(--fs-label);
+  font-size: 11px;
 }
 
 /* ---------- Naming ceremony ---------- */
@@ -373,18 +342,18 @@ html, body {
   text-align: center;
   font-family: var(--mono);
 }
-#melon-naming .naming-title { color: #fff; font-size: var(--fs-lead); }
-#melon-naming .naming-sub { color: #9a9a9a; font-size: var(--fs-body); margin-top: 6px; }
+#melon-naming .naming-title { color: #fff; font-size: 16px; }
+#melon-naming .naming-sub { color: #9a9a9a; font-size: 12px; margin-top: 6px; }
 #melon-naming input {
   display: block;
   margin: 16px auto 10px;
   background: #000;
-  color: var(--c-accent);
+  color: #00ff00;
   border: 1px solid #333;
   border-radius: 8px;
   padding: 10px 12px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 14px;
   text-align: center;
   width: 220px;
 }
@@ -395,7 +364,7 @@ html, body {
   border-radius: 8px;
   padding: 9px 22px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -412,7 +381,7 @@ html, body {
   border-radius: 10px;
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   cursor: pointer;
 }
 #daily-btn.active { color: var(--panel-accent); }
@@ -421,7 +390,7 @@ html, body {
 #ghost-banner {
   display: none;
   position: fixed;
-  top: calc(var(--lane-t) + 46px);
+  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
   left: 50%;
   transform: translateX(-50%);
   background: var(--panel-bg);
@@ -429,7 +398,7 @@ html, body {
   border-radius: 10px;
   padding: 7px 14px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   z-index: 9;
   pointer-events: none;
 }
@@ -445,7 +414,7 @@ html, body {
   border-radius: 10px;
   padding: 10px 16px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   z-index: 9;
@@ -459,7 +428,7 @@ html, body {
   transform: translate(-50%, -50%) scale(0.94);
   text-align: center;
   font-family: var(--mono);
-  color: #fff;
+  color: #ffffff;
   z-index: 8;
   pointer-events: none;
   opacity: 0;
@@ -470,14 +439,14 @@ html, body {
   transform: translate(-50%, -50%) scale(1);
 }
 #death-overlay .death-title {
-  font-size: var(--fs-hero);
+  font-size: clamp(20px, 5.5vw, 42px);
   font-weight: 400;
   letter-spacing: 0.06em;
   text-shadow: 0 0 18px rgba(255, 71, 87, 0.55);
 }
 #death-overlay .death-sub {
   margin-top: 8px;
-  font-size: var(--fs-body);
+  font-size: clamp(12px, 3vw, 18px);
   color: rgba(255, 255, 255, 0.75);
 }
 /* The coach line: green, because it speaks for the flare (green is
@@ -485,7 +454,7 @@ html, body {
    predictor). Quieter than the headline — advice, not verdict. */
 #death-overlay .death-coach {
   margin-top: 10px;
-  font-size: var(--fs-body);
+  font-size: clamp(11px, 2.6vw, 15px);
   letter-spacing: 0.08em;
   color: rgba(92, 235, 110, 0.9);
   text-shadow: 0 0 14px rgba(92, 235, 110, 0.35);
@@ -494,9 +463,8 @@ html, body {
 /* ---------- Clean mode / cockpit toggle ---------- */
 #cockpit-toggle {
   position: fixed;
-  top: calc(var(--dev-top) + var(--dev-step));
-  left: var(--lane-l);
-  right: auto;
+  top: max(10px, env(safe-area-inset-top));
+  right: calc(max(10px, env(safe-area-inset-right)) + 88px);
   z-index: 10;
   background: var(--panel-bg);
   color: var(--panel-dim);
@@ -504,21 +472,17 @@ html, body {
   border-radius: 10px;
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   cursor: pointer;
 }
 body.clean .cockpit-only { display: none; }
 body.clean #debug-root { display: none; }
 
 /* ---------- Sound toggle ---------- */
-/* Retired (sound is a pause-screen setting). Rule kept for a build
-   that wants the old chrome; parked in the dev lane so it cannot
-   collide with the pause button if it ever returns. */
 #snd-toggle {
   position: fixed;
-  top: calc(var(--dev-top) + var(--dev-step) * 3);
-  left: var(--lane-l);
-  right: auto;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 10;
   background: var(--panel-bg);
   color: var(--panel-fg);
@@ -526,7 +490,7 @@ body.clean #debug-root { display: none; }
   border-radius: 10px;
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -543,7 +507,7 @@ body.clean #debug-root { display: none; }
   color: var(--panel-fg);
   border-radius: 10px;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
   text-align: center;
   z-index: 9;
 }
@@ -558,7 +522,7 @@ body.clean #debug-root { display: none; }
   right: max(10px, env(safe-area-inset-right));
   z-index: 11;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
 }
 #mp-toggle {
   display: block;
@@ -611,7 +575,7 @@ body.clean #debug-root { display: none; }
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 8px;
   font: inherit;
-  font-size: var(--fs-micro);
+  font-size: 10px;
   padding: 6px;
   resize: vertical;
 }
@@ -620,12 +584,11 @@ body.clean #debug-root { display: none; }
 /* ---------- Debug tuning panel ---------- */
 #debug-root {
   position: fixed;
-  top: var(--dev-top);
-  left: var(--lane-l);
-  right: auto;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 10;
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: 12px;
 }
 
 .debug-toggle {
@@ -657,7 +620,7 @@ body.clean #debug-root { display: none; }
   color: var(--panel-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: var(--fs-micro);
+  font-size: 10px;
   margin: 10px 0 4px;
 }
 .debug-group-title:first-child { margin-top: 0; }

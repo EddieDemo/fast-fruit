@@ -215,6 +215,12 @@ const PRESETS = Object.freeze({
 const DEFAULT_PRESET = 'Loose 1';
 
 // Mutable working copy — the debug panel writes here.
+// BUILD STAMP. Shown on the menu, so a screenshot always identifies
+// the build it came from. Two rounds of "the fix isn't working" have
+// turned out to be a stale file rather than a wrong one, and nothing
+// on screen could tell us apart. Bump it with any shipped change.
+const BUILD = '2026-08-13c';
+
 const CONFIG = { ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
 
@@ -276,5 +282,5 @@ function melonInertia() {
 
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { DEFAULTS, CONFIG, SCHEMA, PRESETS, applyPreset, getActivePreset, resetConfig, melonInertia });
+Object.assign(window.FF, { BUILD, DEFAULTS, CONFIG, SCHEMA, PRESETS, applyPreset, getActivePreset, resetConfig, melonInertia });
 })();
