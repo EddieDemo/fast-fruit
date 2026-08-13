@@ -996,6 +996,17 @@ function clearCanvas(cv) {
   if (ctx) ctx.clearRect(0, 0, cv.width, cv.height);
 }
 
+// Any layout-changing event drops the cached boxes, so the rare
+// remeasure never lags a rotation or a window resize.
+if (typeof window !== 'undefined' && window.addEventListener) {
+  for (const ev of ['resize', 'orientationchange']) {
+    window.addEventListener(ev, () => {
+      spinMeasureAt = 0;
+      for (const s of spinners) s.box = null;
+    });
+  }
+}
+
 function syncCanvasSize(cv) {
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const rect = cv.getBoundingClientRect();
@@ -1005,21 +1016,65 @@ function syncCanvasSize(cv) {
   return { dpr, cssW };
 }
 
+// ---- THE SPINNERS ARE THE FINISH SCREEN'S REAL COST ----------------
+// The results panel registers a rotating body per racer on BOTH the
+// PLACES and CUP tabs: two dozen canvases, each needing a
+// portrait-resolution pattern raster (for a watermelon that is a
+// per-pixel island field). Three costs came out of that, and all
+// three landed on the frame the player crosses the line:
+//
+//   BUILD SPIKE   two dozen rasters built in one frame.
+//   DOUBLE DRAW   the hidden tab's twelve kept redrawing, because
+//                 isConnected cannot see display:none. Half the work
+//                 was for pixels nobody could look at.
+//   LAYOUT THRASH getBoundingClientRect per spinner per frame — two
+//                 dozen forced reflows every frame.
+//
+// Fixed here by drawing only what is visible, measuring only when the
+// size can actually have changed, and turning at a rate the motion
+// does not miss.
+const SPIN_FPS = 30;              // decorative rotation; 60 is waste
+const SPIN_FRAME_MS = 1000 / SPIN_FPS;
+let spinLast = 0;
+let spinMeasureAt = 0;            // remeasure clock (see below)
+
+// A canvas that is display:none still reports isConnected — so the
+// hidden tab has to be excluded by geometry, not by connection.
+function spinnerVisible(cv) {
+  return cv.isConnected && cv.offsetParent !== null;
+}
+
 function spinLoop(now) {
   spinRAF = 0;
   const draw = window.FF.drawMelonStandalone;
   if (!draw || spinnersPaused) return;
+  const t = now || (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  // Rate-limit: the bodies turn slowly and decoratively, so half the
+  // frames are indistinguishable and cost half as much.
+  if (t - spinLast < SPIN_FRAME_MS) {
+    spinRAF = requestAnimationFrame(spinLoop);
+    return;
+  }
+  const dt = spinLast ? Math.min(0.1, (t - spinLast) / 1000) : 1 / SPIN_FPS;
+  spinLast = t;
+  // MEASURE RARELY. A canvas box only changes on resize or rotation,
+  // and getBoundingClientRect forces a synchronous layout — two dozen
+  // of those per frame is the classic way to lose smoothness. Once a
+  // second is plenty; resize handlers catch the rest.
+  const remeasure = t >= spinMeasureAt;
+  if (remeasure) spinMeasureAt = t + 1000;
   let any = false;
   for (const s of spinners) {
-    if (!s.canvas.isConnected) continue;
+    if (!spinnerVisible(s.canvas)) continue;
     any = true;
-    s.angle += 0.016 * (s.rate === undefined ? 0.9 : s.rate); // slow, stately
-    const { dpr, cssW } = syncCanvasSize(s.canvas);
+    s.angle += dt * 55 * (s.rate === undefined ? 0.9 : s.rate) / 60; // slow, stately
+    const box = (remeasure || !s.box) ? syncCanvasSize(s.canvas) : s.box;
+    s.box = box;
     const ctx = s.canvas.getContext('2d');
     ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
     ctx.save();
     ctx.translate(s.canvas.width / 2, s.canvas.height / 2);
-    const fit = (s.canvas.width / 2 - 4 * dpr) / Math.max(s.a, s.b);
+    const fit = (s.canvas.width / 2 - 4 * box.dpr) / Math.max(s.a, s.b);
     ctx.scale(fit, fit);
     // The pattern raster is built for THIS destination: `fit` is
     // exactly device pixels per world pixel, which is the number the
@@ -1027,7 +1082,12 @@ function spinLoop(now) {
     draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit);
     ctx.restore();
   }
-  if (any && flow.state !== 'race') spinRAF = requestAnimationFrame(spinLoop);
+  // Keep the loop alive while ANY spinner exists, visible or not: the
+  // player can switch tabs, and a loop that stopped because the
+  // visible ones were hidden would never restart itself.
+  if ((any || spinners.length) && flow.state !== 'race') {
+    spinRAF = requestAnimationFrame(spinLoop);
+  }
 }
 function startSpinners() {
   if (!spinRAF) spinRAF = requestAnimationFrame(spinLoop);
@@ -1372,6 +1432,10 @@ function showTab(key) {
   // animated and simply showed whatever pixels the canvas still held
   // from before the race — a stale bitmap, stretched by CSS, which
   // reads exactly like "low fidelity and won't rotate".
+  // A tab change reveals canvases that have never been measured, and
+  // hides others; force a remeasure on the next frame.
+  spinMeasureAt = 0;
+  for (const s of spinners) s.box = null;
   spinnersPaused = !(key === 'places' || key === 'cup');
   if (!spinnersPaused) startSpinners();
 }

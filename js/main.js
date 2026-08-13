@@ -359,6 +359,10 @@ function gridTick() {
   if (window.FF.gridStart) window.FF.gridStart.update(state);
 }
 
+// Half rate (30fps) for a world nobody is looking straight at.
+const WORLD_DRAW_MS = 1000 / 30;
+let lastWorldDraw = 0;
+
 function observeTick() {
   if (window.FF.raceWatch) window.FF.raceWatch.update(state);
 }
@@ -526,7 +530,19 @@ function frame(now) {
   }
 
   const alpha = accumulator / stepDt;
-  renderer.render(state, alpha, dtFrame);
+  // ---- THE WORLD RENDERS AT HALF RATE BEHIND A PANEL ----
+  // While a screen is up, most of the world is covered by a panel and
+  // dimmed by a scrim — but it must keep MOVING (the field is still
+  // racing, and the menu runs an exhibition). Simulation is untouched;
+  // only the drawing is halved, which is the single largest saving
+  // available at the moment the results appear, and it doubles as a
+  // battery win on the menu.
+  const fs2 = window.FF.flow && window.FF.flow.state;
+  const covered = fs2 && fs2 !== 'race';
+  if (!covered || (now - lastWorldDraw) >= WORLD_DRAW_MS) {
+    lastWorldDraw = now;
+    renderer.render(state, alpha, dtFrame);
+  }
   hud.update(dtFrame);
   window.FF.audio.update(state, dtFrame);
   window.FF.deaths.update(state);
