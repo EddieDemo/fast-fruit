@@ -97,6 +97,10 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
   border-top: 1px solid #1f3a24; padding-top: 8px; margin-top: 2px; }
 .ff-dayline { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
   color: var(--c-faint); text-align: center; margin-top: 8px; }
+/* The expired-run note. Sits with the day line because it is a fact
+   about the DAY, not an error: dim, one line, gone on the next visit. */
+.ff-expired { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-dim); text-align: center; margin-top: 6px; }
 .ff-finish-note { color: var(--c-faint); }
 /* Pause hub: settings and the controls reminder. */
 .ff-settings { margin: 2px 0 4px; }
@@ -205,11 +209,33 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    breathed as you tapped between them. Bounded by the viewport, so
    this is a target rather than a demand. */
 .ff-screen.ff-finish-screen .ff-panel { height: min(88dvh, 620px); }
-.ff-tabs { flex: none; display: flex; gap: 4px; margin: 0 0 10px; }
-.ff-tab { flex: 1; padding: 7px 4px; border-radius: 7px; cursor: pointer;
-  background: #0d1f12; border: 1px solid #1b3823; color: var(--c-dim);
-  font: inherit; font-size: var(--fs-label); letter-spacing: 0.1em; }
-.ff-tab.on { background: #123018; color: var(--c-accent); border-color: #2a5a34; }
+/* ---- TABS ARE NAVIGATION, NOT ACTIONS (2026-08-13) ----------------
+   These used to be filled, bordered, 7px-rounded boxes — which are
+   the EXACT values of .ff-btn (active tab) and .ff-btn.ff-secondary
+   (inactive). The finish screen therefore read as six buttons in one
+   costume, where four change the VIEW and two change the WORLD, and
+   only size and position told them apart.
+   They are different CLASSES of control, not different priorities:
+   RETRY and MAIN MENU are commitments (irreversible, they end this
+   screen), while a tab is free, reversible, and one of them is
+   ALWAYS already chosen. So the tabs drop the button's two defining
+   features — the enclosing box and the fill — and mark the active one
+   with a rule beneath it. A line under a word says "you are here";
+   a filled box says "press me to make something happen".
+   The same demotion .ff-quiet already makes for "abandon cup".
+   THE HIT TARGET DOES NOT SHRINK: padding is unchanged, only the
+   paint. A thumb still gets the same area it always had. */
+.ff-tabs { flex: none; display: flex; gap: 0; margin: 0 0 10px;
+  border-bottom: 1px solid #14261a; }
+.ff-tab { flex: 1; padding: 7px 4px; cursor: pointer;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  /* The active rule sits ON the container's hairline, so the row has
+     one baseline rather than two competing ones. */
+  margin-bottom: -1px;
+  color: var(--c-dim); font: inherit; font-size: var(--fs-label);
+  letter-spacing: 0.1em; transition: color 0.12s ease-out; }
+.ff-tab.on { color: var(--c-accent); border-bottom-color: var(--c-accent); }
+@media (prefers-reduced-motion: reduce) { .ff-tab { transition: none; } }
 .ff-pane { display: none; }
 .ff-pane.on { display: block; }
 /* Superlatives: label above, winner and value below. */
@@ -594,6 +620,13 @@ function buildMenu() {
   foot.appendChild(race);
   const dayLine = el('div', 'ff-dayline', '');
   foot.appendChild(dayLine);
+  // A run that expired while the player was away gets SAID, not
+  // silently removed: they left a race waiting and came back for it,
+  // and a button that simply isn't there reads as a fault in their
+  // memory or in the game. One dim line, shown once.
+  const expiredLine = el('div', 'ff-expired', '');
+  expiredLine.style.display = 'none';
+  foot.appendChild(expiredLine);
   panel.appendChild(foot);
   elMenu.appendChild(panel);
   document.body.appendChild(elMenu);
@@ -644,6 +677,20 @@ function buildMenu() {
     // relaunch.
     // A waiting run rewrites the menu's hierarchy.
     const snap = window.FF.resume ? window.FF.resume.peek() : null;
+    // peek() clears an expired snapshot as a side effect and leaves a
+    // note behind; ask AFTER peeking, and only when nothing is
+    // waiting (a fresh run supersedes news about an old one).
+    if (elMenu._expiredLine) {
+      const why = (!snap && window.FF.resume && window.FF.resume.takeExpiry)
+        ? window.FF.resume.takeExpiry() : null;
+      // 'day' is the interesting case and the common one: a new daily
+      // landed while they were away. 'age' means the run simply sat
+      // too long. Neither is an error, so neither shouts.
+      elMenu._expiredLine.textContent = why === 'day'
+        ? "yesterday's run expired \u00b7 today's track is new"
+        : why === 'age' ? 'your unfinished run expired' : '';
+      elMenu._expiredLine.style.display = elMenu._expiredLine.textContent ? '' : 'none';
+    }
     if (elMenu._resumeBtn) {
       elMenu._resumeBtn.style.display = snap ? '' : 'none';
       elMenu._cupBtn.classList.toggle('ff-secondary', !!snap);
@@ -704,13 +751,18 @@ function buildMenu() {
     flow.go('race');
   });
   elMenu._dayLine = dayLine;
+  elMenu._expiredLine = expiredLine;
   elMenu._resumeBtn = resumeBtn;
   elMenu._cupBtn = cupBtn;
   resumeBtn.addEventListener('click', () => {
     const R = window.FF.resume;
     if (!R || !rebuildFn) return;
     const snap = R.restore(stateRef, rebuildFn);
-    if (!snap) { refresh(); return; }         // vanished or stale
+    // Vanished or stale between the menu being drawn and this tap
+    // (the midnight case, if it turns over in that gap): refresh
+    // re-reads the store, hides the button and shows the note that
+    // restore's own peek() just left behind.
+    if (!snap) { refresh(); return; }
     practiceMode = !!snap.practice;
     fromMenuOrRetry = false;                  // mid-run: keep the records
     if (window.FF.exhibition) window.FF.exhibition.stop();
@@ -865,6 +917,12 @@ function buildFinish() {
   // other two are for the curious, and burying them behind a tap is
   // what keeps the result page from becoming a spreadsheet.
   const tabs = el('div', 'ff-tabs');
+  // A tab strip is not a row of buttons, and now that it no longer
+  // LOOKS like one it should not sound like one either: a screen
+  // reader announcing "four buttons" gives the same wrong impression
+  // the old styling gave the eye. role=tablist + aria-selected says
+  // "one choice, currently on this", which is what showTab maintains.
+  tabs.setAttribute('role', 'tablist');
   const panes = {};
   const tabBtns = {};
   const rows = el('div', 'ff-rows');
@@ -879,10 +937,17 @@ function buildFinish() {
   ];
   for (const [key, label, content] of paneDefs) {
     const btn = el('button', 'ff-tab', label);
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+    btn.setAttribute('aria-controls', 'ff-pane-' + key);
+    btn.id = 'ff-tabbtn-' + key;
     btn.addEventListener('click', () => showTab(key));
     tabs.appendChild(btn);
     tabBtns[key] = btn;
     const pane = el('div', 'ff-pane');
+    pane.id = 'ff-pane-' + key;
+    pane.setAttribute('role', 'tabpanel');
+    pane.setAttribute('aria-labelledby', 'ff-tabbtn-' + key);
     pane.appendChild(content);
     panes[key] = pane;
   }
@@ -1143,7 +1208,18 @@ function initAutoPause() {
     flow.go('pause');
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) pauseIfRacing();
+    if (document.hidden) { pauseIfRacing(); return; }
+    // COMING BACK IS ALSO AN EVENT. The menu decides what to offer at
+    // the moment it is entered, so a player who left the game sitting
+    // on the menu across midnight kept being offered a run that today
+    // no longer has (pressing it was safe — restore() re-checks — but
+    // the button vanished under their thumb with no explanation).
+    // Re-asking on return costs one call and fixes both kinds of
+    // resume, and it is also where the "expired" note gets its chance
+    // to appear for a player who never navigated away.
+    if (flow.state === 'menu' && elMenu && elMenu._refresh) {
+      try { elMenu._refresh(); } catch (_) {}
+    }
   });
   // Safari on iOS is unreliable about visibilitychange when the app
   // is backgrounded from a gesture; blur catches what it misses, and
@@ -1421,8 +1497,12 @@ flow.register('finish', {
 function showTab(key) {
   const panes = elFinish._panes, btns = elFinish._tabBtns;
   for (const k of Object.keys(panes)) {
-    panes[k].classList.toggle('on', k === key);
-    btns[k].classList.toggle('on', k === key);
+    const on = (k === key);
+    panes[k].classList.toggle('on', on);
+    btns[k].classList.toggle('on', on);
+    // The state the eye reads and the state the screen reader reads
+    // are set in the same breath, so they cannot drift.
+    btns[k].setAttribute('aria-selected', on ? 'true' : 'false');
   }
   // Spinners live in the PLACES and CUP panes; a hidden canvas would
   // keep the rAF loop alive for nothing, and isConnected cannot see

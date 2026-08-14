@@ -189,6 +189,17 @@ function dailyTrackName(d) {
   return `Daily ${day.getFullYear()}-${p(day.getMonth() + 1)}-${p(day.getDate())}`;
 }
 
-Object.assign(window.FF, { TRACKS, createTrackProvider, trackDefByName, dailyTrackName, dailyCupTracks });
+// Is this name a self-describing DAILY (any leg)? The date is in the
+// name, so a daily belongs to a DAY — which is what lets resume.js
+// expire a snapshot at midnight without knowing anything about track
+// naming. Registry tracks ('Track 1') and anything unresolvable are
+// not dailies and never expire by date.
+function isDailyTrackName(name) {
+  const legM = LEG_RE.exec(name || '');
+  const base = legM ? name.slice(0, legM.index) : name;
+  return DAILY_RE.test(base || '');
+}
+
+Object.assign(window.FF, { TRACKS, createTrackProvider, trackDefByName, dailyTrackName, dailyCupTracks, isDailyTrackName });
 
 })();

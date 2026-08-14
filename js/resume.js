@@ -38,7 +38,14 @@ const KEY = 'ff.resume.v1';
 const VERSION = 4;          // bump on ANY change to the stored shape
                             // v4 (2026-08-13): the cluster ledger
 const HEARTBEAT_MS = 2000;
-const MAX_AGE_MS = 36 * 60 * 60 * 1000;   // a day and a half
+// The BACKSTOP, not the rule. The day guard above expires a daily
+// run the moment the date turns over, which is the real policy; this
+// only catches snapshots the day guard cannot judge (registry and
+// harness tracks, which carry no day). Was 36 hours, chosen when age
+// was the only expiry and had to be generous enough not to bin a
+// run from late last night; with the day guard doing that job
+// properly, a day is ample and nothing stale lingers longer.
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 let lastWrite = 0;
 
@@ -153,6 +160,42 @@ function tick(state, opts) {
   return save(state, opts);
 }
 
+// ---- A SNAPSHOT BELONGS TO A DAY (2026-08-13) --------------------
+// The cup snapshot always checked its day; a PRACTICE snapshot did
+// not, because the check lived on snap.cup and practice runs store
+// cup: null. Dailies are self-describing, so restore() cheerfully
+// rebuilt yesterday's terrain from the stored name: at 00:10 the menu
+// still offered RESUME PRACTICE, and taking it dropped the player
+// mid-race onto a track that is no longer today's, with yesterday's
+// cast, with nothing on screen saying so. Practising terrain you will
+// not race is worse than losing the run.
+//
+// The guard is now uniform and lives on the TRACK, which is the field
+// both kinds of snapshot actually have. Scoped to daily names via
+// isDailyTrackName, so registry tracks and harness races (Track 1)
+// are never expired by date — only self-describing dailies are, and
+// only they carry a day to be wrong about.
+function expiredReason(snap) {
+  if (!snap || snap.v !== VERSION) return 'version';
+  if (Date.now() - (snap.at || 0) > MAX_AGE_MS) return 'age';
+  const FF = window.FF;
+  const today = FF.dailyTrackName ? FF.dailyTrackName() : null;
+  // The cup names its own day; a practice run is placed by its track.
+  if (snap.cup && today && snap.cup.day !== today) return 'day';
+  if (today && FF.isDailyTrackName && FF.isDailyTrackName(snap.track)) {
+    // Leg names ('Daily 2026-08-13 #3') share the day of their base
+    // name, so compare on the prefix rather than the whole string.
+    if (snap.track.indexOf(today) !== 0) return 'day';
+  }
+  return null;
+}
+
+// Why the last peek() cleared a snapshot, or null. Presentation reads
+// this to TELL the player their run expired rather than silently
+// removing the button they came back for. Sticky until the next peek
+// that finds something, so a menu built moments later still sees it.
+let lastExpiry = null;
+
 function peek() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -161,14 +204,25 @@ function peek() {
     // A snapshot from an older build is DISCARDED. Half-loading a
     // stale shape is worse than losing the run: the player cannot
     // tell which half is lying.
-    if (!snap || snap.v !== VERSION) { clear(); return null; }
-    if (Date.now() - (snap.at || 0) > MAX_AGE_MS) { clear(); return null; }
-    // A cup snapshot from a previous DAY is finished business.
-    if (snap.cup && window.FF.dailyTrackName && snap.cup.day !== window.FF.dailyTrackName()) {
-      clear(); return null;
+    const why = expiredReason(snap);
+    if (why) {
+      // A version mismatch is OUR change, not the player's day
+      // ending — saying "yesterday's run expired" for it would be a
+      // lie, so only real expiries are announced.
+      lastExpiry = (why === 'version') ? null : why;
+      clear();
+      return null;
     }
+    lastExpiry = null;
     return snap;
   } catch (_) { clear(); return null; }
+}
+
+// Read and consume the expiry note: the menu shows it once.
+function takeExpiry() {
+  const w = lastExpiry;
+  lastExpiry = null;
+  return w;
 }
 
 function clear() {
@@ -234,5 +288,5 @@ function restore(state, rebuild) {
   return snap;
 }
 
-window.FF.resume = { save, tick, peek, restore, clear, VERSION, KEY };
+window.FF.resume = { save, tick, peek, restore, clear, takeExpiry, VERSION, KEY, MAX_AGE_MS };
 })();
