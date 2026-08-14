@@ -991,10 +991,30 @@ function buildMenu() {
     left.style.visibility = many ? 'visible' : 'hidden';
     right.style.visibility = many ? 'visible' : 'hidden';
   };
+  // THE PORTRAIT IS PART OF THE STATE, NOT PART OF THE ENTRANCE.
+  // It was pushed once in menu.enter() and never rebuilt, so cycling
+  // melons repainted the stats and the name while the picture kept
+  // showing the first melon — the one screen whose entire job is
+  // "look at your melon" was showing the wrong one. Rebuilding here
+  // means any future thing that changes the active melon repaints for
+  // free. The rotation angle carries over so the swap reads as a
+  // change of melon rather than a stutter.
+  const paintPortrait = () => {
+    const prev = spinners.length ? spinners[0].angle : 0;
+    spinners.length = 0;
+    clearCanvas(elMenu._spin);
+    pushMelonPortrait(elMenu._spin);
+    if (spinners.length) spinners[0].angle = prev;
+    spinnersPaused = false;
+    startSpinners();
+  };
+  elMenu._paintPortrait = paintPortrait;
+
   const cycle = (d) => {
     const st = M._load();
     M.setActive((st.active + d + st.melons.length) % st.melons.length);
     refresh();
+    paintPortrait();
     // No respawn here any more: during the exhibition a respawn would
     // restart the background race on every arrow press, and the real
     // grid is rebuilt on RACE anyway.
@@ -1756,7 +1776,11 @@ function pushMelonPortrait(canvas) {
     canvas, angle: 0,
     a, b: a * (F.aspect || 0.78),
     color: (design && design.color) || d.bodyColor,
-    patKey: (design && design.patKey) || String(M.active().seed),
+    // d.patternKey ('m'+seed), NOT String(seed): the race body is
+    // dressed with d.patternKey (main.js) and the award screen uses
+    // it too, so a bare seed here generated a DIFFERENT rind — the
+    // melon on the menu was not the melon on the track.
+    patKey: (design && design.patKey) || d.patternKey,
     fruit,
   });
 }
@@ -1896,10 +1920,7 @@ flow.register('menu', {
     elMenu.style.display = 'flex';
     elMenu._refresh();
     spinners.length = 0;
-    clearCanvas(elMenu._spin);
-    pushMelonPortrait(elMenu._spin);
-    spinnersPaused = false; // this screen's portrait always turns
-    startSpinners();
+    elMenu._paintPortrait();   // one definition of "paint the portrait"
   },
   exit() {
     // Pressing RACE resets to a clean grid: you cannot be handed a
@@ -2391,6 +2412,10 @@ flow.init = function (state, opts) {
   else flow.go('menu');
 };
 
+// Test hook: what the spinner loop is actually drawing right now.
+// Pixel-sampling a rotating portrait cannot answer that question.
+flow._spinners = () => spinners.map(s => ({
+  a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, fruit: s.fruit }));
 flow.computeStandings = computeStandings;
 window.FF.flow = flow;
 })();

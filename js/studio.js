@@ -268,7 +268,14 @@ function ensureDom() {
       show: () => { btn.style.display = ''; },
       hide: () => {
         btn.style.display = 'none';
-        if (active) toggle();   // never leave the studio open behind a closed gate
+        // studio.active, not a bare `active` — the latter is not
+        // defined here and threw a ReferenceError every time the dev
+        // gate closed. devtools catches consumer failures, so this
+        // only ever showed up as a console warning; the real cost was
+        // that the studio was NOT closed behind the gate, which is
+        // the one thing this handler exists to guarantee.
+        if (studio.active) toggle();
+        studio.design = null;   // belt and braces: never dress a player
       },
     });
   }
@@ -549,6 +556,10 @@ function toggle() {
   if (studio.active) syncControls(); // widgets match reality on open
   cv.style.display = studio.active ? 'block' : 'none';
   btn.classList.toggle('active', studio.active);
+  // THE DESIGN IS ONLY WORN WHILE THE STUDIO IS OPEN. Closing it
+  // hands the player back their own melon rather than leaving them
+  // dressed as the stage.
+  studio.design = studio.active ? currentDesign() : null;
 }
 
 function ensureCanvas() {
@@ -666,7 +677,23 @@ window.FF = window.FF || {};
 window.FF.studio = studio;
 studio.frame = frame;
 studio.currentDesign = currentDesign;
-studio.design = currentDesign(); // worn from the very first frame
+// NO DESIGN UNTIL THE STUDIO IS OPENED (2026-08-14). This line used
+// to be `studio.design = currentDesign()` — set at module load, for
+// everyone, whether or not the dev gate had ever been opened. Every
+// consumer reads `(design && design.color) || melon.bodyColor`, so
+// the stage melon won: the menu portrait AND the player's race body
+// (main.js re-applies it every frame) wore StudioMelonA's colour and
+// rind rather than the ones their own seed describes.
+//
+// The visible symptom was that cycling melons on the start screen
+// changed the stats and the SIZE but never the colour or pattern —
+// every melon looked like the same melon, which is exactly what the
+// seed-owns-the-pigment law exists to prevent.
+//
+// A dev tool must be inert until it is used. The design is now
+// created when the studio is opened, and dropped when the gate
+// closes, so a player who never opens it always races their own melon.
+studio.design = null;
 studio.init = ensureDom;
 
 })();

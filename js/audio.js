@@ -8,10 +8,28 @@
 // use Math.random for texture (grain jitter) with zero determinism
 // risk.
 //
-// Layers:
-//   rolling  — looped noise, bandpassed; pitch/volume track omega
-//              and ground contact of the local player
-//   wind     — faint high noise while airborne, scaled by speed
+// THE GAME IS EVENTS, NOT BEDS (Eddie's ruling, 2026-08-14). The two
+// continuous noise layers — `rolling` (bandpassed noise tracking
+// omega) and `wind` (highpassed noise tracking airspeed) — are GONE,
+// for four reasons worth keeping written down so they do not creep
+// back:
+//   * NOT HONEST. A melon rolling on dirt is nearly silent. The layer
+//     was borrowed engine noise from racing games that have engines;
+//     this one has a fruit.
+//   * REDUNDANT. Spin is already legible from the rotating body, the
+//     scrolling terrain, the HUD readout and the stick in your hand.
+//   * IT WOULD RUIN THE MUSIC. A constant noise bed on a phone
+//     speaker is hiss under the mix — and it is the most fatiguing
+//     thing in a five-to-ten minute cup, which makes it the likeliest
+//     reason a player reaches for mute and loses every other sound.
+//   * IT WAS THE EXPENSIVE ONE: two oscillators running for the whole
+//     race, versus events that cost nothing when nothing is
+//     happening.
+// The silence between impacts is what makes the smash land. If the
+// feedback is ever missed, the replacement is rotation-locked TICKS
+// (one per contact as the body turns) — rhythmic, physics-honest,
+// free when slow, and it sits WITH music rather than under it.
+//
 // Events (edge-detected each frame):
 //   landing  — thud sized by impact speed (telemetry vn)
 //   smash    — noise burst + falling squelch; bots' smashes are
@@ -30,9 +48,7 @@
 
 let ctx = null;          // AudioContext, created on first gesture
 let master = null;       // master gain (mute lives here)
-let noiseBuf = null;     // shared white-noise buffer
-let rolling = null;      // { src, filter, gain }
-let wind = null;         // { src, filter, gain }
+let noiseBuf = null;     // shared white-noise buffer (thud click, squelch body)
 let muted = false;
 try { muted = localStorage.getItem('pf-muted') === '1'; } catch (_) {}
 
@@ -53,24 +69,6 @@ function ensureContext() {
   noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-
-  rolling = makeNoiseLayer(220, 'bandpass', 2);
-  wind = makeNoiseLayer(2400, 'highpass', 0.7);
-}
-
-function makeNoiseLayer(freq, type, q) {
-  const src = ctx.createBufferSource();
-  src.buffer = noiseBuf;
-  src.loop = true;
-  const filter = ctx.createBiquadFilter();
-  filter.type = type;
-  filter.frequency.value = freq;
-  filter.Q.value = q;
-  const gain = ctx.createGain();
-  gain.gain.value = 0;
-  src.connect(filter).connect(gain).connect(master);
-  src.start();
-  return { src, filter, gain };
 }
 
 function unlock() {
@@ -262,21 +260,9 @@ function update(state, dtFrame) {
   prev.grounded = m.grounded;
   prev.alive = m.alive;
 
-  // --- Continuous layers (need a live context) ---
-  if (!ctx || ctx.state !== 'running') return;
-  const tc = 0.06; // smoothing time constant
-  const now = ctx.currentTime;
-  const spin = Math.abs(m.omega);
-
-  // Rolling: only while grounded and actually turning.
-  const rollAmount = m.alive && m.grounded ? Math.min(1, spin / 45) : 0;
-  rolling.gain.gain.setTargetAtTime(rollAmount * 0.16, now, tc);
-  rolling.filter.frequency.setTargetAtTime(140 + spin * 16, now, tc);
-
-  // Wind: airborne, scaled by true speed.
-  const speed = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
-  const windAmount = m.alive && !m.grounded ? Math.min(1, speed / 2200) : 0;
-  wind.gain.gain.setTargetAtTime(windAmount * 0.06, now, tc * 2);
+  // No continuous layers: every sound in this file is an EVENT, so
+  // there is nothing to steer per frame and nothing running between
+  // impacts.
 }
 
 // Safe wrappers: no-ops before the context exists.
