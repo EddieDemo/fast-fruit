@@ -30,10 +30,25 @@ const KEY = 'ff-stable';
 // mass. The seed cannot lie; neither can the scale readout.
 const BASE_KG = 9.0;
 
-function derive(seed) {
+// ---- SIZE BANDS ---------------------------------------------------
+// The standard family, 0.85-1.18, is the one the pace and death
+// baselines were tuned against and the one the permanent cast rolls
+// in. WON melons roll WIDER: a prize should be able to be a genuine
+// runt or a genuine whopper, because collecting is only interesting
+// if the things collected differ. The law itself is untouched —
+// physics is uniform across every size — so this is a property of the
+// MELON, carried on its spec, never a global change (widening the
+// band globally would move the cast's bodies, which are authored).
+const BAND_STD = { lo: 0.85, span: 0.33 };   // 0.85 .. 1.18
+const BAND_WIDE = { lo: 0.80, span: 0.45 };  // 0.80 .. 1.25
+
+// `wide` is optional and defaults to the standard band, so every
+// existing caller derives bit-identically.
+function derive(seed, wide) {
   const rng = window.FF.mulberry32(seed >>> 0);
   const u = (rng() + rng()) / 2;
-  const scale = 0.85 + u * 0.33;
+  const band = wide ? BAND_WIDE : BAND_STD;
+  const scale = band.lo + u * band.span;
   const kg = BASE_KG * scale * scale * scale;
   return {
     scale,
@@ -46,6 +61,14 @@ function derive(seed) {
     bodyColor: (window.FF.shading && window.FF.shading.anchorColor)
       ? window.FF.shading.anchorColor('watermelon', seed >>> 0) : null,
   };
+}
+
+// The canonical accessor: a spec knows its own band, so callers that
+// hold a spec should ask this rather than remembering to pass the
+// flag. `derive(seed)` stays the primitive for callers that only have
+// a seed (the roster, ghost codes).
+function deriveSpec(spec) {
+  return derive(spec.seed, spec && spec.wide);
 }
 
 // ---- Stable persistence ----
@@ -149,7 +172,7 @@ function load() {
       const dev = Math.abs(derive(s2).scale - 1);
       if (dev < bestDev) { best = s2; bestDev = dev; }
     }
-    stable = { v: 1, player: { name: DEFAULT_PILOT }, melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10), record: blankRecord() }], active: 0 };
+    stable = { v: 1, player: { name: DEFAULT_PILOT }, salt: ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0), melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10), record: blankRecord() }], active: 0 };
     save();
   }
   if (migrate(stable)) save();
@@ -241,6 +264,137 @@ function recordCup(result) {
   return r;
 }
 
+// ---- THE STABLE: SIZE, AWARDS, DELETION ---------------------------
+// A stable holds SIX melons. A cap is what makes acquisition matter:
+// unlimited attempts times an unlimited stable is an inflating pile
+// of near-identical fruit behind a pair of arrows, and a prize that
+// costs nothing to hold is not a prize. At six, a new melon arriving
+// when you are full is a DECISION.
+const STABLE_MAX = 6;
+// ...and at most two won per day, so a good hour of cups cannot flood
+// the stable, and tomorrow still has something to offer.
+const DAILY_AWARD_CAP = 2;
+
+// THE ODDS. Halving at each step down the podium, so the rule is one
+// a player can hold in their head and repeat: winning is certain,
+// second is half, third is half again.
+const AWARD_CHANCE = { 1: 1, 2: 0.5, 3: 0.25 };
+
+// THE ROLL IS SEEDED, AND IT IS SEEDED PER INSTALL.
+//
+// Seeded, because unlimited attempts plus a live roll means closing
+// the tab at the right instant is the optimal way to re-roll a 50% —
+// an exploit that teaches players to game the moment instead of
+// racing it. Same day, same attempt, same place always produces the
+// same outcome on this device, so there is nothing to scum.
+//
+// Per install, because a roll seeded only from public facts would
+// hand every player who won Tuesday's cup on their second attempt the
+// SAME melon. The salt is minted once, at first boot, and folded into
+// every award: uniqueness comes from the salt, unscummability from
+// the salt being FIXED. (Clearing storage mints a new one — and
+// destroys the whole stable in the process, which is punishment
+// enough.) The cost, accepted: a won melon is no longer reproducible
+// from public information, so a friend cannot verify it. That is the
+// right trade for a personal collection.
+function playerSalt() {
+  const st = load();
+  if (!st.salt) {
+    st.salt = ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
+    save();
+  }
+  return st.salt >>> 0;
+}
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+// How many melons has this day already awarded?
+function awardsToday(day) {
+  const st = load();
+  const a = st.awards;
+  return (a && a.day === day) ? (a.count || 0) : 0;
+}
+function noteAward(day) {
+  const st = load();
+  if (!st.awards || st.awards.day !== day) st.awards = { day, count: 0 };
+  st.awards.count++;
+  save();
+}
+
+// Decide (and, if won, MINT) the prize for a completed cup.
+//   { day, attempt, place }  ->  { won, reason, spec?, full? }
+//
+// THE MELON IS PERSISTED THE MOMENT IT IS WON, unnamed — never at the
+// end of a ceremony. A player told they have won a melon and then
+// closing the tab before naming it must not lose the prize; and an
+// unnamed melon already trips the boot gate, so a ceremony missed for
+// any reason simply happens on next launch. The ceremony is
+// decoration on top of a fact that is already true.
+//
+// When the stable is FULL the melon is still minted, but held aside
+// rather than added: the caller runs the keep-or-release flow and
+// either commits it (acceptAward) or drops it.
+function awardForCup(result) {
+  const day = result.day || today();
+  const place = result.place;
+  const chance = AWARD_CHANCE[place] || 0;
+  if (!chance) return { won: false, reason: 'place' };
+  if (awardsToday(day) >= DAILY_AWARD_CAP) return { won: false, reason: 'dailyCap' };
+  const rng = window.FF.mulberry32(
+    hashStr(day + '|' + (result.attempt || 1) + '|' + place) ^ playerSalt());
+  if (rng() >= chance) return { won: false, reason: 'roll' };
+  // The prize's own seed comes from the same stream, so the melon is
+  // fully determined by the achievement that earned it.
+  const seed = (rng() * 4294967296) >>> 0;
+  const spec = { v: 1, seed, name: null, wide: 1, won: { day, place, attempt: result.attempt || 1 },
+    born: today(), record: blankRecord() };
+  noteAward(day);
+  const st = load();
+  if (st.melons.length >= STABLE_MAX) return { won: true, spec, full: true };
+  st.melons.push(spec);
+  save();
+  return { won: true, spec, full: false };
+}
+
+// Commit a held prize by releasing one of the existing melons for it.
+// The record dies with the released melon — that is the part that is
+// genuinely irreversible, and the confirm must say so.
+function acceptAward(spec, replaceIndex) {
+  const st = load();
+  if (replaceIndex >= 0 && replaceIndex < st.melons.length) {
+    st.melons.splice(replaceIndex, 1);
+    // Keep the active pointer on the melon it was pointing AT, not on
+    // whatever slid into that index.
+    if (st.active >= st.melons.length) st.active = st.melons.length - 1;
+  }
+  st.melons.push(spec);
+  save();
+  return spec;
+}
+
+// Release a melon from the start screen. You cannot delete your last
+// one — a player must always have something to race — and deleting
+// the active one moves the pointer rather than leaving it dangling.
+function deleteMelon(index) {
+  const st = load();
+  if (st.melons.length <= 1) return false;
+  if (index < 0 || index >= st.melons.length) return false;
+  st.melons.splice(index, 1);
+  if (st.active >= st.melons.length) st.active = st.melons.length - 1;
+  save();
+  return true;
+}
+
+function today() {
+  return (window.FF.dailyTrackName ? window.FF.dailyTrackName() : new Date().toISOString().slice(0, 10));
+}
+
+function stableFull() { return load().melons.length >= STABLE_MAX; }
+function stableList() { return load().melons.slice(); }
 // ---- Melon codes: the seed cannot lie ----
 function b64url(s) { return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function unb64url(s) { return atob(s.replace(/-/g, '+').replace(/_/g, '/')); }
@@ -334,8 +488,8 @@ function setActive(i) {
 // Values are returned structured — { key, label, value, note } — so
 // the menu stays a renderer and never does arithmetic. New stats land
 // by adding a row here.
-function stats(seed, fruit) {
-  const d = derive(seed);
+function stats(seed, fruit, wide) {
+  const d = derive(seed, wide);
   const CONFIG = window.FF.CONFIG;
   const F = (window.FF.FRUITS && window.FF.FRUITS[fruit]) || {};
   const mult = F.sizeMult || 1;
@@ -384,6 +538,7 @@ function stats(seed, fruit) {
   return rows;
 }
 
-window.FF.melon = { derive, stats, career, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load };
+window.FF.melon = { derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
+  awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load };
 
 })();

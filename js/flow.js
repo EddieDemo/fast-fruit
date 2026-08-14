@@ -260,6 +260,29 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    classes. Only the text field is new, so it borrows the field
    treatment the rest of the interface implies — panel-dark, accent
    text, the button's own border colour and radius. */
+/* The prize line on the cup tab, and the blocked-award note. */
+.ff-release-link { display: block; margin: 6px auto 0; background: none; border: none;
+  color: var(--c-faint); font: inherit; font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro); cursor: pointer; }
+.ff-release-link:hover { color: #ff8a72; }
+.ff-cup-prize { text-align: center; font-size: var(--fs-label);
+  letter-spacing: var(--tr-label); color: var(--c-gold);
+  margin: 2px 0 8px; }
+.ff-cup-prize.dim { color: var(--c-faint); letter-spacing: var(--tr-micro);
+  font-size: var(--fs-micro); }
+/* The release grid: your six, each with the record that dies with it. */
+.ff-release-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 420px) { .ff-release-grid { grid-template-columns: repeat(2, 1fr); } }
+.ff-release-cell { background: #0d1f12; border: 1px solid #23402a; border-radius: 8px;
+  padding: 8px 4px; cursor: pointer; font: inherit; color: var(--c-text);
+  display: flex; flex-direction: column; align-items: center; }
+.ff-release-cell:hover { border-color: var(--c-accent); }
+.ff-release-cell canvas.ff-spin { width: 62px; height: 62px; }
+.ff-rel-name { font-size: var(--fs-body); margin-top: 4px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ff-rel-stat { font-size: var(--fs-micro); color: var(--c-dim); }
+.ff-rel-rec { font-size: var(--fs-micro); color: var(--c-faint); margin-top: 2px; }
+.ff-release-screen { z-index: 45; }
 .ff-name-input { display: block; width: 100%; box-sizing: border-box;
   margin: 0 0 8px; padding: 12px;
   background: #060a07; color: var(--c-accent);
@@ -433,6 +456,112 @@ function racerIdentity(melonName, pilotName, isPlayer) {
   if (isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
   if (pilotName) nm.appendChild(el('div', 'ff-rpilot', pilotName));
   return nm;
+}
+
+// ---- THE AWARD FLOW ------------------------------------------------
+// TWO STEPS, because they are two different questions and answering
+// them on one screen would put seven melons and a decision on a 390px
+// phone.
+//
+//   1. THE CEREMONY — the same screen a first melon arrives on,
+//      showing the new melon and its stats, with a quiet LEAVE IT
+//      beside KEEP. Answerable from the new melon alone: you do not
+//      need to think about your other six to know whether a 6.1 kg
+//      runt interests you.
+//   2. THE RELEASE — only if they keep it AND the stable is full.
+//      Which of the six goes, with a confirm, because the released
+//      melon's career record dies with it and that is the part that
+//      is genuinely irreversible.
+//
+// The melon is already in the stable (or held aside, if full) before
+// any of this runs: the flow decides what to KEEP, never whether the
+// prize existed.
+function openAwardFlow(award) {
+  const M = window.FF.melon;
+  // Not full: it is already in the stable. Name it and go.
+  if (!award.full) {
+    namingAward = award.spec;
+    flow.openNaming('award', () => { namingAward = null; flow.go('menu'); });
+    return;
+  }
+  // Full: the ceremony first, then the release grid if they keep it.
+  namingAward = award.spec;
+  flow.openNaming('award', (kept) => {
+    namingAward = null;
+    if (kept === null) { flow.go('menu'); return; }   // left it
+    openRelease(award.spec);
+  }, { allowLeave: true });
+}
+
+// Step two: which of the six goes. Built fresh each time — it is a
+// rare screen and the stable it lists changes.
+let elRelease = null;
+function openRelease(spec) {
+  const M = window.FF.melon;
+  if (!elRelease) {
+    elRelease = el('div', 'ff-screen ff-release-screen');
+    const panel = el('div', 'ff-panel');
+    const head = el('div', 'ff-head');
+    head.appendChild(el('h1', 'ff-title', 'STABLE FULL'));
+    head.appendChild(el('p', 'ff-sub', 'choose one to release'));
+    panel.appendChild(head);
+    const body = el('div', 'ff-body');
+    const grid = el('div', 'ff-release-grid');
+    body.appendChild(grid);
+    panel.appendChild(body);
+    const foot = el('div', 'ff-foot');
+    const cancel = el('button', 'ff-btn ff-quiet', 'keep my six, discard the new one');
+    foot.appendChild(cancel);
+    panel.appendChild(foot);
+    elRelease.appendChild(panel);
+    document.body.appendChild(elRelease);
+    elRelease._grid = grid;
+    elRelease._cancel = cancel;
+  }
+  const grid = elRelease._grid;
+  grid.textContent = '';
+  spinners.length = 0;
+  M.stableList().forEach((m, i) => {
+    const d = M.deriveSpec(m);
+    const cell = el('button', 'ff-release-cell');
+    const cv = el('canvas', 'ff-spin');
+    cv.width = 160; cv.height = 160;
+    cell.appendChild(cv);
+    cell.appendChild(el('div', 'ff-rel-name', m.name || M.UNNAMED_NAME));
+    cell.appendChild(el('div', 'ff-rel-stat', d.kg.toFixed(1) + ' kg'));
+    const r = m.record || {};
+    cell.appendChild(el('div', 'ff-rel-rec',
+      (r.races || 0) + ' races  \u00b7  ' + (r.wins || 0) + ' wins'));
+    cell.addEventListener('click', () => {
+      // THE CONFIRM SAYS WHAT IS LOST. Not "are you sure" — what for.
+      confirmAsk({
+        title: 'RELEASE ' + (m.name || 'THIS MELON').toUpperCase() + '?',
+        body: 'Its career \u2014 ' + (r.races || 0) + ' races, ' + (r.wins || 0)
+          + ' wins \u2014 goes with it. This cannot be undone.',
+        cancel: 'KEEP IT',
+        confirm: 'RELEASE',
+        onConfirm: () => {
+          M.acceptAward(spec, i);
+          elRelease.style.display = 'none';
+          namingAward = spec;
+          flow.openNaming('award', () => { namingAward = null; flow.go('menu'); });
+        },
+      });
+    });
+    grid.appendChild(cell);
+    clearCanvas(cv);
+    const F = window.FF.FRUITS.watermelon || {};
+    const a = window.FF.CONFIG.semiMajor * d.scale;
+    spinners.push({ canvas: cv, angle: i * 0.7, a, b: a * 0.78,
+      color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon', rate: 0.4 });
+  });
+  elRelease._cancel.onclick = () => {
+    elRelease.style.display = 'none';
+    flow.go('menu');
+  };
+  elRelease.style.display = 'flex';
+  spinnersPaused = false;
+  startSpinners();
 }
 
 function computeStandings(state, resolved) {
@@ -698,6 +827,8 @@ function buildMenu() {
   // standings use, on the screen where you pick the melon — and the
   // second rename door, because a player who wants to be called
   // something looks here first.
+  const releaseBtn = el('button', 'ff-release-link', 'release this melon');
+  releaseBtn.style.display = 'none';
   const pilotEl = el('div', 'ff-melon-pilot ff-renamable', '');
   pilotEl.setAttribute('role', 'button');
   pilotEl.setAttribute('tabindex', '0');
@@ -708,6 +839,7 @@ function buildMenu() {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPilotRename(); }
   });
   leftCol.appendChild(pilotEl);
+  leftCol.appendChild(releaseBtn);
   const statsEl = el('div', 'ff-stats');
   rightCol.appendChild(statsEl);
   // (Single table now — the CAREER sub-heading retired with the split.
@@ -778,7 +910,7 @@ function buildMenu() {
     // order. Unknown keys are skipped rather than rendered blank, so
     // this list can name a row that a future species doesn't have.
     const byKey = new Map();
-    for (const r of (M.stats ? M.stats(M.active().seed, fruit) : [])) byKey.set(r.key, r);
+    for (const r of (M.stats ? M.stats(M.active().seed, fruit, M.active().wide) : [])) byKey.set(r.key, r);
     for (const r of (M.career ? M.career() : [])) byKey.set(r.key, r);
     const rows = [];
     for (const k of MENU_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
@@ -832,6 +964,7 @@ function buildMenu() {
       + (st.melons.length > 1 ? '  (' + (st.active + 1) + '/' + st.melons.length + ')' : '');
     pilotEl.textContent = M.playerName ? M.playerName() : 'Player';
     const many = st.melons.length > 1;
+    releaseBtn.style.display = many ? '' : 'none';
     left.style.visibility = many ? 'visible' : 'hidden';
     right.style.visibility = many ? 'visible' : 'hidden';
   };
@@ -846,6 +979,25 @@ function buildMenu() {
   };
   left.addEventListener('click', () => cycle(-1));
   right.addEventListener('click', () => cycle(1));
+  // RELEASE, from the start screen. Only offered when there is more
+  // than one melon — you must always have something to race — and it
+  // always confirms, because the career record is what is actually
+  // lost and that cannot be undone.
+  releaseBtn.addEventListener('click', () => {
+    const st = M._load();
+    const cur = M.active();
+    const r = cur.record || {};
+    confirmAsk({
+      title: 'RELEASE ' + (cur.name || 'THIS MELON').toUpperCase() + '?',
+      body: 'Its career \u2014 ' + (r.races || 0) + ' races, ' + (r.wins || 0)
+        + ' wins \u2014 goes with it. This cannot be undone.',
+      cancel: 'KEEP IT',
+      confirm: 'RELEASE',
+      onConfirm: () => {
+        if (M.deleteMelon(st.active)) refresh();
+      },
+    });
+  });
   // PRACTICE: leg 1, no record, freely retried.
   race.addEventListener('click', () => {
     fromMenuOrRetry = true;
@@ -1008,6 +1160,14 @@ function buildPause() {
     if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
     if (respawnFn) respawnFn();
     fromMenuOrRetry = true;
+    // THE HANDOVER. The prize was announced on the cup tab and is
+    // already in the stable; this is the ceremony. It happens between
+    // the finish screen and the menu, so the input-requiring beat
+    // lands once the player has decided they are done reading — and
+    // never before the placing that earned it.
+    const award = pendingAward;
+    pendingAward = null;
+    if (award && award.won) { openAwardFlow(award); return; }
     flow.go('menu');
   });
 
@@ -1166,6 +1326,14 @@ function buildFinish() {
     if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
     if (respawnFn) respawnFn();
     fromMenuOrRetry = true;
+    // THE HANDOVER. The prize was announced on the cup tab and is
+    // already in the stable; this is the ceremony. It happens between
+    // the finish screen and the menu, so the input-requiring beat
+    // lands once the player has decided they are done reading — and
+    // never before the placing that earned it.
+    const award = pendingAward;
+    pendingAward = null;
+    if (award && award.won) { openAwardFlow(award); return; }
     flow.go('menu');
   });
   elFinish._rows = rows;
@@ -1439,20 +1607,38 @@ flow.register('naming', {
     const M = window.FF.melon;
     const cur = M.active();
     const isPilot = namingMode === 'pilot';
+    const isAward = namingMode === 'award';
     elNaming._title.textContent = isPilot ? 'YOUR NAME'
       : namingMode === 'rename' ? 'RENAME'
       : (M.pickHeadline ? M.pickHeadline() : "You've got Melon!");
     elNaming._sub.textContent = isPilot ? 'who is racing?'
       : namingMode === 'rename' ? 'what should it be called?'
+      : isAward ? 'your prize for the cup'
       : 'name your racer';
     elNaming._input.placeholder = isPilot ? 'your name' : 'name your melon';
     elNaming._input.value = isPilot ? (M.playerName ? M.playerName() : '')
       : namingMode === 'rename' ? (cur.name || '') : '';
-    elNaming._refresh();
+    // LEAVE IT: only offered when accepting the prize would cost one
+    // of the six. A player must be able to say no to a runt without
+    // first being made to choose a victim.
+    elNaming._leave.style.display = namingAllowLeave ? '' : 'none';
+    // THE BUTTON STATES THE ACTION THAT EXISTS. 'KEEP' implies an
+    // alternative, and outside the full-stable case there isn't one:
+    // the melon is already yours and the screen is a gift being
+    // handed over, not a decision. So the label follows the mode —
+    //   choice to decline  -> KEEP   (paired with 'leave it')
+    //   a gift, no choice  -> THANKS (the headlines are all giving
+    //                        moments; 'Take this!' wants 'Thanks')
+    //   an edit            -> SAVE
+    elNaming._keep.textContent = namingAllowLeave ? 'KEEP'
+      : (isPilot || namingMode === 'rename') ? 'SAVE'
+      : 'THANKS';
+    elNaming._refresh(namingAward);
     elNaming.style.display = 'flex';
     spinners.length = 0;
     clearCanvas(elNaming._spin);
-    pushMelonPortrait(elNaming._spin);
+    if (namingAward) pushSpecPortrait(elNaming._spin, namingAward);
+    else pushMelonPortrait(elNaming._spin);
     spinnersPaused = false;
     startSpinners();
     // Focus AFTER the screen is up, or the keyboard opens against a
@@ -1474,8 +1660,9 @@ flow.register('naming', {
 // is. NOTE it deliberately cannot be opened from 'finish': entering
 // that screen performs the one career write, so returning to it would
 // count the race twice.
-flow.openNaming = function (mode, onDone) {
+flow.openNaming = function (mode, onDone, opts) {
   namingMode = mode || 'ceremony';
+  namingAllowLeave = !!(opts && opts.allowLeave);
   const from = (flow.state && flow.state !== 'naming') ? flow.state : 'menu';
   namingDone = onDone || (() => flow.go(from === 'finish' ? 'menu' : from));
   flow.go('naming');
@@ -1486,9 +1673,22 @@ flow.openNaming = function (mode, onDone) {
 // the SAME melon — same seed-derived scale, colour, rind and species,
 // same slow rate. Two copies of this drifted the moment one of them
 // learned about the Shader Studio's design override.
+// The same portrait, for a spec that is NOT the active melon (a prize
+// being offered). Shares the rate and geometry so a won melon is
+// presented exactly as the start screen presents yours.
+function pushSpecPortrait(canvas, spec) {
+  const M = window.FF.melon;
+  const d = M.deriveSpec(spec);
+  const F = window.FF.FRUITS.watermelon || {};
+  const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
+  spinners.push({ rate: 0.55, canvas, angle: 0,
+    a, b: a * (F.aspect || 0.78),
+    color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon' });
+}
+
 function pushMelonPortrait(canvas) {
   const M = window.FF.melon;
-  const d = M.derive(M.active().seed);
+  const d = M.deriveSpec(M.active());
   const design = window.FF.studio && window.FF.studio.design;
   const fruit = (design && design.fruit) || 'watermelon';
   const F = window.FF.FRUITS[fruit] || {};
@@ -1527,6 +1727,13 @@ function pushMelonPortrait(canvas) {
 const NAMING_ROWS = ['species', 'weight'];
 let elNaming = null;
 let namingMode = 'ceremony';
+// The prize rolled at cup completion, waiting to be told and (if the
+// stable is full) resolved. Cleared once the player has seen it out.
+let pendingAward = null;
+// The spec being named by the 'award' mode: a prize is not the active
+// melon, so the screen must be told which melon it is naming.
+let namingAward = null;
+let namingAllowLeave = false;
 let namingDone = null;
 
 function buildNaming() {
@@ -1557,8 +1764,11 @@ function buildNaming() {
   input.autocomplete = 'off';
   const keep = el('button', 'ff-btn', 'KEEP');
   keep.id = 'melon-name-ok';
+  const leave = el('button', 'ff-btn ff-quiet', 'leave it');
+  leave.style.display = 'none';
   foot.appendChild(input);
   foot.appendChild(keep);
+  foot.appendChild(leave);
   panel.appendChild(foot);
   elNaming.appendChild(panel);
   document.body.appendChild(elNaming);
@@ -1569,7 +1779,13 @@ function buildNaming() {
     // (you). One screen, one field, two destinations — the mode says
     // which, so neither can be written by accident.
     let out;
-    if (namingMode === 'pilot') {
+    if (namingMode === 'award' && namingAward) {
+      // Name the PRIZE, which is its own spec — never the melon the
+      // player is currently racing.
+      namingAward.name = String(typed || M.UNNAMED_NAME).slice(0, 24);
+      M._save && M._save();
+      out = namingAward.name;
+    } else if (namingMode === 'pilot') {
       out = M.renamePlayer(typed || M.playerName());
     } else {
       const cur = M.active();
@@ -1580,6 +1796,12 @@ function buildNaming() {
     if (cb) cb(out);
   };
   keep.addEventListener('click', finish);
+  // Declining a prize: the callback is told with null, so the caller
+  // can tell "left it" from "kept it" without inspecting the stable.
+  leave.addEventListener('click', () => {
+    const cb = namingDone; namingDone = null;
+    if (cb) cb(null);
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finish(); }
   });
@@ -1589,11 +1811,13 @@ function buildNaming() {
   elNaming._spin = spin;
   elNaming._stats = statsEl;
   elNaming._input = input;
+  elNaming._leave = leave;
+  elNaming._keep = keep;
   elNaming._refresh = () => {
     const design = window.FF.studio && window.FF.studio.design;
     const fruit = (design && design.fruit) || 'watermelon';
     const byKey = new Map();
-    for (const r of (M.stats ? M.stats(M.active().seed, fruit) : [])) byKey.set(r.key, r);
+    for (const r of (M.stats ? M.stats(M.active().seed, fruit, M.active().wide) : [])) byKey.set(r.key, r);
     const rows = [];
     for (const k of NAMING_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
     statsEl.textContent = '';
@@ -1733,6 +1957,20 @@ flow.register('finish', {
               // finishes, not an estimate from the player's score.
               M.recordCup({ place: done.place, points: done.totals.points });
             }
+            // ---- THE PRIZE ----------------------------------------
+            // Rolled HERE, at the same latched moment as the career
+            // write, so it happens exactly once per completed cup and
+            // cannot be re-rolled by revisiting a screen. The melon is
+            // minted and persisted immediately (melon.js) — a player
+            // who closes the tab between this screen and the menu keeps
+            // what they won. What follows is only the telling of it.
+            if (done && M.awardForCup) {
+              pendingAward = M.awardForCup({
+                day: (window.FF.cup.current() || {}).day,
+                attempt: (done.record && done.record.attempts) || 1,
+                place: done.place,
+              });
+            }
           }
         }
       }
@@ -1847,6 +2085,21 @@ function fillCup() {
     c.isComplete() ? 'FINAL \u00b7 ' + t.points + ' pts'
       : 'AFTER ' + legs + ' OF ' + c.LEGS + '  \u00b7  ' + t.points + ' pts');
   box.appendChild(head);
+
+  // THE PRIZE, ANNOUNCED WHERE THE DAY'S RESULT IS STATED. The award
+  // is a consequence of the placing, so it is told in the moment of
+  // triumph and HANDED OVER on the way out (see the MAIN MENU
+  // handler): a beat of anticipation between learning and receiving,
+  // which is the shape a prize wants. A blocked award says so rather
+  // than showing nothing, because winning and receiving nothing looks
+  // like a bug.
+  if (c.isComplete() && pendingAward) {
+    if (pendingAward.won) {
+      box.appendChild(el('div', 'ff-cup-prize', "YOU'VE WON A MELON"));
+    } else if (pendingAward.reason === 'dailyCap') {
+      box.appendChild(el('div', 'ff-cup-prize dim', 'daily melon limit reached'));
+    }
+  }
 
   // SAME SHAPE AS THE PLACES TAB. A cup standing is a standing: the
   // player reads it the same way, so it gets the same tiered ordinal,
