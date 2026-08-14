@@ -86,11 +86,43 @@ function blankRecord() {
   };
 }
 
+// ---- THE PLAYER (the pilot) ---------------------------------------
+// A melon is a body; the player is the pilot who enters one. The
+// stable therefore holds one player record alongside the melons —
+// this is a property of YOU, not of any melon, so it cannot live on a
+// melon spec (you would have as many usernames as fruit).
+//
+// DEFAULTS RATHER THAN PROMPTS. A new player is 'Player' and can race
+// immediately; naming yourself is offered later, at the moment it
+// starts to matter (your name on a results table beside eleven
+// others). Same doctrine as the melon's 'Unnamed Melon': never a wall
+// between a new player and the first race.
+const DEFAULT_PILOT = 'Player';
+
+function playerName() {
+  const st = load();
+  return (st.player && st.player.name) || DEFAULT_PILOT;
+}
+
+function renamePlayer(name) {
+  const st = load();
+  if (!st.player) st.player = { name: DEFAULT_PILOT };
+  st.player.name = String(name || '').trim().slice(0, 24) || st.player.name;
+  save();
+  return st.player.name;
+}
+
 // Migration is idempotent: every load repairs whatever is missing, so
 // a melon from any past version becomes valid without a version bump
 // ladder to maintain.
 function migrate(st) {
   let dirty = false;
+  // The pilot record: added 2026-08-14. An existing save has melons
+  // but no player, and gets the default rather than a prompt.
+  if (!st.player || typeof st.player.name !== 'string') {
+    st.player = { name: DEFAULT_PILOT };
+    dirty = true;
+  }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
     else {
@@ -117,7 +149,7 @@ function load() {
       const dev = Math.abs(derive(s2).scale - 1);
       if (dev < bestDev) { best = s2; bestDev = dev; }
     }
-    stable = { v: 1, melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10), record: blankRecord() }], active: 0 };
+    stable = { v: 1, player: { name: DEFAULT_PILOT }, melons: [{ v: 1, seed: best, name: null, born: new Date().toISOString().slice(0, 10), record: blankRecord() }], active: 0 };
     save();
   }
   if (migrate(stable)) save();
@@ -225,34 +257,63 @@ function decodeMelon(code) {
 }
 
 // ---- The naming ceremony (one-time overlay) ----
-function maybeAskName(onDone) {
+// THE HEADLINE IS CONTENT, NOT CODE. Same doctrine as names.js and
+// billboards.js: a list you extend without touching the ceremony.
+//
+// THE RULE, so the next entry doesn't wander (Eddie, 2026-08-14):
+// every headline is a BORROWED MOMENT OF BEING HANDED A THING,
+// transposed to melon. The old man in the cave pressing a sword on
+// you before you set off; the mail server announcing your post; the
+// midwife; the talk-show host; the item-get jingle; the parcel at the
+// door. If it is not somebody GIVING you something, it does not
+// belong here — an encounter ("a wild melon appeared"), an identity
+// ("yer a melon"), or an inventory line ("melon acquired") all break
+// the rule, however funny, because the screen exists to land one
+// beat: this melon is now yours.
+//
+// ("You've got Melon!" is the mass-noun joke; it is not "a melon".)
+//
+// LENGTH: the title step fits about 22 characters on one line at a
+// 390px phone. Longer is allowed — the title wraps and balances (see
+// .ff-title in flow.js) — but check it breaks somewhere you'd choose,
+// as "Congratulations, it's a Melon!" does at its comma.
+const NAMING_HEADLINES = [
+  "You've got Melon!",      // AOL: "You've got mail!"
+  'Take this!',             // Zelda: "It's dangerous to go alone! Take this!"
+  'You get a Melon!',       // Oprah: "You get a car!"
+  "Congratulations, it's a Melon!", // the delivery-room announcement
+  'Special delivery!',      // the parcel at the door
+  'Melon get!',             // the Nintendo item-get, localisation and all
+];
+
+// Presentation tier: Math.random is correct here (nothing derives from
+// it, and it happens before any race exists). PICKED ONCE and held, so
+// a re-render can never swap the headline mid-look.
+function pickHeadline() {
+  return NAMING_HEADLINES[Math.floor(Math.random() * NAMING_HEADLINES.length)];
+}
+
+// THE CARD ITSELF LIVES IN flow.js (2026-08-14). This module owns
+// the melon — the seed, the derivation, the record, the name — and
+// flow owns every screen the player looks at. The ceremony used to
+// build its own DOM here, which is how it ended up with a private
+// visual language (#111 panels, a pink keep button) that predated
+// type.js and never got migrated with the rest of the interface. It
+// is now the 'naming' flow screen, assembled from the same
+// components as the start screen; what remains here is the content
+// and the rules.
+
+// THE DEFAULT NAME, in one place. Every screen that has to render a
+// melon with no chosen name says exactly this, so the menu, the
+// standings, the finish screen and the stat card cannot disagree
+// about who you are. `rename()` clamps to 24 chars, which this fits.
+const UNNAMED_NAME = 'Unnamed Melon';
+
+// Does this melon still need its ceremony? Asked by the boot sequence
+// so the gate can run BEFORE the menu rather than racing it.
+function needsName() {
   const m = active();
-  if (m.name) { if (onDone) onDone(m.name); return; }
-  if (typeof document === 'undefined' || !document.body) return;
-  const wrap = document.createElement('div');
-  wrap.id = 'melon-naming';
-  const d = derive(m.seed);
-  const sizeWord = d.scale < 0.92 ? 'a little one' : d.scale > 1.08 ? 'a big one' : 'a good size';
-  wrap.innerHTML = `
-    <div class="naming-card">
-      <div class="naming-title">you've been dealt a melon</div>
-      <div class="naming-sub">${sizeWord} \u2014 ${d.kg.toFixed(1)} kg (${Math.round(d.lb)} lb)</div>
-      <input id="melon-name-input" maxlength="24" placeholder="name your melon" autocomplete="off" />
-      <button id="melon-name-ok">keep</button>
-    </div>`;
-  document.body.appendChild(wrap);
-  const input = wrap.querySelector('#melon-name-input');
-  const ok = wrap.querySelector('#melon-name-ok');
-  const finish = () => {
-    const name = input.value.trim();
-    if (!name) { input.focus(); return; }
-    rename(name);
-    wrap.remove();
-    if (onDone) onDone(name);
-  };
-  ok.addEventListener('click', finish);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(); });
-  setTimeout(() => input.focus(), 50);
+  return !m.name;
 }
 
 window.FF = window.FF || {};
@@ -323,6 +384,6 @@ function stats(seed, fruit) {
   return rows;
 }
 
-window.FF.melon = { derive, stats, career, recordRace, recordCup, active, setActive, rename, encodeMelon, decodeMelon, maybeAskName, _load: load };
+window.FF.melon = { derive, stats, career, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load };
 
 })();

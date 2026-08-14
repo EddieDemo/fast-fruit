@@ -162,7 +162,10 @@ function isDone() { return !job || job.outstanding === 0 || job.steps >= MAX_TIC
 function report() {
   if (!job) return null;
   const { bodies, done, clone, hz } = job;
-  const out = { byName: {}, player: null, steps: job.steps, dnf: 0 };
+  // Keyed by RACER IDENTITY (state.racerKey: the pilot, falling back
+  // to the melon name), because the caller matches these onto its
+  // standings rows and two racers must never collide into one entry.
+  const out = { byKey: {}, player: null, steps: job.steps, dnf: 0 };
   bodies.forEach((m, i) => {
     const tick = done.has(m) ? done.get(m) : null;
     const rec = tick === null
@@ -170,7 +173,8 @@ function report() {
       : { timeSec: (tick - clone.raceStartTick) / hz, dnf: false };
     if (rec.dnf) out.dnf++;
     if (i === 0) out.player = rec;
-    if (m.name) out.byName[m.name] = rec;
+    const k = FF.racerKey ? FF.racerKey(m) : m.name;
+    if (k) out.byKey[k] = rec;
   });
   return out;
 }
@@ -234,7 +238,7 @@ function estimate(state, opts) {
   const target = race.lapLengthPx * race.laps;
   const bodies = [state.melon].concat(state.bots.map(b => b.melon));
 
-  const out = { byName: {}, player: null, estimated: 0, measured: 0 };
+  const out = { byKey: {}, player: null, estimated: 0, measured: 0 };
   for (let i = 0; i < bodies.length; i++) {
     const m = bodies[i];
     let rec;
@@ -274,7 +278,8 @@ function estimate(state, opts) {
       out.estimated++;
     }
     if (i === 0) out.player = rec;
-    if (m.name) out.byName[m.name] = rec;
+    const k = FF.racerKey ? FF.racerKey(m) : m.name;
+    if (k) out.byKey[k] = rec;
   }
   return out;
 }

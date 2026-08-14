@@ -1,4 +1,3 @@
-
 /* ---------- SCREEN LANES ----------
    Fixed controls live in named lanes so nothing has to guess where
    anything else is. Two rules:
@@ -356,49 +355,12 @@ html, body {
 }
 
 /* ---------- Naming ceremony ---------- */
-#melon-naming {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.72);
-}
-#melon-naming .naming-card {
-  background: #111;
-  border: 1px solid #2a2a2a;
-  border-radius: 14px;
-  padding: 22px 26px;
-  text-align: center;
-  font-family: var(--mono);
-}
-#melon-naming .naming-title { color: #fff; font-size: var(--fs-lead); }
-#melon-naming .naming-sub { color: #9a9a9a; font-size: var(--fs-body); margin-top: 6px; }
-#melon-naming input {
-  display: block;
-  margin: 16px auto 10px;
-  background: #000;
-  color: var(--c-accent);
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  text-align: center;
-  width: 220px;
-}
-#melon-naming button {
-  background: var(--panel-accent);
-  color: #111;
-  border: none;
-  border-radius: 8px;
-  padding: 9px 22px;
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  font-weight: 700;
-  cursor: pointer;
-}
+/* The naming ceremony's card RETIRED from this file (2026-08-14):
+   it is now the 'naming' flow screen, built from the same components
+   as the start screen and styled by flow.js's own CSS. The block that
+   was here predated type.js — #111 panels, #fff titles, #9a9a9a
+   labels and a pink keep button — and was the last unmigrated surface
+   in the interface. */
 
 /* ---------- Daily button ---------- */
 #daily-btn {

@@ -78,11 +78,34 @@ const CSS = `
 .ff-buttons { display: flex; gap: 8px; }
 .ff-buttons .ff-btn { flex: 1 1 0; width: auto; min-width: 0; }
 .ff-title { color: var(--c-accent); font-size: var(--fs-title); font-weight: 700;
-  letter-spacing: 2px; margin: 0 0 14px; text-align: center; }
+  letter-spacing: 2px; margin: 0 0 14px; text-align: center;
+  /* Most titles are one short word ('FINISH', 'PAUSED'). The naming
+     screen's headlines are content, and the longest of them
+     ('Congratulations, it's a Melon!') is wider than the panel at
+     every viewport — so the title wraps rather than overflowing, and
+     balances so the two lines are of similar length instead of
+     leaving one orphaned word. text-wrap is progressive: browsers
+     without it simply wrap normally, which still fits. */
+  text-wrap: balance; }
 .ff-sub { color: var(--c-dim); font-size: var(--fs-body); text-align: center; margin: 0 0 16px; }
 .ff-melon-row { display: flex; align-items: center; justify-content: center;
   gap: 14px; margin: 6px 0 10px; }
 .ff-melon-name { font-size: var(--fs-lead); color: var(--c-text); min-width: 120px; text-align: center; }
+/* The racer line beneath the melon name: micro/faint, the same
+   relationship the standings rows use. */
+.ff-melon-pilot { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-faint); text-align: center; margin-top: 3px; }
+.ff-melon-pilot.ff-renamable { cursor: pointer;
+  text-decoration: underline dotted rgba(159, 199, 165, 0.3);
+  text-underline-offset: 3px; }
+.ff-melon-pilot.ff-renamable:hover { color: var(--c-dim); }
+/* Tappable, but NOT a button: this is an edit-in-place affordance, so
+   it stays type with a hint of underline rather than joining the
+   commitment tier (see the tab note below — same reasoning). */
+.ff-melon-name.ff-renamable { cursor: pointer;
+  text-decoration: underline dotted rgba(159, 199, 165, 0.4);
+  text-underline-offset: 4px; }
+.ff-melon-name.ff-renamable:hover { color: var(--c-accent); }
 /* The menu panel is wider than the others: it carries a portrait of
    the melon AND its papers. */
 .ff-screen.ff-menu-screen .ff-panel { min-width: 320px; max-width: min(92vw, 620px); }
@@ -104,6 +127,12 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-finish-note { color: var(--c-faint); }
 /* Pause hub: settings and the controls reminder. */
 .ff-settings { margin: 2px 0 4px; }
+/* An editable setting value: same row grammar as the toggles, but
+   dotted-underlined like the melon name on the menu, because it opens
+   an editor rather than flipping a state. */
+.ff-set-v.ff-set-edit { color: var(--c-text);
+  text-decoration: underline dotted rgba(159, 199, 165, 0.4);
+  text-underline-offset: 4px; }
 .ff-set-row { display: flex; align-items: center; justify-content: space-between;
   gap: 10px; padding: 7px 0; border-bottom: 1px solid #14261a; }
 .ff-set-k { font-size: var(--fs-label); letter-spacing: var(--tr-label);
@@ -225,6 +254,24 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    The same demotion .ff-quiet already makes for "abandon cup".
    THE HIT TARGET DOES NOT SHRINK: padding is unchanged, only the
    paint. A thumb still gets the same area it always had. */
+/* ---- THE NAMING SCREEN ----
+   Everything here is the start screen's language: the panel, the
+   title, the portrait, the stat rows and the button are all shared
+   classes. Only the text field is new, so it borrows the field
+   treatment the rest of the interface implies — panel-dark, accent
+   text, the button's own border colour and radius. */
+.ff-name-input { display: block; width: 100%; box-sizing: border-box;
+  margin: 0 0 8px; padding: 12px;
+  background: #060a07; color: var(--c-accent);
+  border: 1px solid #2a5a34; border-radius: 7px;
+  font: inherit; font-size: var(--fs-lead); letter-spacing: 1px;
+  text-align: center; }
+.ff-name-input::placeholder { color: var(--c-faint); letter-spacing: var(--tr-body); }
+.ff-name-input:focus { outline: none; border-color: var(--c-accent); }
+/* The ceremony's portrait row carries no arrows (there is one melon,
+   and it is yours), so it centres on its own. */
+.ff-naming-screen .ff-melon-row { justify-content: center; }
+.ff-naming-screen .ff-stats { margin-top: 4px; }
 .ff-tabs { flex: none; display: flex; gap: 0; margin: 0 0 10px;
   border-bottom: 1px solid #14261a; }
 .ff-tab { flex: 1; padding: 7px 4px; cursor: pointer;
@@ -283,6 +330,13 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    a glance, and it is the one row you look for. */
 .ff-row.ff-you .ff-pos { color: var(--c-accent); font-weight: 700; }
 .ff-row.ff-you .ff-pos .ff-ord { color: rgba(57, 255, 95, 0.75); }
+/* The pilot line: who drove the melon named above it. Micro/faint —
+   the secondary role — so a scan reads the melons and a careful look
+   reads the competitors. Same relationship as name-over-time. */
+.ff-rpilot { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-faint); margin-top: 1px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.ff-you .ff-rpilot { color: var(--c-dim); }
 .ff-rname { font-size: var(--fs-body); color: var(--c-text); flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ff-rtime { font-size: var(--fs-micro); color: var(--c-dim); letter-spacing: 0.06em;
@@ -359,12 +413,42 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
 
 // ---- Standings: captured at the instant the player finishes ----
 // Pure function so the harness can test the ranking without a DOM.
+// ---- THE RACER IDENTITY BLOCK -------------------------------------
+// A melon is a body and a pilot is who drove it, so anywhere the game
+// RECORDS a result it has to name both — otherwise the standings tell
+// you a melon beat you without telling you who was steering it.
+//
+// ONE COMPONENT, every list. The places rows and the cup table were
+// two near-identical implementations of the same block; a third
+// (future) list would have been a third. The rule they encode:
+// the MELON is the protagonist and reads first, the PILOT is the
+// accountable party and sits beneath in the micro/faint role — the
+// same relationship the rows already use for name-over-time.
+//
+// Moments of ACTION stay melon-only by design (the ticker, the death
+// overlay): "PULPED IN THE PACK — LIL SQUISH" is drama, and appending
+// a pilot to it deflates the joke. Moments of RECORD carry both.
+function racerIdentity(melonName, pilotName, isPlayer) {
+  const nm = el('div', 'ff-rname', melonName);
+  if (isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
+  if (pilotName) nm.appendChild(el('div', 'ff-rpilot', pilotName));
+  return nm;
+}
+
 function computeStandings(state, resolved) {
   const rows = [];
   const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
   const startTick = state.raceStartTick || 0;
   const push = (m, isPlayer) => rows.push({
     name: m.name || (isPlayer ? 'YOU' : '???'),
+    // The PILOT: who drove this melon. The melon is the character;
+    // the pilot is the competitor, and a results table has to say
+    // both or it cannot tell you who actually beat you.
+    pilot: m.pilot || '',
+    // ...and the IDENTITY OF RECORD, which every downstream table
+    // keys on (state.racerKey). Computed once, here, so the cup and
+    // the resolver cannot disagree about who a row is.
+    key: window.FF.racerKey(m),
     // Elapsed from the race start to THIS racer's own crossing. Null
     // for anyone still out on track when the standings were captured
     // — shown as a dash, because inventing a time for an unfinished
@@ -376,10 +460,10 @@ function computeStandings(state, resolved) {
     // marked DNF, which sorts LAST on time rather than first.
     timeSec: (m.finishTick !== undefined && m.finishTick !== null)
       ? (m.finishTick - startTick) / hz
-      : (resolved && resolved.byName[m.name] && !resolved.byName[m.name].dnf
-        ? resolved.byName[m.name].timeSec
+      : (resolved && resolved.byKey[window.FF.racerKey(m)] && !resolved.byKey[window.FF.racerKey(m)].dnf
+        ? resolved.byKey[window.FF.racerKey(m)].timeSec
         : null),
-    dnf: !!(resolved && resolved.byName[m.name] && resolved.byName[m.name].dnf
+    dnf: !!(resolved && resolved.byKey[window.FF.racerKey(m)] && resolved.byKey[window.FF.racerKey(m)].dnf
       && (m.finishTick === undefined || m.finishTick === null)),
     fruit: m.fruit || 'watermelon',
     color: m.bodyColor || '#37a01c',
@@ -593,7 +677,37 @@ function buildMenu() {
   row.appendChild(left); row.appendChild(spin); row.appendChild(right);
   leftCol.appendChild(row);
   const nameEl = el('div', 'ff-melon-name', '');
+  // THE SECOND DOOR. The ceremony happens once, in the first ten
+  // seconds of a game you have never played — the moment a name is
+  // most likely to be regretted. Tapping the name reopens the card.
+  // (It is also the repair path for a melon left unnamed while the
+  // ceremony was unreachable.)
+  nameEl.classList.add('ff-renamable');
+  nameEl.setAttribute('role', 'button');
+  nameEl.setAttribute('tabindex', '0');
+  nameEl.title = 'rename';
+  // Renaming uses the SAME screen as the ceremony, in rename mode:
+  // one surface, so the two can never drift apart in styling.
+  const openRename = () => flow.openNaming('rename', () => flow.go('menu'));
+  nameEl.addEventListener('click', openRename);
+  nameEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRename(); }
+  });
   leftCol.appendChild(nameEl);
+  // WHO IS DRIVING IT. The same melon-over-pilot relationship the
+  // standings use, on the screen where you pick the melon — and the
+  // second rename door, because a player who wants to be called
+  // something looks here first.
+  const pilotEl = el('div', 'ff-melon-pilot ff-renamable', '');
+  pilotEl.setAttribute('role', 'button');
+  pilotEl.setAttribute('tabindex', '0');
+  pilotEl.title = 'rename yourself';
+  const openPilotRename = () => flow.openNaming('pilot');
+  pilotEl.addEventListener('click', openPilotRename);
+  pilotEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPilotRename(); }
+  });
+  leftCol.appendChild(pilotEl);
   const statsEl = el('div', 'ff-stats');
   rightCol.appendChild(statsEl);
   // (Single table now — the CAREER sub-heading retired with the split.
@@ -714,8 +828,9 @@ function buildMenu() {
     }
     const st = M._load();
     const cur = M.active();
-    nameEl.textContent = (cur.name || 'unnamed melon')
+    nameEl.textContent = (cur.name || M.UNNAMED_NAME || 'Unnamed Melon')
       + (st.melons.length > 1 ? '  (' + (st.active + 1) + '/' + st.melons.length + ')' : '');
+    pilotEl.textContent = M.playerName ? M.playerName() : 'Player';
     const many = st.melons.length > 1;
     left.style.visibility = many ? 'visible' : 'hidden';
     right.style.visibility = many ? 'visible' : 'hidden';
@@ -814,6 +929,26 @@ function buildPause() {
     toggles.push(paint);
     paint();
   };
+  // WHO IS RACING. Not a toggle — a value you can change, so it uses
+  // the settings grammar with an editable value rather than ON/OFF.
+  // The pause screen is a safe place to open the naming screen from:
+  // returning re-enters 'pause', which is idempotent. (The finish
+  // screen is NOT — entering it performs the career write.)
+  const addValueRow = (label, get, onOpen) => {
+    const row = el('div', 'ff-set-row');
+    row.appendChild(el('div', 'ff-set-k', label));
+    const val = el('button', 'ff-set-v ff-set-edit', '');
+    const paint = () => { val.textContent = get(); };
+    val.addEventListener('click', onOpen);
+    row.appendChild(val);
+    settings.appendChild(row);
+    toggles.push(paint);
+    paint();
+  };
+  addValueRow('RACER',
+    () => (window.FF.melon && window.FF.melon.playerName) ? window.FF.melon.playerName() : 'Player',
+    () => flow.openNaming('pilot'));
+
   addToggle('SOUND',
     () => !(window.FF.audio && window.FF.audio.isMuted && window.FF.audio.isMuted()),
     () => { if (window.FF.audio && window.FF.audio.toggleMuted) window.FF.audio.toggleMuted(); });
@@ -1276,6 +1411,203 @@ flow.go = function (name) {
   pushHistory(name);
 };
 
+// ---- THE NAMING GATE (2026-08-14) --------------------------------
+// A first-time player is given a melon before anything else happens.
+// This is a real FLOW STATE rather than a floating overlay, because
+// an overlay that lives outside the screen system is exactly how the
+// ceremony ended up racing the menu for the same pixels: it fired at
+// boot, rendered behind the menu (z-20 vs z-40), and only surfaced
+// once the race screen stepped aside — so it appeared to arrive
+// mid-race, and the tap that dismissed it fell through to the armed
+// grid and started the countdown.
+//
+// THE EXHIBITION RUNS BEHIND IT. A blank field behind the card is a
+// loading screen; melons already tumbling down today's track is the
+// game introducing itself while you name your racer. The exhibition's
+// local body is deliberately NOT dressed in the player's melon
+// (main.js skips that for the exhibition), which is right here too:
+// the melon being named is the one on the card, not one of the twelve
+// in the background.
+//
+// NOTHING ELSE IS TOUCHABLE and nothing can leak: no race has been
+// built at this point, so there is no grid to arm — the structural
+// version of the fix rather than a guard bolted on.
+flow.register('naming', {
+  enter() {
+    if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
+    clearFade();
+    const M = window.FF.melon;
+    const cur = M.active();
+    const isPilot = namingMode === 'pilot';
+    elNaming._title.textContent = isPilot ? 'YOUR NAME'
+      : namingMode === 'rename' ? 'RENAME'
+      : (M.pickHeadline ? M.pickHeadline() : "You've got Melon!");
+    elNaming._sub.textContent = isPilot ? 'who is racing?'
+      : namingMode === 'rename' ? 'what should it be called?'
+      : 'name your racer';
+    elNaming._input.placeholder = isPilot ? 'your name' : 'name your melon';
+    elNaming._input.value = isPilot ? (M.playerName ? M.playerName() : '')
+      : namingMode === 'rename' ? (cur.name || '') : '';
+    elNaming._refresh();
+    elNaming.style.display = 'flex';
+    spinners.length = 0;
+    clearCanvas(elNaming._spin);
+    pushMelonPortrait(elNaming._spin);
+    spinnersPaused = false;
+    startSpinners();
+    // Focus AFTER the screen is up, or the keyboard opens against a
+    // hidden field on iOS.
+    setTimeout(() => { try { elNaming._input.focus(); } catch (_) {} }, 60);
+  },
+  exit() {
+    elNaming.style.display = 'none';
+    spinners.length = 0;
+  },
+});
+
+// Open the naming screen. Modes:
+//   'ceremony' — first boot, names the MELON
+//   'rename'   — rename the melon
+//   'pilot'    — rename YOU, the racer driving it
+// Returns to the screen it was opened from, so the door can sit on
+// more than one screen without each caller having to say where back
+// is. NOTE it deliberately cannot be opened from 'finish': entering
+// that screen performs the one career write, so returning to it would
+// count the race twice.
+flow.openNaming = function (mode, onDone) {
+  namingMode = mode || 'ceremony';
+  const from = (flow.state && flow.state !== 'naming') ? flow.state : 'menu';
+  namingDone = onDone || (() => flow.go(from === 'finish' ? 'menu' : from));
+  flow.go('naming');
+};
+
+// THE HERO PORTRAIT, in one place. The menu and the naming ceremony
+// both show the player's melon at portrait size, and they must show
+// the SAME melon — same seed-derived scale, colour, rind and species,
+// same slow rate. Two copies of this drifted the moment one of them
+// learned about the Shader Studio's design override.
+function pushMelonPortrait(canvas) {
+  const M = window.FF.melon;
+  const d = M.derive(M.active().seed);
+  const design = window.FF.studio && window.FF.studio.design;
+  const fruit = (design && design.fruit) || 'watermelon';
+  const F = window.FF.FRUITS[fruit] || {};
+  // Semi-major from CONFIG, not a hard-coded 46: the portrait must
+  // track the same reference the sim uses if the tune panel moves it.
+  const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
+  spinners.push({
+    // The hero portrait turns slower than the results rows: it is
+    // being looked AT, not glanced at.
+    rate: 0.55,
+    canvas, angle: 0,
+    a, b: a * (F.aspect || 0.78),
+    color: (design && design.color) || d.bodyColor,
+    patKey: (design && design.patKey) || String(M.active().seed),
+    fruit,
+  });
+}
+
+// ---- THE NAMING SCREEN -------------------------------------------
+// Built from the START SCREEN'S OWN COMPONENTS (Eddie, 2026-08-14):
+// same .ff-screen scrim, same .ff-panel, same head/body/foot
+// contract, same .ff-title, the same portrait canvas classes, the
+// same .ff-stat-row grammar and the same .ff-btn. The card it
+// replaces predated type.js entirely — #111 panels, #fff titles,
+// #9a9a9a labels and a PINK keep button, the only pink control in the
+// game — so it read as a different product at the exact moment a new
+// player forms their first impression.
+//
+// Two modes, one screen: the CEREMONY (first boot, headline varies)
+// and RENAME (from the menu). They differ by a string and a starting
+// value, which is not enough to justify two surfaces.
+//
+// STATS: species and weight only. The full card belongs to the start
+// screen, where a player is choosing; here they are being handed one
+// melon, and length is a number nobody needs before they have a name.
+const NAMING_ROWS = ['species', 'weight'];
+let elNaming = null;
+let namingMode = 'ceremony';
+let namingDone = null;
+
+function buildNaming() {
+  const M = window.FF.melon;
+  elNaming = el('div', 'ff-screen ff-naming-screen');
+  const panel = el('div', 'ff-panel');
+  const head = el('div', 'ff-head');
+  const title = el('h1', 'ff-title', '');
+  const sub = el('p', 'ff-sub', '');
+  head.appendChild(title); head.appendChild(sub);
+  panel.appendChild(head);
+
+  const bodyZone = el('div', 'ff-body');
+  const row = el('div', 'ff-melon-row');
+  const spin = el('canvas', 'ff-spin ff-portrait');
+  spin.width = 560; spin.height = 560;
+  row.appendChild(spin);
+  bodyZone.appendChild(row);
+  const statsEl = el('div', 'ff-stats');
+  bodyZone.appendChild(statsEl);
+  panel.appendChild(bodyZone);
+
+  const foot = el('div', 'ff-foot');
+  const input = el('input', 'ff-name-input');
+  input.id = 'melon-name-input';
+  input.maxLength = 24;
+  input.placeholder = 'name your melon';
+  input.autocomplete = 'off';
+  const keep = el('button', 'ff-btn', 'KEEP');
+  keep.id = 'melon-name-ok';
+  foot.appendChild(input);
+  foot.appendChild(keep);
+  panel.appendChild(foot);
+  elNaming.appendChild(panel);
+  document.body.appendChild(elNaming);
+
+  const finish = () => {
+    const typed = input.value.trim();
+    // WHICH IDENTITY is being named: the melon (a body) or the pilot
+    // (you). One screen, one field, two destinations — the mode says
+    // which, so neither can be written by accident.
+    let out;
+    if (namingMode === 'pilot') {
+      out = M.renamePlayer(typed || M.playerName());
+    } else {
+      const cur = M.active();
+      // Empty is not a wall and not a random identity: see melon.js.
+      out = M.rename(typed || cur.name || M.UNNAMED_NAME);
+    }
+    const cb = namingDone; namingDone = null;
+    if (cb) cb(out);
+  };
+  keep.addEventListener('click', finish);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(); }
+  });
+
+  elNaming._title = title;
+  elNaming._sub = sub;
+  elNaming._spin = spin;
+  elNaming._stats = statsEl;
+  elNaming._input = input;
+  elNaming._refresh = () => {
+    const design = window.FF.studio && window.FF.studio.design;
+    const fruit = (design && design.fruit) || 'watermelon';
+    const byKey = new Map();
+    for (const r of (M.stats ? M.stats(M.active().seed, fruit) : [])) byKey.set(r.key, r);
+    const rows = [];
+    for (const k of NAMING_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
+    statsEl.textContent = '';
+    for (const r of rows) {
+      const line = el('div', 'ff-stat-row');
+      line.appendChild(el('span', 'k', r.label));
+      const v = el('span', 'v', r.value);
+      if (r.note) v.appendChild(el('small', null, r.note));
+      line.appendChild(v);
+      statsEl.appendChild(line);
+    }
+  };
+}
+
 flow.register('menu', {
   enter() {
     // Scenery: a full grid of bots lapping today's daily behind the
@@ -1287,24 +1619,7 @@ flow.register('menu', {
     elMenu._refresh();
     spinners.length = 0;
     clearCanvas(elMenu._spin);
-    const M = window.FF.melon;
-    const d = M.derive(M.active().seed);
-    const design = window.FF.studio && window.FF.studio.design;
-    const fruit = (design && design.fruit) || 'watermelon';
-    const F = window.FF.FRUITS[fruit] || {};
-    // Semi-major from CONFIG, not a hard-coded 46: the portrait must
-    // track the same reference the sim uses if the tune panel moves it.
-    const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
-    spinners.push({
-      // The hero portrait turns slower than the results rows: it is
-      // being looked AT, not glanced at.
-      rate: 0.55,
-      canvas: elMenu._spin, angle: 0,
-      a, b: a * (F.aspect || 0.78),
-      color: (design && design.color) || d.bodyColor,
-      patKey: (design && design.patKey) || String(M.active().seed),
-      fruit,
-    });
+    pushMelonPortrait(elMenu._spin);
     spinnersPaused = false; // this screen's portrait always turns
     startSpinners();
   },
@@ -1441,8 +1756,7 @@ flow.register('finish', {
       const c = el('canvas', 'ff-spin');
       c.width = 104; c.height = 104; // hint; syncCanvasSize owns it
       row.appendChild(c);
-      const nm = el('div', 'ff-rname', r.name);
-      if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
+      const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
       nm.appendChild(el('div', 'ff-rtime', r.dnf ? 'DNF' : fmtTime(r.timeSec)));
       row.appendChild(nm);
       rows.appendChild(row);
@@ -1549,11 +1863,11 @@ function fillCup() {
   // no second source of truth for what a melon looks like.
   const look = new Map();
   for (const s of computeStandings(stateRef, lastResolved)) {
-    look.set(s.isPlayer ? '\u0000you' : s.name, s);
+    look.set(s.key, s);
   }
 
   for (const r of rows) {
-    const key = r.isPlayer ? '\u0000you' : r.name;
+    const key = r.key;
     const s = look.get(key);
     const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
     const pos = el('div', 'ff-pos', String(r.pos));
@@ -1562,8 +1876,7 @@ function fillCup() {
     const cv = el('canvas', 'ff-spin');
     cv.width = 104; cv.height = 104;   // hint; syncCanvasSize owns it
     row.appendChild(cv);
-    const nm = el('div', 'ff-rname', r.isPlayer ? (s ? s.name : 'YOU') : r.name);
-    if (r.isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
+    const nm = racerIdentity(r.isPlayer ? (s ? s.name : 'YOU') : r.name, r.pilot, r.isPlayer);
     nm.appendChild(el('div', 'ff-rtime',
       r.points + ' pts  \u00b7  ' + (r.dnfs ? fmtTime(r.timeSec) + '  \u00b7  ' + r.dnfs + ' DNF' : fmtTime(r.timeSec))));
     row.appendChild(nm);
@@ -1751,14 +2064,23 @@ flow.init = function (state, opts) {
   buildConfirm();
   buildCountdown();
   buildMenu();
+  buildNaming();
   buildFinish();
   buildPause();
   initHistory();
   initAutoPause();
   elMenu.style.display = 'none';
+  elNaming.style.display = 'none';
   elFinish.style.display = 'none';
   elPause.style.display = 'none';
-  flow.go('menu');
+  // A melon that has never been named gets its ceremony FIRST, with
+  // the exhibition running behind it; the menu follows. Existing
+  // players sitting on a null name (the window where the ceremony was
+  // unreachable) are indistinguishable from new ones here, and get it
+  // once on this load — which is the honest repair.
+  const M = window.FF.melon;
+  if (M && M.needsName && M.needsName()) flow.openNaming('ceremony', () => flow.go('menu'));
+  else flow.go('menu');
 };
 
 flow.computeStandings = computeStandings;

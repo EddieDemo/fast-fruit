@@ -29,7 +29,8 @@
 // ============================================================
 
 const IDLE_MS = 45000;      // stop stepping after this long untouched
-const FIELD_SIZE = 12;      // a full grid of watermelons
+// The field size is no longer stated here: the roster is the cast and
+// main.js fills the grid from it (see configureRace below).
 
 const state = {
   running: false,
@@ -63,10 +64,12 @@ function start(hooks) {
   touch();
   hooks.configureRace({
     track: window.FF.dailyTrackName ? window.FF.dailyTrackName() : null,
-    // A full grid of the reference fruit: the background is scenery,
-    // not a showcase of the roster, and a uniform field reads calmer
-    // behind a panel of text.
-    roster: new Array(FIELD_SIZE).fill('watermelon'),
+    // NO ROSTER DESCRIPTION ANY MORE. The permanent cast (roster.js)
+    // is the field, and the local body is the STAND-IN's seat — the
+    // one the player takes in a real race — so the menu shows all
+    // twelve characters and a race shows the same eleven rivals with
+    // you in Bot Trevor's place. Describing a field here as well
+    // would be a second opinion about who is racing.
     endless: true,
   });
   // The local body is one of the field and must not answer the stick.

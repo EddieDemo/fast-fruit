@@ -111,9 +111,21 @@ function completeLeg(result) {
   // Everyone's running total, keyed by name. Ranking the cup is then
   // a fact rather than an estimate.
   for (const row of (result.standings || [])) {
-    const key = row.isPlayer ? '\u0000you' : (row.name || '?');
+    // KEYED BY RACER IDENTITY, not by melon name (2026-08-14). A cup
+    // ranks COMPETITORS across four races; the melon is the body they
+    // entered. Keying on the melon name also meant the player needed a
+    // reserved sentinel to avoid colliding with a rival who happened
+    // to share a name — the pilot key is unique by construction, so
+    // the sentinel is gone.
+    const key = row.key || row.pilot || row.name || '?';
     const e = active.table[key] || (active.table[key] = {
-      name: row.name || '?', isPlayer: !!row.isPlayer, points: 0, timeSec: 0, legs: 0,
+      key,
+      name: row.name || '?',
+      // The PILOT rides with the entry: a cup table ranks competitors
+      // over four races, so it has to be able to say who they are and
+      // not only which melon they entered.
+      pilot: row.pilot || '',
+      isPlayer: !!row.isPlayer, points: 0, timeSec: 0, legs: 0,
     });
     e.points += pointsFor(row.pos, fieldSize);
     // TIME IS A TIEBREAK, so a missing time must count as the WORST

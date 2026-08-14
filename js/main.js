@@ -91,23 +91,42 @@ function respawnRace(opts) {
   const botCount = CONFIG.botRoster && CONFIG.botRoster.length
     ? CONFIG.botRoster.length
     : Math.max(0, GRID_SIZE - humans);
-  resetBots(state, botCount, SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans);
+  // ---- THE PERMANENT CAST -----------------------------------------
+  // Solo races field the authored roster (roster.js): eleven rivals,
+  // each a fixed pilot driving a fixed melon with a fixed body. The
+  // TWELFTH seat is the local body, and it belongs to the STAND-IN —
+  // on the menu the autopilot drives Second Place Steve, and in a real
+  // race the player takes that exact seat. So the cast is complete in
+  // both cases and the rivals never change. Netplay still deals bodies
+  // the old way: a peer guessing wrong about another player's mass is
+  // a desync, and the handshake does not carry specs yet.
+  const R = window.FF.roster;
+  const explicitField = !!(CONFIG.botRoster && CONFIG.botRoster.length);
+  const cast = (R && !netSession && !explicitField) ? R.field() : null;
+  resetBots(state, cast ? cast.length : botCount,
+    SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans, cast);
 
-  // A CUP KEEPS ITS CAST. Names are normally dealt from the race
-  // seed, which would field four different sets of rivals across a
-  // cup and make its points table meaningless. Mid-cup the DAY's seed
-  // names the field instead — same twelve melons, four races.
+  // A CUP KEEPS ITS CAST. With the permanent roster this is now true
+  // by construction — the field is the same twelve characters on every
+  // track, every day — so the seeded name deal only runs for fields
+  // the roster did not build (netplay, harnesses, explicit rosters).
   const cupSeed = (window.FF.cup && window.FF.cup.nameSeed) ? window.FF.cup.nameSeed() : null;
-  window.FF.assignRosterNames(state, (cupSeed === null || cupSeed === undefined) ? castSeed : cupSeed);
+  if (!cast) {
+    window.FF.assignRosterNames(state, (cupSeed === null || cupSeed === undefined) ? castSeed : cupSeed);
+  }
+
+  // THE PLAYER IS A PILOT. Their melon is the body; their username is
+  // who is driving it. Applied to every human body in the race — in
+  // netplay a peer's username arrives with the handshake later, so
+  // for now each peer labels its own.
+  if (window.FF.melon.playerName && state.players[localSlot]) {
+    state.players[localSlot].melon.pilot = window.FF.melon.playerName();
+  }
 
   // Dress the local player in their PERSISTENT melon (solo only:
   // the MP handshake doesn't carry specs yet, and a peer guessing
   // wrong about your mass is a desync — netplay races scale 1.0
   // until the handshake field ships).
-  // The exhibition's local body is just another watermelon in the
-  // field — dressing it in the player's persistent melon would put
-  // their racer on the menu twice (portrait and world) and imply the
-  // background race is theirs.
   if (!netSession && !exhibition) {
     const spec = window.FF.melon.active();
     const d = window.FF.melon.derive(spec.seed);
@@ -115,6 +134,19 @@ function respawnRace(opts) {
     state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
     state.melon.bodyColor = d.bodyColor; // and so does the green
     if (spec.name) state.melon.name = spec.name;
+  } else if (!netSession && exhibition && cast) {
+    // THE MENU'S LOCAL BODY IS THE STAND-IN. Behind the panel the seat
+    // the player will take is driven by its own character, so the
+    // exhibition shows the complete cast of twelve rather than the
+    // player's melon racing a lap they did not drive.
+    const si = window.FF.roster.standIn();
+    if (si) {
+      window.FF.setBodyScale(state.melon, si.scale);
+      state.melon.name = si.melon;
+      state.melon.pilot = si.pilot;
+      state.melon.patKey = si.patKey;
+      if (si.color) state.melon.bodyColor = si.color;
+    }
   }
 
   state.raceStartTick = state.tick;
@@ -214,12 +246,18 @@ if (window.FF.devtools) {
 }
 if (window.FF.studio) window.FF.studio.init();
 
-window.FF.melon.maybeAskName((name) => {
-  // Apply immediately: the melon you just named is the one on track.
-  if (!netSession && state.players.length) {
-    state.melon.name = name;
-  }
-});
+// THE NAMING CEREMONY IS SEQUENCED BY FLOW (flow's 'naming' state),
+// not fired here at boot. Called from this point it raced the menu
+// for the screen and lost, then surfaced mid-race over an armed grid
+// — naming your melon started the countdown. flow.init now gates on
+// melon.needsName() and enters the ceremony BEFORE the menu, with the
+// exhibition running behind it.
+//
+// The name still has to reach the BODY, though: flow can't know about
+// state.melon. A melon named at boot is applied to the racer the next
+// time a race is built (main's respawnRace copies spec.name), and the
+// gate resolves before any race exists — so there is nothing to patch
+// up here. Renaming later goes through the same path.
 
 // ---- Challenge links choose their track at boot ----
 // A shared ghost names its track; dailies are self-describing, so a

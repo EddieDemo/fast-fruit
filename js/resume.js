@@ -35,8 +35,10 @@
 // ============================================================
 
 const KEY = 'ff.resume.v1';
-const VERSION = 4;          // bump on ANY change to the stored shape
+const VERSION = 6;          // bump on ANY change to the stored shape
                             // v4 (2026-08-13): the cluster ledger
+                            // v5 (2026-08-14): the pilot (melon vs driver)
+                            // v6 (2026-08-14): cup table keyed by pilot
 const HEARTBEAT_MS = 2000;
 // The BACKSTOP, not the rule. The day guard above expires a daily
 // run the moment the date turns over, which is the real policy; this
@@ -59,7 +61,7 @@ function packBody(m) {
     f: m.fruit, s: +(m.a / window.FF.CONFIG.semiMajor).toFixed(6),
     x: m.x, y: m.y, an: m.angle, vx: m.vx, vy: m.vy, w: m.omega,
     al: m.alive ? 1 : 0, rs: m.respawnAtTick, pt: m.protectTick,
-    nm: m.name || '', bc: m.bodyColor || null,
+    nm: m.name || '', pl: m.pilot || '', bc: m.bodyColor || null,
     ft: m.finishTick === undefined ? null : m.finishTick,
     // airTicks is not just telemetry: the oracle brain reads it to
     // decide whether it is airborne, so dropping it would have every
@@ -98,6 +100,9 @@ function applyBody(FF, m, p) {
   m.vx = p.vx; m.vy = p.vy; m.omega = p.w;
   m.alive = !!p.al; m.respawnAtTick = p.rs; m.protectTick = p.pt;
   if (p.nm) m.name = p.nm;
+  // The PILOT rides with the body: a resumed race showing the right
+  // melon driven by the wrong name is a small lie about who is here.
+  if (p.pl) m.pilot = p.pl;
   if (p.bc) m.bodyColor = p.bc;
   m.finishTick = p.ft === undefined ? null : p.ft;
   // Transient per-step fields must NOT be restored: they describe the

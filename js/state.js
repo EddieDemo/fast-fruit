@@ -251,7 +251,13 @@ function createBody(x, y, scale, fruit) {
     hitOmegaPre: 0,          // spin at that blow's approach
     recentPacePx: null,      // pace window (racewatch -> finish estimator)
     deathCount: 0,           // splats this race (racewatch -> estimator)
-    name: '',                // the cast (names.js)
+    name: '',                // the MELON's name — the character (roster.js)
+    // THE PILOT: who is driving this body — a bot ('Bot Gary') or the
+    // player (their username). A melon is a body; the pilot is the
+    // brain that entered it. `name` used to carry both jobs, which is
+    // why nothing could tell "the melon Gourdzilla" apart from
+    // "whoever is racing it".
+    pilot: '',
     bodyColor: null,         // pigment (resetBots / the player's dressing)
     patKey: null,            // rind pattern key (the player's dressing)
     pairOtherName: '',       // traffic blame breadcrumbs (pair solver)
@@ -328,10 +334,42 @@ function resetMelon(state, x, y) {
 // Spawn `count` bots on the grid, continuing where the humans end:
 // bot i takes metre (gridStart + i + 1) before the line at x.
 // gridStart defaults to 1 (one human) for legacy callers.
-function resetBots(state, count, x, y, sizeSeed, gridStart) {
+//
+// `cast` (optional) is an explicit field description — one entry per
+// bot, from roster.js — and when present it is AUTHORITATIVE: species,
+// scale, pigment, rind, melon name, pilot and brain all come from it,
+// and the seeded deal below is skipped entirely. That is what makes
+// the permanent cast permanent: Bot Gary's melon is the same body on
+// every device, every day, because it was authored rather than dealt.
+// Without a cast (harnesses, netplay, any caller that just wants
+// bodies) the original seeded deal runs unchanged, so nothing that
+// existed before this parameter behaves differently.
+function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
   state.bots.length = 0;
   const g0 = gridStart === undefined ? 1 : gridStart;
   for (let i = 0; i < count; i++) {
+    const entry = cast && cast[i];
+    if (entry) {
+      const F = window.FF.FRUITS;
+      const fruit = entry.fruit || 'watermelon';
+      const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
+      const melon = createBody(x, y, (entry.scale || 1) * mult, fruit);
+      melon.name = entry.melon || '';
+      melon.pilot = entry.pilot || '';
+      if (entry.color) melon.bodyColor = entry.color;
+      if (entry.patKey) melon.patKey = entry.patKey;
+      gridPlace(state, melon, g0 + i, x, y);
+      melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
+      state.bots.push({
+        melon,
+        prevMelon: { ...melon },
+        input: { rawAxis: 0, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 },
+        brainName: entry.brain || 'cruise',
+        brain: (window.FF.pilot && window.FF.pilot.create)
+          ? window.FF.pilot.create(entry.brain || 'cruise') : null,
+      });
+      continue;
+    }
     // Seeded size variety, keyed to the grid slot (identical on every
     // peer; bot #4 is always bot #4's size). Triangular distribution
     // 0.85..1.18 centered near 1: mostly mid-sized, the odd runt, the
@@ -443,5 +481,27 @@ function setBodyScale(m, scale) {
   }
 }
 
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale });
+// ---- THE IDENTITY OF RECORD (2026-08-14) --------------------------
+// WHO a racer is, for anything that keys data: the PILOT. A melon is
+// a body and can be swapped, renamed, or shared — a cup ranks
+// competitors across four races, so keying its table by melon name
+// would rank the fruit rather than the field.
+//
+// It is also the only key that cannot be broken by a player with a
+// sense of humour: nothing stops someone naming their melon "The
+// Rindfather", and any structure keyed on melon name would then merge
+// them with Bot Gary into one row. Pilot names are unique by
+// construction — the cast is authored, and the player is the only
+// other pilot in a solo race.
+//
+// Falls back to the melon name for bodies that have no pilot yet
+// (netplay peers, harness fields), so every caller gets a usable key
+// without needing to know which kind of race it is in.
+function racerKey(m) {
+  return (m && (m.pilot || m.name)) || '?';
+}
+
+// Namespace registration (classic scripts, no modules).
+window.FF = window.FF || {};
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale, racerKey });
 })();

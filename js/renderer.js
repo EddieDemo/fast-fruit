@@ -269,6 +269,7 @@ function createRenderer(canvas) {
         color: window.FF.racerColor(state, state.players.length + i),
         squash: gm, // bots deform too: strain is per-body now
         name: gm.name,
+        pilot: gm.pilot,
       });
     }
     // Remote players (canonical slot colors), then the local player
@@ -286,6 +287,7 @@ function createRenderer(canvas) {
         color: PLAYER_PALETTE[i % PLAYER_PALETTE.length],
         squash: gm, // remote players are simulated locally: real strain
         name: gm.name,
+        pilot: gm.pilot,
       });
     }
     if (state.melon.alive) {
@@ -299,6 +301,7 @@ function createRenderer(canvas) {
         color: state.melon.bodyColor || PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
         squash: state.melon, isPlayer: true,
         name: state.melon.name,
+        pilot: state.melon.pilot,
       });
     }
 
@@ -318,6 +321,33 @@ function createRenderer(canvas) {
     for (let rank = 0; rank < roster.length; rank++) placeOf.set(roster[rank], rank + 1);
     for (const d of drawList) d.place = placeOf.get(d.melon);
 
+    // Nameplate crowding: the screen-space x of every OTHER label this
+    // frame, so a plate can ask whether it has elbow room before it
+    // spends a second line. Recomputed per frame (twelve numbers) and
+    // never stored on the body: this is a fact about the CAMERA, not
+    // about the racer.
+    const plateXs = [];
+    for (const d of drawList) {
+      if (!d.name) continue;
+      let px = d.x;
+      if (state.period) {
+        const k = Math.round((d.x - cam.x) / state.period.L);
+        if (k !== 0) px -= k * state.period.L;
+      }
+      plateXs.push(toScreenX(px));
+    }
+    // Room enough for a pilot line? The melon names are the wide part,
+    // so the test is generous: a neighbour closer than this and the
+    // two plates were already fighting.
+    const PLATE_ROOM = 130;
+    const nameplateHasRoom = (d, sx) => {
+      for (const px of plateXs) {
+        if (px === sx) continue;
+        if (Math.abs(px - sx) < PLATE_ROOM) return false;
+      }
+      return true;
+    };
+
     for (const d of drawList) {
       // Periodic world: draw each body at its image nearest the camera,
       // so rivals laps apart still appear on the shared circuit.
@@ -330,9 +360,25 @@ function createRenderer(canvas) {
       // Nameplate: x tracks the fruit, y anchors to the terrain
       // surface — a shadow-label that stays calmly in the floor while
       // its fruit tumbles through the air above it.
+      //
+      // TWO LINES: the MELON is the character and reads first; the
+      // PILOT sits beneath it in the micro/faint role, because the
+      // melon is a body and someone is driving it.
+      //
+      // ...BUT ONLY WHEN THERE IS ROOM. A PIL proof of the bunched
+      // pack (melons a metre apart on the grid) showed the single
+      // line ALREADY overlapping into a mush at that density, and a
+      // second line doubles the ink at exactly the moment the screen
+      // can least afford it. So the pilot line is spent like any other
+      // budget: it appears when the nearest neighbouring nameplate is
+      // far enough away to leave it legible, and quietly withholds
+      // itself in traffic — where the melon name is what you need
+      // anyway. Screen-space and presentation-only: nothing the sim
+      // can see, and free to differ between peers.
       if (d.name) {
         const wy = terrainYAt(state.terrain, dxw);
         if (wy !== null) {
+          const baseY = toScreenY(wy) + 34 + Math.round(150 * zoom);
           ctx.font = '700 14px "Geist Mono", ui-monospace, monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'alphabetic';
@@ -340,7 +386,12 @@ function createRenderer(canvas) {
           // green now, so the names carry the color identity instead);
           // the player's name keeps their sacred green.
           ctx.fillStyle = d.isPlayer ? '#00ff00' : nameColor(d.name); // sacred green lives HERE now
-          ctx.fillText(d.name, sx, toScreenY(wy) + 34 + Math.round(150 * zoom));
+          ctx.fillText(d.name, sx, baseY);
+          if (d.pilot && nameplateHasRoom(d, sx)) {
+            ctx.font = '400 10px "Geist Mono", ui-monospace, monospace';
+            ctx.fillStyle = d.isPlayer ? 'rgba(140,220,150,0.78)' : 'rgba(150,180,155,0.62)';
+            ctx.fillText(d.pilot, sx, baseY + 13);
+          }
         }
       }
       // ---- Cast shadow: TRUE projection. The rotated silhouette's

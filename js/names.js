@@ -1,6 +1,14 @@
 // ============================================================
-// NAMES.JS — the cast list. Content file, like the billboard sheet:
-// edit freely, engine code never needs to change.
+// NAMES.JS — the melon-name pool. Content file, like the billboard
+// sheet: edit freely, engine code never needs to change.
+//
+// WHAT THIS IS NOW (2026-08-14). The permanent cast lives in
+// roster.js: twelve authored characters, each a PILOT driving one
+// fixed MELON, and that is what a solo race fields. This list is the
+// pool those melon names were authored FROM, and it remains the
+// dealer for every field the roster does not build — netplay,
+// harnesses, and any explicitly configured roster. Names dealt here
+// are MELON names; pilots are a separate identity (see roster.js).
 //
 // Comedy doctrine (Worms-certified): mostly puns, seasoned with
 // menace, and a few AGGRESSIVELY MUNDANE entries — because "Just
@@ -10,9 +18,8 @@
 //
 // Assignment is SEEDED from the race seed, never Math.random: names
 // are presentation, but shared presentation — every peer in a
-// lockstep race sees the same cast, every ghost replays against the
-// same rivals, and every daily has its canonical roster ("the day
-// Gourdzilla won" is a shared fact).
+// lockstep race sees the same cast, and every ghost replays against
+// the same rivals.
 // ============================================================
 
 (function () {

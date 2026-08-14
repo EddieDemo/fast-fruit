@@ -201,29 +201,24 @@ const PRESETS = Object.freeze({
   // in netplay all peers must share these values or bodies desync.
   botCantaloupe: false,
   botHoneydew: false,
-  // An explicit field roster: one entry per bot, naming registry
-  // species outright. null = the normal seeded deal (11 melons).
-  // THE FIELD: eleven watermelons plus the player — a full grid
-  // (GRID_SIZE 12 in main.js). One of them, named in botBrains below,
-  // carries the oracle brain; the other ten run cruise.
-  botRoster: [
-    'watermelon', 'watermelon', 'watermelon', 'watermelon',
-    'watermelon', 'watermelon', 'watermelon', 'watermelon',
-    'watermelon', 'watermelon', 'watermelon',
-  ],
+  // THE FIELD COMES FROM THE ROSTER (2026-08-14). roster.js names
+  // every character — pilot, melon, brain and body — so the field is
+  // authored content rather than a species list, and this is null by
+  // default. It survives as an OVERRIDE for callers that genuinely
+  // want to describe a field themselves: harnesses ("the grid is one
+  // dragon ball and eleven melons"), balance sweeps, and netplay.
+  // A non-empty value here takes precedence over the roster, so
+  // setting it is how a suite opts out of the permanent cast.
+  botRoster: null,
 
-  // BRAINS BY NAME, not by grid slot (Eddie, 2026-08-12). A slot-based
-  // assignment meant the clever bot was a different melon every day —
-  // fine for a tournament, useless for testing and worse as character:
-  // "The Rindfather beat me again" is a story, "slot 3 beat me again"
-  // is not. Keyed by name, a melon's brain is the same on every track,
-  // every race, every day.
-  //
-  // Any name here is also RESERVED A SEAT: names.js seats it before
-  // dealing the rest, so the named racer is always in the field.
-  botBrains: {
-    'The Rindfather': 'oracle',
-  },
+  // BRAINS MOVED TO THE ROSTER (2026-08-14). A brain belongs to the
+  // PILOT, not to the fruit: driving skill is a property of the thing
+  // steering, and a melon is a body. roster.js now names every
+  // character's pilot, melon and brain in one authored table, so the
+  // clever racer cannot drift away from the melon it drives. This map
+  // survives as a per-melon-name OVERRIDE for fields the roster does
+  // not build (netplay, harnesses); empty by default.
+  botBrains: {},
   // The LAWS OF MELON NATURE — uniform physical rules across the size
   // family, tuned so distinct characters equalize in WIN RATE without
   // ever fudging an individual or an outcome:
@@ -252,7 +247,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-13h';
+const BUILD = '2026-08-14g';
 
 const CONFIG = { ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
