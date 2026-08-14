@@ -437,8 +437,16 @@ const NAMING_HEADLINES = [
   'You get a Melon!',       // Oprah: "You get a car!"
   "Congratulations, it's a Melon!", // the delivery-room announcement
   'Special delivery!',      // the parcel at the door
-  'Melon get!',             // the Nintendo item-get, localisation and all
 ];
+// 'Melon get!' USED TO LIVE HERE and has moved to the finish screen's
+// prize button (flow.js). It is the Gratuitous English acquisition
+// message from the Japanese release of Super Mario Sunshine —
+// "SHINE GET!" — snowcloned as "[X] GET!", and the joke is the word
+// order rather than the words. It earns more as a button than as a
+// headline: a headline shows on a sixth of prizes, the button shows
+// on every one. Keeping it in both places would have the button
+// promise a phrase the ceremony then failed to deliver five times in
+// six — and stutter the sixth.
 
 // Presentation tier: Math.random is correct here (nothing derives from
 // it, and it happens before any race exists). PICKED ONCE and held, so

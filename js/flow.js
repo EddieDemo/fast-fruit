@@ -283,6 +283,24 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
 .ff-rel-stat { font-size: var(--fs-micro); color: var(--c-dim); }
 .ff-rel-rec { font-size: var(--fs-micro); color: var(--c-faint); margin-top: 2px; }
 .ff-release-screen { z-index: 45; }
+/* SHORT SCREENS MUST SHOW ALL SIX AT ONCE. The panel contract keeps
+   the foot pinned and scrolls the body, which is correct behaviour
+   for a list — but this is not a list, it is a CHOICE, and an
+   irreversible one: a player who cannot see the last two cells may
+   release a melon without knowing what the alternatives were.
+   Measured at 844x390: three columns of the standard cell scrolled,
+   with the bottom row below the fold. So the cell compacts (smaller
+   portrait, tighter type) rather than the grid scrolling. */
+@media (max-height: 560px) {
+  .ff-release-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .ff-release-cell { padding: 5px 3px; }
+  .ff-release-cell canvas.ff-spin { width: 40px; height: 40px; }
+  .ff-rel-name { font-size: var(--fs-micro); margin-top: 2px; }
+  .ff-rel-stat, .ff-rel-rec { font-size: var(--fs-micro); }
+  .ff-rel-rec { margin-top: 0; }
+  .ff-release-screen .ff-title { margin-bottom: 4px; }
+  .ff-release-screen .ff-sub { margin-bottom: 8px; }
+}
 .ff-name-input { display: block; width: 100%; box-sizing: border-box;
   margin: 0 0 8px; padding: 12px;
   background: #060a07; color: var(--c-accent);
@@ -476,27 +494,28 @@ function racerIdentity(melonName, pilotName, isPlayer) {
 // The melon is already in the stable (or held aside, if full) before
 // any of this runs: the flow decides what to KEEP, never whether the
 // prize existed.
-function openAwardFlow(award) {
-  const M = window.FF.melon;
+function openAwardFlow(award, then) {
+  const go = then || (() => flow.go('menu'));
   // Not full: it is already in the stable. Name it and go.
   if (!award.full) {
     namingAward = award.spec;
-    flow.openNaming('award', () => { namingAward = null; flow.go('menu'); });
+    flow.openNaming('award', () => { namingAward = null; go(); });
     return;
   }
   // Full: the ceremony first, then the release grid if they keep it.
   namingAward = award.spec;
   flow.openNaming('award', (kept) => {
     namingAward = null;
-    if (kept === null) { flow.go('menu'); return; }   // left it
-    openRelease(award.spec);
+    if (kept === null) { go(); return; }   // left it
+    openRelease(award.spec, go);
   }, { allowLeave: true });
 }
 
 // Step two: which of the six goes. Built fresh each time — it is a
 // rare screen and the stable it lists changes.
 let elRelease = null;
-function openRelease(spec) {
+function openRelease(spec, then) {
+  const go = then || (() => flow.go('menu'));
   const M = window.FF.melon;
   if (!elRelease) {
     elRelease = el('div', 'ff-screen ff-release-screen');
@@ -544,7 +563,7 @@ function openRelease(spec) {
           M.acceptAward(spec, i);
           elRelease.style.display = 'none';
           namingAward = spec;
-          flow.openNaming('award', () => { namingAward = null; flow.go('menu'); });
+          flow.openNaming('award', () => { namingAward = null; go(); });
         },
       });
     });
@@ -557,12 +576,16 @@ function openRelease(spec) {
   });
   elRelease._cancel.onclick = () => {
     elRelease.style.display = 'none';
-    flow.go('menu');
+    go();
   };
   elRelease.style.display = 'flex';
   spinnersPaused = false;
   startSpinners();
 }
+
+// Dev/test hook: the release screen is otherwise only reachable by
+// winning a seventh melon, which is days of play away.
+window.FF._openRelease = (spec) => openRelease(spec);
 
 function computeStandings(state, resolved) {
   const rows = [];
@@ -1165,10 +1188,7 @@ function buildPause() {
     // the finish screen and the menu, so the input-requiring beat
     // lands once the player has decided they are done reading — and
     // never before the placing that earned it.
-    const award = pendingAward;
-    pendingAward = null;
-    if (award && award.won) { openAwardFlow(award); return; }
-    flow.go('menu');
+    collectThen(() => flow.go('menu'));
   });
 
   // The button itself: visible only while racing (a pause control on
@@ -1306,17 +1326,34 @@ function buildFinish() {
   });
   elFinish.appendChild(panel);
   document.body.appendChild(elFinish);
+  // ---- COLLECT ON THE WAY OUT, WHICHEVER DOOR ----------------------
+  // The prize is spent by EVERY exit from this screen, not just MAIN
+  // MENU. Without this, pressing RETRY after winning left the award
+  // pending: the melon was safe (it is persisted the moment it is
+  // won) but the ceremony never ran, and the next completed cup
+  // overwrote the pending award — a prize collected silently, with no
+  // moment attached to it. Now the ceremony always happens, and only
+  // the destination afterwards differs.
+  const collectThen = (next) => {
+    const award = pendingAward;
+    pendingAward = null;
+    if (award && award.won) { openAwardFlow(award, next); return; }
+    next();
+  };
+
   retry.addEventListener('click', () => {
-    // After a completed cup, RETRY means another ATTEMPT at the day —
-    // unlimited by design, ranked on your best.
-    if (!practiceMode && window.FF.cup && window.FF.cup.isComplete() && startLegFn) {
-      window.FF.cup.begin();
-      startLegFn(window.FF.cup.trackForLeg(0));
-    } else if (respawnFn) {
-      respawnFn();
-    }
-    fromMenuOrRetry = true;
-    flow.go('race');
+    collectThen(() => {
+      // After a completed cup, RETRY means another ATTEMPT at the day —
+      // unlimited by design, ranked on your best.
+      if (!practiceMode && window.FF.cup && window.FF.cup.isComplete() && startLegFn) {
+        window.FF.cup.begin();
+        startLegFn(window.FF.cup.trackForLeg(0));
+      } else if (respawnFn) {
+        respawnFn();
+      }
+      fromMenuOrRetry = true;
+      flow.go('race');
+    });
   });
   menu.addEventListener('click', () => {
     // Leaving for the menu ends the run: nothing left to resume, and
@@ -1331,11 +1368,28 @@ function buildFinish() {
     // the finish screen and the menu, so the input-requiring beat
     // lands once the player has decided they are done reading — and
     // never before the placing that earned it.
-    const award = pendingAward;
-    pendingAward = null;
-    if (award && award.won) { openAwardFlow(award); return; }
-    flow.go('menu');
+    collectThen(() => flow.go('menu'));
   });
+  // THE DOOR HAS TO NAME WHAT IS BEHIND IT. 'YOU'VE WON A MELON'
+  // followed by two buttons that say RETRY and MAIN MENU leaves the
+  // player told about a prize with no visible way to reach it — and
+  // nothing hints that the menu route hands it over on the way. So
+  // when a prize is waiting the exit says so and becomes the PRIMARY
+  // action, and RETRY steps down to secondary.
+  //
+  // THE LABEL IS 'MELON GET!' — the acquisition shout from the
+  // Japanese Super Mario Sunshine ("SHINE GET!"), whose joke is the
+  // word order, not the casing. Set in CAPS like every other button:
+  // the buttons are one family and a lone sentence-case member reads
+  // as an inconsistency before it reads as a quote. The plain
+  // language directly above it ("YOU'VE WON A MELON" on the cup tab)
+  // does the informing, so the button is free to celebrate.
+  elFinish._paintPrizeButtons = () => {
+    const waiting = !!(pendingAward && pendingAward.won);
+    menu.textContent = waiting ? 'MELON GET!' : 'MAIN MENU';
+    menu.classList.toggle('ff-secondary', !waiting);
+    retry.classList.toggle('ff-secondary', waiting);
+  };
   elFinish._rows = rows;
   elFinish._cupTable = cupTable;
   elFinish._facts = facts;
@@ -1980,6 +2034,7 @@ flow.register('finish', {
     // local AI would desync the session (netplay bypasses these
     // screens anyway; the guard is belt and braces).
     if (window.FF.autopilot) window.FF.autopilot.engage(stateRef, { netplay: !!netplayFn && netplayFn() });
+    if (elFinish._paintPrizeButtons) elFinish._paintPrizeButtons();
     elFinish.style.display = 'flex';
     const rows = elFinish._rows;
     rows.textContent = '';
