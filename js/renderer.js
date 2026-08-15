@@ -270,6 +270,7 @@ function createRenderer(canvas) {
         squash: gm, // bots deform too: strain is per-body now
         name: gm.name,
         pilot: gm.pilot,
+        decals: gm.decals,
       });
     }
     // Remote players (canonical slot colors), then the local player
@@ -288,6 +289,7 @@ function createRenderer(canvas) {
         squash: gm, // remote players are simulated locally: real strain
         name: gm.name,
         pilot: gm.pilot,
+        decals: gm.decals,
       });
     }
     if (state.melon.alive) {
@@ -302,6 +304,7 @@ function createRenderer(canvas) {
         squash: state.melon, isPlayer: true,
         name: state.melon.name,
         pilot: state.melon.pilot,
+        decals: state.melon.decals,
       });
     }
 
@@ -461,7 +464,7 @@ function createRenderer(canvas) {
           smeared = true;
         }
       }
-      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
+      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals);
       // ---- Contact shadow: the body darkens near its ground touch ----
       if (RIG.P.contactShadow) {
         const wyG = terrainYAt(state.terrain, dxw);
@@ -991,7 +994,7 @@ function createRenderer(canvas) {
     ctx.fillText(suf, x0 + wNum, y - size * 0.17);
   }
 
-  function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit) {
+  function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
     const a = bodyA || CONFIG.semiMajor;
     const b = bodyB || CONFIG.semiMinor;
 
@@ -1014,7 +1017,7 @@ function createRenderer(canvas) {
     // Cel-shaded body: world-fixed sun, terminator the surface rolls
     // beneath. The rotation that was invisible by design is now
     // readable against the light.
-    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit);
+    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit, undefined, decals);
 
     ctx.restore();
   }
@@ -1165,7 +1168,7 @@ function createRenderer(canvas) {
   // patternScale: device pixels per world pixel at the destination.
   // Defaults to the in-race supersample when a caller doesn't know or
   // doesn't care (every racing body).
-  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit, patternScale) {
+  function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit, patternScale, decals, decalPreview) {
     const TAU2 = Math.PI * 2;
     // A species may carry ONE colour fact of its own — the pattern-
     // anchor offset (FRUITS[x].patternOffset, e.g. a red star on
@@ -1461,7 +1464,291 @@ function createRenderer(canvas) {
       }
     }
 
+    // ---- DECALS, last, inside the body clip ----------------------
+    // Drawn AFTER the shading bands and clipped to the silhouette, so
+    // a sticker cannot spill past the rind. They are NOT part of the
+    // pattern mask: that mask is tinted per band, so a red heart
+    // composited into it would come out green.
+    if (decals && decals.length && window.FF.decals) {
+      // Same raster scale as the rind (RSCALE in race, up to 8 for the
+      // portrait). Built at 1:1 body pixels it was two to eight times
+      // coarser than the pattern beside it, which is exactly what
+      // blocky stickers on a smooth melon look like.
+      // A live gesture rebakes every pointer move, so the PREVIEW tier
+      // trades resolution for latency: raster scale capped at 2, coarse
+      // meshes, and NO cache writes — thirty moves a second would
+      // otherwise churn the whole LRU with single-use rasters. The
+      // crisp bake lands on gesture end, when the editor draws without
+      // the flag.
+      const rsD = decalPreview
+        ? Math.max(1, Math.min(2, patternScale || RSCALE))
+        : Math.max(1, Math.min(RSCALE_MAX, patternScale || RSCALE));
+      const dr = decalRaster(decals, a, b, rsD, decalPreview);
+      if (dr) {
+        // A decal is LIT BY THE SAME BANDS as everything else. Drawn
+        // once and left alone it sat ON TOP of the shading — a sticker
+        // that stayed bright while the melon around it rolled into
+        // shadow. So it is stamped exactly like the rind pattern:
+        // once per region, in that region's light.
+        //
+        // The rind gets this free because it is an alpha MASK and each
+        // band paints it a different colour. A decal carries its own
+        // colours, so instead each region draws a copy MULTIPLIED by
+        // how dark that band's fill is against the base fill — the
+        // band's own lighting, applied to whatever colour the sticker
+        // happens to be.
+        const stampDecal = (slot) => {
+          const lit = shadedDecal(dr, slot);
+          if (!lit) return;
+          ctx.save();
+          ctx.rotate(angle);
+          ctx.drawImage(lit, -dr.w / 2, -dr.h / 2, dr.w, dr.h);
+          ctx.restore();
+        };
+        // Base region: everything no band owns.
+        ctx.save();
+        for (const band of B) {
+          const iso = RIG.isoContour(angle, a, b, band.tau, null, taper);
+          if (!iso) continue;
+          ctx.beginPath();
+          if (band.inv) {
+            if (iso.full) { bodyPath(ctx, a, b, angle, taper); ctx.clip(); continue; }
+            for (let i = 0; i < iso.pts.length; i++) {
+              const p = iso.pts[i];
+              if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+            }
+            ctx.closePath(); ctx.clip();
+          } else {
+            bodyPath(ctx, a, b, angle, taper);
+            if (!iso.full) {
+              ctx.moveTo(iso.pts[0][0], iso.pts[0][1]);
+              for (let i = 1; i < iso.pts.length; i++) ctx.lineTo(iso.pts[i][0], iso.pts[i][1]);
+              ctx.closePath();
+            }
+            ctx.clip('evenodd');
+          }
+        }
+        stampDecal(DECAL_SLOTS.base);
+        ctx.restore();
+        // Then each band's region, in that band's light.
+        for (const band of B) {
+          const iso = RIG.isoContour(angle, a, b, band.tau, null, taper);
+          // The band's OWN slot, applied to the decal's inks.
+          const slot = band.fillSlot || DECAL_SLOTS.base;
+          ctx.save();
+          ctx.beginPath();
+          if (band.inv) {
+            bodyPath(ctx, a, b, angle, taper);
+            if (iso && !iso.full) {
+              ctx.moveTo(iso.pts[0][0], iso.pts[0][1]);
+              for (let i = 1; i < iso.pts.length; i++) ctx.lineTo(iso.pts[i][0], iso.pts[i][1]);
+              ctx.closePath();
+            }
+            ctx.clip('evenodd');
+          } else {
+            if (!iso) { ctx.restore(); continue; }
+            if (iso.full) bodyPath(ctx, a, b, angle, taper);
+            else {
+              for (let i = 0; i < iso.pts.length; i++) {
+                const p = iso.pts[i];
+                if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+              }
+              ctx.closePath();
+            }
+            ctx.clip();
+          }
+          stampDecal(slot);
+          ctx.restore();
+        }
+      }
+    }
+
     ctx.restore(); // body clip ends here
+  }
+
+  // ---- DECAL COLOUR: THE MELON'S OWN LAW (option A) ------------------
+  // A decal's colours go through the SAME three-axis offset the rind
+  // does — L*, HUE and SATURATION — rather than a brightness multiply.
+  //
+  // The melon's shading is not a dimmer. Its ramp carries hue rotation
+  // and desaturation (shadow: dL -30, dHUE -30, dSAT -10; highlight:
+  // dL +30, dHUE -20, dSAT -40), and that behaviour IS the aesthetic:
+  // cooler in shadow, chalkier in light. A decal lit only by a scalar
+  // stayed at its authored hue and saturation and read as pasted on
+  // from another game.
+  //
+  // THE COST, ACCEPTED: authored colour does not survive. The base band
+  // itself carries dHUE -25 / dSAT -25, so a French flag renders teal
+  // and pink rather than blue and red. Cohesion is bought with
+  // fidelity. (If that trade turns out wrong, option C applies only the
+  // DELTA from base to each band, keeping authored colour where the
+  // light is neutral while the shading still behaves under this law.)
+  const DECAL_SLOTS = { shadow: 'A1', base: 'A2', highlight: 'A3' };
+
+  // A decal raster recoloured band by band, cached per (raster, slot).
+  // Per-pixel work, so it must not happen per frame — same reason
+  // tintedPattern is cached.
+  const SHADED_CAP = 240;
+  const shadedCache = new Map();
+  function shadedDecal(raster, slot) {
+    if (!raster) return null;
+    // PREVIEW RASTERS HAVE NO ID (they are deliberately uncached), so
+    // they must not touch the shared cache either: keyed by id, every
+    // preview of every frame would share 'null|slot' — the first one
+    // cached would be returned for ALL of them, and a drag would flick
+    // to whatever outfit happened to be cached first (Eddie caught it
+    // showing a long-removed flag). Instead a null-id raster memoises
+    // its lit copies ON ITSELF, so the memo lives exactly as long as
+    // the frame that built it.
+    if (!raster.id) {
+      if (!raster._lit) raster._lit = new Map();
+      const c0 = raster._lit.get(slot);
+      if (c0) return c0;
+      const cv0 = shadedDecalBuild(raster, slot);
+      raster._lit.set(slot, cv0);
+      return cv0;
+    }
+    const ck = raster.id + '|' + slot;
+    let c = shadedCache.get(ck);
+    if (c) { shadedCache.delete(ck); shadedCache.set(ck, c); return c; }
+    const cv = shadedDecalBuild(raster, slot);
+    if (cv === raster.canvas) return cv;           // headless passthrough
+    shadedCache.set(ck, cv);
+    while (shadedCache.size > SHADED_CAP) {
+      const oldest = shadedCache.keys().next().value;
+      if (oldest === undefined || oldest === ck) break;
+      shadedCache.delete(oldest);
+    }
+    return cv;
+  }
+
+  function shadedDecalBuild(raster, slot) {
+    if (typeof document === 'undefined') return raster.canvas;
+    const RIG = window.FF.shading;
+    const src = raster.ctx.getImageData(0, 0, raster.canvas.width, raster.canvas.height);
+    const d = src.data;
+    const cache = new Map();                       // few distinct inks per decal
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      let out = cache.get(key);
+      if (out === undefined) {
+        const hex = '#' + key.toString(16).padStart(6, '0');
+        const lit = RIG.inkColor ? RIG.inkColor(hex, slot) : RIG.slotColor(hex, slot, null);
+        const n = parseInt(lit.slice(1), 16);
+        out = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+        cache.set(key, out);
+      }
+      d[i] = out[0]; d[i + 1] = out[1]; d[i + 2] = out[2];
+    }
+    const cv = document.createElement('canvas');
+    cv.width = raster.canvas.width; cv.height = raster.canvas.height;
+    cv.getContext('2d').putImageData(src, 0, 0);
+    return cv;
+  }
+
+  // Pigment for an ink: memoised, since a decal has a handful of
+  // colours and a raster has thousands of pixels.
+  const preInkCache = new Map();
+  function preInk(c) {
+    const key = (c[0] << 16) | (c[1] << 8) | c[2];
+    let out = preInkCache.get(key);
+    if (out) return out;
+    const RIG = window.FF.shading;
+    const hex = '#' + key.toString(16).padStart(6, '0');
+    const pig = (RIG && RIG.preInkColor) ? RIG.preInkColor(hex, DECAL_SLOTS.base) : hex;
+    const n = parseInt(pig.slice(1), 16);
+    out = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    if (preInkCache.size > 400) preInkCache.clear();
+    preInkCache.set(key, out);
+    return out;
+  }
+
+  // ---- THE DECAL RASTER ----------------------------------------------
+  // A FULL-COLOUR raster, unlike the rind's alpha mask, built once per
+  // (outfit, size) and cached. Each worn decal shoots its true-geodesic
+  // mesh once at bake time, and every pixel is read back through it
+  // (see decals.js: buildStickerMesh). That is what gives a sticker the
+  // rind's own foreshortening and makes its straight edges bow around
+  // the body — and, since bug 7, what keeps a flag's poleward edge from
+  // drawing taller than its equatorward one.
+  //
+  // Per-pixel work happens HERE, at bake time, never per frame — the
+  // raster is reused until the outfit or the body size changes.
+  const DECAL_CAP = 48;
+  const decalCache = new Map();
+  function decalRaster(worn, a, b, rs, preview) {
+    const D = window.FF.decals;
+    let ck = null;
+    if (!preview) {
+      const sig = worn.map(w => w.id + ',' + w.u.toFixed(2) + ',' + w.v.toFixed(2)
+        + ',' + w.rot.toFixed(2) + ',' + w.s.toFixed(2)).join(';');
+      ck = sig + '|' + (a | 0) + '|' + (b | 0) + '|' + rs.toFixed(2);
+      const r0 = decalCache.get(ck);
+      if (r0 !== undefined) {
+        decalCache.delete(ck); decalCache.set(ck, r0);   // LRU touch
+        return r0;
+      }
+    }
+    if (typeof document === 'undefined') { if (ck) decalCache.set(ck, null); return null; }
+    const w = Math.ceil(a * 2) + 2, h = Math.ceil(b * 2) + 2;
+    const pw = Math.round(w * rs), ph = Math.round(h * rs);
+    const cv = document.createElement('canvas');
+    cv.width = pw; cv.height = ph;
+    // willReadFrequently: this raster is read back once per band to be
+    // recoloured, so the browser should keep it on the CPU side.
+    const octx = cv.getContext('2d', { willReadFrequently: true });
+    const img = octx.createImageData(pw, ph);
+    const px = img.data;
+    // One true-geodesic mesh per worn decal, shot here at bake time.
+    const meshes = worn.map(wd =>
+      D.byId(wd.id) ? D.buildStickerMesh(wd.u, wd.v, wd.rot, wd.s * b, a, b, preview) : null);
+    for (let py = 0; py < ph; py++) {
+      for (let pxi = 0; pxi < pw; pxi++) {
+        const x = (pxi + 0.5) / rs - w / 2, y = (py + 0.5) / rs - h / 2;
+        const ex = x / a, ey = y / b;
+        if (ex * ex + ey * ey > 1) continue;
+        for (let i = 0; i < worn.length; i++) {
+          const wd = worn[i];
+          const item = D.byId(wd.id);
+          if (!item || !meshes[i]) continue;
+          const half = wd.s * b;
+          const q = D.meshSample(meshes[i], x, y);
+          if (!q) continue;
+          const nx = q.x / half, ny = q.y / half;
+          if (Math.abs(nx) > 1 || Math.abs(ny) > 1) continue;
+          const c = D.sampleArt(item, nx, ny);
+          if (!c) continue;
+          const o = (py * pw + pxi) * 4;
+          // PRE-COMPENSATED (option A + inverse). The art declares the
+          // colour it wants to BE SEEN as; what is stored here is the
+          // pigment that produces it once the base band's offsets are
+          // applied. So a decal goes through the melon's full colour
+          // law — cooler in shadow, chalkier in light — while still
+          // reading as its authored colour in neutral light.
+          //
+          // Not exact where the pigment would need saturation past the
+          // gamut: the base band desaturates by 25, so a vivid ink
+          // cannot be pushed far enough back. Measured round trip:
+          // heart red and black exact, whites within 8, the flag's
+          // blue and red about 25 out — still blue and red, not the
+          // teal and pink the uncompensated law produced.
+          const pre = preInk(c);
+          px[o] = pre[0]; px[o + 1] = pre[1]; px[o + 2] = pre[2]; px[o + 3] = 255;
+          break;
+        }
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    const r = { canvas: cv, ctx: octx, w, h, id: ck };   // w/h stay in BODY units
+    if (!ck) return r;                 // preview rasters are never cached
+    decalCache.set(ck, r);
+    while (decalCache.size > DECAL_CAP) {
+      const oldest = decalCache.keys().next().value;
+      if (oldest === undefined || oldest === ck) break;
+      decalCache.delete(oldest);
+    }
+    return r;
   }
 
   // ---- Seeded 2D gradient (Perlin) noise + fBm ----
@@ -2085,8 +2372,8 @@ function createRenderer(canvas) {
   // The portrait draw. `scale` is the caller's true output resolution
   // in device pixels per world pixel — the menu knows its CSS size and
   // devicePixelRatio, and nothing else can work it out for it.
-  window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit, scale) {
-    shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit, scale);
+  window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit, scale, decals, decalPreview) {
+    shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit, scale, decals, decalPreview);
   };
 
   const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground

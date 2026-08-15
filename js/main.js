@@ -129,11 +129,13 @@ function respawnRace(opts) {
   // until the handshake field ships).
   if (!netSession && !exhibition) {
     const spec = window.FF.melon.active();
-    const d = window.FF.melon.derive(spec.seed);
+    const d = window.FF.melon.deriveSpec(spec);
     window.FF.setBodyScale(state.melon, d.scale);
     state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
     state.melon.bodyColor = d.bodyColor; // and so does the green
     if (spec.name) state.melon.name = spec.name;
+    // The outfit rides with the body, same as the rind and the green.
+    state.melon.decals = spec.decals || null;
   } else if (!netSession && exhibition && cast) {
     // THE MENU'S LOCAL BODY IS THE STAND-IN. Behind the panel the seat
     // the player will take is driven by its own character, so the
@@ -505,7 +507,13 @@ function frame(now) {
     const ex = window.FF.exhibition;
     // The menu steps ONLY while the exhibition says so — it owns the
     // battery policy (hidden tab, idle timeout), not this loop.
-    const exhibiting = fs === 'menu' && ex && ex.running && ex.shouldStep();
+    //
+    // 'naming' counts too: that screen is a scrim over the SAME
+    // exhibition, so excluding it left the backdrop running but never
+    // advanced — the field froze mid-race the moment a player opened a
+    // rename, and lurched back into motion on the way out.
+    const exhibiting = (fs === 'menu' || fs === 'naming')
+      && ex && ex.running && ex.shouldStep();
     const racing = !window.FF.flow || fs === 'race' || fs === 'finish' || exhibiting;
     if (racing) {
       while (accumulator >= stepDt) {
@@ -560,7 +568,7 @@ function frame(now) {
     if (design.fruit && design.fruit !== state.melon.fruit && !netSession) {
       state.melon.fruit = design.fruit;
       const spec = window.FF.melon.active();
-      const d = window.FF.melon.derive(spec.seed);
+      const d = window.FF.melon.deriveSpec(spec);
       const mult = (window.FF.FRUITS[design.fruit] && window.FF.FRUITS[design.fruit].sizeMult) || 1;
       // Same law as the bots: persistent physique scale x species mult.
       window.FF.setBodyScale(state.melon, d.scale * mult);

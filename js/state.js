@@ -258,6 +258,9 @@ function createBody(x, y, scale, fruit) {
     // why nothing could tell "the melon Gourdzilla" apart from
     // "whoever is racing it".
     pilot: '',
+    // WHAT THIS MELON IS WEARING: [{ id, u, v, rot, s }] from decals.js.
+    // Presentation only — nothing here can reach a physical law.
+    decals: null,
     bodyColor: null,         // pigment (resetBots / the player's dressing)
     patKey: null,            // rind pattern key (the player's dressing)
     pairOtherName: '',       // traffic blame breadcrumbs (pair solver)

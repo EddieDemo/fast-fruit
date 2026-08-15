@@ -146,6 +146,23 @@ function migrate(st) {
     st.player = { name: DEFAULT_PILOT };
     dirty = true;
   }
+  // THE OWNED-DECALS SET: added 2026-08-15. Per-install, ids only — a
+  // SET, not counts: rarity is arithmetic (set size) and duplicates
+  // are impossible by design, so there is nothing else to store.
+  // INTERIM DEFAULT (approved 2026-08-15): every install owns the
+  // whole current catalogue, because the award roll that will hand
+  // decals out does not exist yet and an editor with an empty tray is
+  // a dead feature. TOP-UP, not once-only: new catalogue items reach
+  // existing saves too, or a save from yesterday never sees today's
+  // flags. When the roll lands, this list becomes [] and the roll
+  // becomes the only door.
+  const INTERIM_GRANT = ['eye-googly', 'mark-heart', 'mark-star',
+    'flag-fr', 'flag-ie', 'flag-it', 'flag-de', 'flag-pl',
+    'flag-jp', 'flag-vn', 'flag-bd', 'flag-cn'];
+  if (!Array.isArray(st.decals)) { st.decals = []; dirty = true; }
+  for (const id of INTERIM_GRANT) {
+    if (st.decals.indexOf(id) === -1) { st.decals.push(id); dirty = true; }
+  }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
     else {
@@ -297,6 +314,31 @@ const AWARD_CHANCE = { 1: 1, 2: 0.5, 3: 0.25 };
 // enough.) The cost, accepted: a won melon is no longer reproducible
 // from public information, so a friend cannot verify it. That is the
 // right trade for a personal collection.
+// ---- THE OWNED-DECALS SET ------------------------------------------
+// Ids only, per install (see migrate). Grant validates against the
+// catalogue AT GRANT TIME, not at read time: a save carrying an id the
+// catalogue later dropped (the varsity 2) keeps it harmlessly — byId
+// returns null everywhere it matters — and gets it back the day the
+// item returns.
+function ownedDecals() {
+  const st = stable || (load(), stable);
+  return (st.decals || []).slice();
+}
+function hasDecal(id) {
+  const st = stable || (load(), stable);
+  return !!(st.decals && st.decals.indexOf(id) !== -1);
+}
+function grantDecal(id) {
+  const D = window.FF.decals;
+  if (!D || !D.byId(id)) return false;
+  const st = stable || (load(), stable);
+  if (!st.decals) st.decals = [];
+  if (st.decals.indexOf(id) !== -1) return false;   // duplicates impossible
+  st.decals.push(id);
+  save();
+  return true;
+}
+
 function playerSalt() {
   const st = load();
   if (!st.salt) {
@@ -547,6 +589,7 @@ function stats(seed, fruit, wide) {
 }
 
 window.FF.melon = { derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
+  ownedDecals, hasDecal, grantDecal,
   awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load };
 
 })();

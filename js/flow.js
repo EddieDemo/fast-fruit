@@ -261,6 +261,11 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    treatment the rest of the interface implies — panel-dark, accent
    text, the button's own border colour and radius. */
 /* The prize line on the cup tab, and the blocked-award note. */
+.ff-edit-chip { display: block; margin: 4px auto 0; background: none;
+  border: 1px solid rgba(255,255,255,0.22); border-radius: 999px;
+  color: inherit; font: inherit; font-size: 11px; letter-spacing: 0.08em;
+  padding: 3px 12px; cursor: pointer; opacity: 0.85; }
+.ff-edit-chip:hover { opacity: 1; }
 .ff-release-link { display: block; margin: 6px auto 0; background: none; border: none;
   color: var(--c-faint); font: inherit; font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro); cursor: pointer; }
@@ -587,6 +592,18 @@ function openRelease(spec, then) {
 // winning a seventh melon, which is days of play away.
 window.FF._openRelease = (spec) => openRelease(spec);
 
+// Dev hook: dress the active melon, until the customise screen exists.
+//   FF._dress('eye-googly', 'flag-fr')      apply, seeded placement
+//   FF._dress()                             strip it back to bare
+window.FF._dress = (...ids) => {
+  const M = window.FF.melon, D = window.FF.decals;
+  const spec = M.active();
+  spec.decals = ids.length ? ids.map((id, i) => D.place(spec, id, i)) : null;
+  M._save();
+  if (elMenu && elMenu._paintPortrait) elMenu._paintPortrait();
+  return spec.decals;
+};
+
 function computeStandings(state, resolved) {
   const rows = [];
   const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
@@ -828,19 +845,34 @@ function buildMenu() {
   const right = el('button', 'ff-arrow', '\u25B6');
   row.appendChild(left); row.appendChild(spin); row.appendChild(right);
   leftCol.appendChild(row);
+  // THE PORTRAIT IS THE DOOR (Eddie, 2026-08-15): tapping the melon
+  // opens the edit screen — rename and decals in one place. A big
+  // melon that opens the editor is a big target; the chip underneath
+  // is the discoverability, not the button.
+  const openEditor = () => {
+    if (window.FF.editor) window.FF.editor.open(() => flow.go('menu'));
+  };
+  spin.style.cursor = 'pointer';
+  spin.setAttribute('role', 'button');
+  spin.setAttribute('tabindex', '0');
+  spin.title = 'edit melon';
+  spin.addEventListener('click', openEditor);
+  spin.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(); }
+  });
+  const editChip = el('button', 'ff-edit-chip', '\u270E edit');
+  editChip.addEventListener('click', openEditor);
+  leftCol.appendChild(editChip);
   const nameEl = el('div', 'ff-melon-name', '');
-  // THE SECOND DOOR. The ceremony happens once, in the first ten
-  // seconds of a game you have never played — the moment a name is
-  // most likely to be regretted. Tapping the name reopens the card.
-  // (It is also the repair path for a melon left unnamed while the
-  // ceremony was unreachable.)
+  // THE SECOND DOOR — now into the EDITOR, where renaming lives with
+  // the rest of changing-your-melon (ruled 2026-08-15). The rename
+  // card itself is unchanged, one tap deeper; the pause-screen door
+  // and the pilot door below still open it directly.
   nameEl.classList.add('ff-renamable');
   nameEl.setAttribute('role', 'button');
   nameEl.setAttribute('tabindex', '0');
-  nameEl.title = 'rename';
-  // Renaming uses the SAME screen as the ceremony, in rename mode:
-  // one surface, so the two can never drift apart in styling.
-  const openRename = () => flow.openNaming('rename', () => flow.go('menu'));
+  nameEl.title = 'edit melon';
+  const openRename = openEditor;
   nameEl.addEventListener('click', openRename);
   nameEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRename(); }
@@ -1199,16 +1231,18 @@ function buildPause() {
     // Leaving for the menu ends the run: nothing left to resume, and
     // an orphaned snapshot would offer to restore a race the player
     // deliberately walked away from.
+    //
+    // NO PRIZE HANDOVER HERE. This is the PAUSE screen's exit, not the
+    // finish screen's — a prize is only ever pending after a completed
+    // cup, which lands on the finish screen. An edit that added the
+    // handover matched both handlers at once and pasted `collectThen`
+    // into this one, where it is not in scope: the console threw
+    // ReferenceError and MAIN MENU stopped working from pause.
     if (window.FF.resume) window.FF.resume.clear();
     if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
     if (respawnFn) respawnFn();
     fromMenuOrRetry = true;
-    // THE HANDOVER. The prize was announced on the cup tab and is
-    // already in the stable; this is the ceremony. It happens between
-    // the finish screen and the menu, so the input-requiring beat
-    // lands once the player has decided they are done reading — and
-    // never before the placing that earned it.
-    collectThen(() => flow.go('menu'));
+    flow.go('menu');
   });
 
   // The button itself: visible only while racing (a pause control on
@@ -1521,7 +1555,7 @@ function spinLoop(now) {
     // The pattern raster is built for THIS destination: `fit` is
     // exactly device pixels per world pixel, which is the number the
     // renderer needs and the only place it can be known.
-    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit);
+    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit, s.decals);
     ctx.restore();
   }
   // Keep the loop alive while ANY spinner exists, visible or not: the
@@ -1646,7 +1680,12 @@ function initHistory() {
 
 flow.go = function (name) {
   const prev = SCREENS[flow.state];
-  if (prev && prev.exit) prev.exit();
+  // exit() is handed the DESTINATION. flow.state is still the screen
+  // being left at this point, so a handler that wants to behave
+  // differently depending on where it is going cannot read it — the
+  // menu's "don't tear down the exhibition if naming is covering us"
+  // guard silently never fired for exactly this reason.
+  if (prev && prev.exit) prev.exit(name);
   flow.state = name;
   const next = SCREENS[name];
   if (next && next.enter) next.enter();
@@ -1676,6 +1715,9 @@ flow.go = function (name) {
 // version of the fix rather than a guard bolted on.
 flow.register('naming', {
   enter() {
+    // start() is a no-op while running, so this only fires on the boot
+    // ceremony, where the menu has never been entered and nothing is
+    // running behind us yet.
     if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
     clearFade();
     const M = window.FF.melon;
@@ -1757,7 +1799,8 @@ function pushSpecPortrait(canvas, spec) {
   const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
   spinners.push({ rate: 0.55, canvas, angle: 0,
     a, b: a * (F.aspect || 0.78),
-    color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon' });
+    color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon',
+    decals: spec.decals || null });
 }
 
 function pushMelonPortrait(canvas) {
@@ -1776,6 +1819,7 @@ function pushMelonPortrait(canvas) {
     canvas, angle: 0,
     a, b: a * (F.aspect || 0.78),
     color: (design && design.color) || d.bodyColor,
+    decals: M.active().decals || null,
     // d.patternKey ('m'+seed), NOT String(seed): the race body is
     // dressed with d.patternKey (main.js) and the award screen uses
     // it too, so a bare seed here generated a DIFFERENT rind — the
@@ -1922,11 +1966,18 @@ flow.register('menu', {
     spinners.length = 0;
     elMenu._paintPortrait();   // one definition of "paint the portrait"
   },
-  exit() {
+  exit(to) {
     // Pressing RACE resets to a clean grid: you cannot be handed a
     // lap-two position you did not earn, so the exhibition is torn
     // down and a real race is built fresh (respawnFn below).
-    if (window.FF.exhibition) window.FF.exhibition.stop();
+    //
+    // ...BUT NOT WHEN THE NAMING SCREEN IS WHAT COVERS US. That screen
+    // shows the very same exhibition through its scrim, so tearing it
+    // down here and letting naming.enter() start it again REBUILT the
+    // race — the field visibly jumped back to the grid every time a
+    // player tapped to rename themselves. Leave it running and the
+    // backdrop is continuous, which is the whole point of it.
+    if (window.FF.exhibition && to !== 'naming') window.FF.exhibition.stop();
     elMenu.style.display = 'none';
   },
 });
@@ -2415,7 +2466,8 @@ flow.init = function (state, opts) {
 // Test hook: what the spinner loop is actually drawing right now.
 // Pixel-sampling a rotating portrait cannot answer that question.
 flow._spinners = () => spinners.map(s => ({
-  a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, fruit: s.fruit }));
+  a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, fruit: s.fruit,
+  decals: (s.decals || []).length }));
 flow.computeStandings = computeStandings;
 window.FF.flow = flow;
 })();

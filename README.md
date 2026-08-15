@@ -1,88 +1,112 @@
-# Fast Fruit — the game
+# Decal drop — what to add to the project
 
-Everything needed to run it. Vanilla JS/HTML/CSS, zero dependencies,
-works from `file://`.
+**Decals are now WIRED IN and visible in the game** (build 2026-08-14q).
 
 ```
-index.html          the page; the script order IS the dependency order
-styles.css          global styles (lanes, HUD, panels)
-js/                 40 modules + the service worker + manifest
+js/decals.js       NEW      the module
+renderer.js        CHANGED  decal raster + draws it inside the body clip
+flow.js            CHANGED  portrait wears them; FF._dress() dev hook
+main.js            CHANGED  race body dressed from the melon spec
+state.js           CHANGED  body carries `decals`
+config.js          CHANGED  build stamp
+index.html         CHANGED  loads decals.js (and roster.js — see below)
+
+tools/verify-decals.js   dev only, worth keeping: the geometry suite
+tools/march.js           dev only, recession measurement
+tools/dressed.js         dev only, contact sheets
 ```
 
-Open `index.html`. That's it.
+## Seeing it
 
-**Developer tools** (Shader Studio, tune panel, ring logger) are hidden
-by default: **tap the title on the main menu five times**, or add
-`?dev=1` to the URL. `?dev=0` turns them off again.
+There is no customise screen yet, so dress a melon from the console:
 
----
+```js
+FF._dress('eye-googly', 'flag-fr', 'mark-heart', 'num-varsity-2')
+FF._dress()      // strip it back to bare
+```
 
-## The modules, roughly in load order
+The start-screen portrait repaints immediately; race bodies pick it up
+on the next race build.
 
-**Foundation**
-| File | Role |
+## index.html — CHECK THIS, it is not about decals
+
+`index.html` is included in this drop, but **not because of decals**.
+Decals are deliberately not loaded (see below).
+
+It is here because of the ROSTER work earlier in the session: the file
+needs
+
+```html
+<script src="js/roster.js"></script>
+```
+
+right after `names.js`. Without it `FF.roster` is undefined, `main.js`
+silently falls back to the old seeded name deal, and you get random
+rivals instead of the permanent twelve. No error, no crash — the
+feature just quietly is not there.
+
+Open your `index.html` and search for `roster.js`. If it is missing, use
+the copy in this drop.
+
+## Deliberately NOT loaded
+
+| Module | Why not yet |
 |---|---|
-| `type.js` | The type scale: named steps, tracking, colour roles, generated as CSS variables. |
-| `devtools.js` | The five-tap gate. Dev surfaces register; nothing else knows they exist. |
-| `dmath.js` | Deterministic maths (mulberry32, pinned trig). No `Math.random` reaches the sim. |
-| `config.js` | Every tunable, the presets, and the roster/brain assignment. |
-| `fruits.js` | The species registry: shape, anchor bands, flesh bands, patterns. |
+| `decals.js` | waiting on renderer integration |
+| `tuning.js` | waiting on the audio voice port |
+| `fm.js` | waiting on the audio voice port |
 
-**Simulation** (deterministic; identical on every peer)
-| File | Role |
-|---|---|
-| `state.js` | The world: bodies, inputs, race book, grid placement. |
-| `terrain.js` / `tracks.js` | Procedural terrain and the daily/cup track definitions. |
-| `damage.js` | The damage law: dissipated energy, shape toughness, the flare mapping. |
-| `pilot.js` | The splat predictor and the brain registry (`cruise`, `oracle`). |
-| `physics.js` | The step: torque, contacts, the smash rule, the grid pin. |
-| `debris.js` | Wreckage. |
-| `gridstart.js` | Pre-race sequence: camera pan, waiting grid, tick-based countdown. |
+All three are inert: they define their namespace and nothing calls them.
+Adding script tags now is harmless but pointless; the tags land when the
+modules are actually wired.
 
-**Presentation**
-| File | Role |
-|---|---|
-| `renderer.js` | Everything drawn: bodies, terrain, camera, place labels, the practice ring. |
-| `shading.js` | The lighting law, palettes, anchor colours, pulp. |
-| `hud.js` | The HUD, and it publishes its own measured footprint for the lanes. |
-| `input.js` | The floating thumbstick: circular gamut, radial deadzone. |
-| `flow.js` | The state machine and every screen: menu, race, pause, finish, confirm. |
-| `ticker.js` | Commentary lines. |
-| `deaths.js` | The death overlay and its coach line. |
-| `audio.js` | Sound, and the mute setting the pause screen owns. |
+## Nothing else changed
 
-**Race meta**
-| File | Role |
-|---|---|
-| `cup.js` | The daily cup: four legs, 12→1 scoring, attempts, the day record. |
-| `finishline.js` | Finish-time estimation (and the exact fast-forward it was validated against). |
-| `racewatch.js` | The observer: places, overtakes, laps, streaks, superlatives, pace. |
-| `events.js` | The presentation-tier event bus. |
-| `melon.js` | Your melon: seed derivation, the stat card, the career record. |
-| `names.js` | The cast, and name-keyed brain assignment. |
-| `resume.js` | Snapshot and restore of a race in progress. |
-| `autopilot.js` | The post-flag handover. |
-| `exhibition.js` | The background race behind the menu. |
-| `ghost.js` | Ghost racer and challenge codes — **currently off** (`CONFIG.ghosts`). |
+No existing game file was modified by the decal work.
 
-**Multiplayer** — `mp.js`, `net.js`, `webrtc.js` (lockstep, inputs only)
+## What `decals.js` contains
 
-**Dev only** — `studio.js` (Shader Studio), `debug.js` (tune panel)
+- the design laws, as comments (presentation only, decals rotate with
+  the body, they live on the melon, bots wear at most one, rarity is
+  arithmetic, eyes granted singly)
+- the placement model: `spec.decals = [{ id, u, v, rot, s }]`
+- the surface maths: `sampleAt()` returns pixels of arc along the
+  surface (Riemannian normal coordinates), verified against the exact
+  exponential map to 0.12px
+- 16 procedural art routines + 5x7 glyph bitmaps
+- a 25-item catalogue in 4 sets — a placeholder for the SHAPE, not a
+  considered content list
+- `signature()` for the raster cache key
 
-**PWA** — `sw.js` (service worker; not loaded by `index.html`, it is
-registered at runtime), `manifest.webmanifest`
+## The dev tools
 
----
+They expect to sit in `tools/` with the game modules one level up
+(`../decals.js`, `../melon.js`, and so on). Adjust the `L()` path in
+each if your layout differs.
 
-## Things worth knowing before changing anything
+```
+node tools/verify-decals.js    # the geometry suite — run after ANY edit
+node tools/march.js            # recession measurement + /tmp/march-data.json
+node tools/dressed.js          # dressed-melon tiles + /tmp/dressed.json
+```
 
-- **Script order in `index.html` is the dependency order.** Modules
-  are IIFEs hanging off `window.FF`; there is no bundler.
-- **Determinism is load-bearing.** Anything inside the sim uses
-  `dmath` and the seeded streams. A stray `Math.random`, or a change
-  to the order bodies are stepped in, breaks lockstep multiplayer and
-  every replay.
-- **Presentation may diverge between peers; the sim may not.** Colour,
-  commentary, camera and FX are free to differ. Physics is not.
-- **The tests are in `tests/`** — run them after any change to the
-  laws. `tests/README.md` explains what each protects.
+`verify-decals.js` is the important one. Seven sections, each naming the
+bug it guards against — six bugs were found during this work, and two of
+them shipped once while looking like they worked. Run it after any
+change to the geometry or the art.
+
+`march.js` and `dressed.js` write JSON buffers; the PNGs were composed
+from those with small PIL scripts. The measurement output on stdout is
+useful on its own.
+
+## Not started
+
+Renderer integration, ownership and awards, the customise screen,
+drag-to-place, and a properly authored catalogue (flags, letters and
+lipstick are not in yet).
+
+**One constraint to carry into the integration:** `patternRaster`
+produces an alpha MASK that is tinted per shading band, so decals cannot
+join it — a red heart would come out green. They need their own
+full-colour raster, drawn after the bands, clipped to the body, rotated
+with it, with band luminance multiplied over.

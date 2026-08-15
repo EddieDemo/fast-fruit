@@ -278,6 +278,115 @@ function offsetColor(hex, dL, dH, dS) {
 }
 
 
+// ---- BAND OFFSETS FOR AN INK (decals) ----
+// A decal's palette is not a melon's. Melon colours are always
+// saturated greens, so rotating hue and shifting saturation is safe.
+// Decal inks include NEUTRALS — the white of an eye, the white of a
+// flag — and a neutral has no meaningful hue: near white the HSL
+// saturation term divides by (1 - |2L - 1|), which vanishes, so six
+// RGB points of difference can read as hue 80 and 30% saturation
+// versus hue 0 and 0%. Rotate that and you invent a colour.
+//
+// The symptom, which is what sent me looking: two whites that look
+// identical drifted APART in shadow — the eye's went olive, the
+// flag's went pink — because each was pushed along its own arbitrary
+// hue. The saturation offsets compound it: pre-compensation adds 25
+// and only the base band takes 25 back, so the shadow band leaves 15
+// of invented colour behind.
+//
+// So for inks the hue and saturation offsets are SCALED BY THE INK'S
+// OWN SATURATION. A fully saturated ink gets the full law; a neutral
+// gets none of it and simply darkens and lightens, which is what a
+// white thing does under coloured light. Lightness is untouched: that
+// part of the law is about the light, not the pigment.
+function inkScale(hex) {
+  const [r, g, b] = hexRgb(hex);
+  // CHROMA (max - min), not HSL saturation. HSL saturation divides by
+  // (1 - |2L - 1|), which vanishes near white and near black, so it
+  // reports #f6f8f2 as 30% saturated when it is visually a white. That
+  // reading is what kept pushing the eye's white toward olive. Chroma
+  // is the direct distance from grey and behaves at both ends.
+  const chroma = (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+  return Math.max(0, Math.min(1, chroma / 0.25));
+}
+
+function bandOffsets(slot) {
+  const n = 3;
+  const idx = Math.max(1, Math.min(n, parseInt((slot || 'A2').slice(1), 10) || 2));
+  const t = n === 1 ? 0 : (idx - 1) / (n - 1);
+  return {
+    dL: P.rampLoDL + (P.rampHiDL - P.rampLoDL) * t,
+    dH: P.rampLoDH + (P.rampHiDH - P.rampLoDH) * t,
+    dS: P.rampLoDS + (P.rampHiDS - P.rampLoDS) * t,
+  };
+}
+
+// LIGHTNESS ON AN INK IS A MULTIPLY, not an HSL retarget.
+//
+// offsetColor holds HSL SATURATION fixed while it moves L*, which is
+// right for a pigment but wrong for a light hitting one: HSL
+// saturation is not perceptual, so the same 0.59 that reads as
+// near-white at L 0.98 reads as vivid olive at L 0.55. Darkening a
+// white through HSL therefore invents chroma — which is why the eye's
+// white went olive in shadow while the flag's went grey.
+//
+// Scaling RGB instead keeps the ratio between channels, so a white
+// darkens to a grey and a red darkens to a darker red. That is also
+// what light physically does to a surface.
+function scaleToL(hex, targetL) {
+  const [r, g, b] = hexRgb(hex);
+  let lo = 0, hi = 4;
+  for (let i = 0; i < 20; i++) {
+    const m = (lo + hi) / 2;
+    const L = lstarOf(Math.min(255, r * m), Math.min(255, g * m), Math.min(255, b * m));
+    if (L < targetL) lo = m; else hi = m;
+  }
+  const m = (lo + hi) / 2;
+  return rgbHex([Math.round(Math.min(255, r * m)), Math.round(Math.min(255, g * m)),
+    Math.round(Math.min(255, b * m))]);
+}
+
+// The band's colour for an INK: lightness as a multiply, hue and
+// saturation scaled by how much colour the ink actually carries.
+function inkColor(hex, slot) {
+  const o = bandOffsets(slot);
+  const k = inkScale(hex);
+  const [r, g, b] = hexRgb(hex);
+  const lit = scaleToL(hex, Math.max(3, Math.min(97, lstarOf(r, g, b) + o.dL)));
+  return (k > 0.01) ? offsetColor(lit, 0, o.dH * k, o.dS * k) : lit;
+}
+
+// ...and its inverse, for pre-compensation.
+function preInkColor(hex, slot) {
+  const o = bandOffsets(slot);
+  const k = inkScale(hex);
+  const un = (k > 0.01) ? offsetColor(hex, 0, -o.dH * k, -o.dS * k) : hex;
+  const [r, g, b] = hexRgb(un);
+  return scaleToL(un, Math.max(3, Math.min(97, lstarOf(r, g, b) - o.dL)));
+}
+
+// ---- THE INVERSE OF A BAND ----
+// Given the colour you want to SEE in a band, return the pigment that
+// produces it once that band's offsets are applied. The offsets are a
+// hue rotation, a saturation shift and an L* target, so undoing them
+// is the same function with the signs flipped.
+//
+// EXACT for hue (additive) and for L* (a target value). NOT exact for
+// saturation when the answer would need to exceed 100%: the base band
+// desaturates by 25, so pre-compensating a colour that is already
+// vivid asks for saturation above the gamut and silently clips. That
+// is the failure mode to watch — it bites hardest on exactly the
+// colours worth protecting, like a national flag's blue.
+function preSlot(hex, slot) {
+  const n = 3;
+  const idx = Math.max(1, Math.min(n, parseInt((slot || 'A2').slice(1), 10) || 2));
+  const t = n === 1 ? 0 : (idx - 1) / (n - 1);
+  const dL = P.rampLoDL + (P.rampHiDL - P.rampLoDL) * t;
+  const dH = P.rampLoDH + (P.rampHiDH - P.rampLoDH) * t;
+  const dS = P.rampLoDS + (P.rampHiDS - P.rampLoDS) * t;
+  return offsetColor(hex, -dL, -dH, -dS);
+}
+
 // ---- THE ANCHOR LAW ----
 // A species no longer carries a list of eleven pigments; it declares
 // an ANCHOR BAND — seeded ranges of hue, saturation and lightness in
@@ -704,7 +813,7 @@ window.FF.shading = {
   PALETTE_DEFAULTS, resetPalette,
   rimMaskRegion, palette, slotColor, offsetColor,
   castFootprint,
-  P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf,
+  P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc,
 };
 
