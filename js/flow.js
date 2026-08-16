@@ -261,9 +261,32 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    treatment the rest of the interface implies — panel-dark, accent
    text, the button's own border colour and radius. */
 /* The prize line on the cup tab, and the blocked-award note. */
+.ff-reward-screen .ff-panel { max-width: min(92vw, 440px); text-align: center;
+  cursor: pointer; user-select: none; }
+.ff-reward-big { font-size: var(--fs-hero); font-weight: var(--fw-bold);
+  letter-spacing: var(--tr-hero); margin: 10px 0 4px; }
+.ff-reward-name { font-size: var(--fs-lead); font-weight: var(--fw-bold);
+  letter-spacing: var(--tr-lead); margin: 8px 0 2px; }
+.ff-reward-sub { font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  color: var(--c-dim); text-transform: uppercase; }
+.ff-xp-track { height: 14px; border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 999px; margin: 14px 8px 6px; overflow: hidden; }
+.ff-xp-fill { height: 100%; width: 0%; background: currentColor;
+  border-radius: 999px; }
+.ff-xp-line { font-family: ui-monospace, monospace;
+  font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  color: var(--c-text); }
+.ff-levelup-stamp { display: none; margin: 10px auto 2px;
+  padding: 5px 16px; border: 2px solid currentColor; border-radius: 6px;
+  font-size: var(--fs-title); letter-spacing: var(--tr-title); }
+.ff-levelup-stamp.ff-stamped { display: inline-block; }
+.ff-reward-art { width: 132px; height: 132px; margin: 8px auto;
+  image-rendering: pixelated; display: block; }
+.ff-reward-foot { margin-top: 14px; }
 .ff-edit-chip { display: block; margin: 4px auto 0; background: none;
   border: 1px solid rgba(255,255,255,0.22); border-radius: 999px;
-  color: inherit; font: inherit; font-size: 11px; letter-spacing: 0.08em;
+  color: inherit; font: inherit; font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
   padding: 3px 12px; cursor: pointer; opacity: 0.85; }
 .ff-edit-chip:hover { opacity: 1; }
 .ff-release-link { display: block; margin: 6px auto 0; background: none; border: none;
@@ -595,6 +618,9 @@ window.FF._openRelease = (spec) => openRelease(spec);
 // Dev hook: dress the active melon, until the customise screen exists.
 //   FF._dress('eye-googly', 'flag-fr')      apply, seeded placement
 //   FF._dress()                             strip it back to bare
+// Dev door for the roll era: grant a decal by id, until earning is
+// the only path anyone uses. FF._grant('flag-bd')
+window.FF._grant = (id) => window.FF.melon.grantDecal(id);
 window.FF._dress = (...ids) => {
   const M = window.FF.melon, D = window.FF.decals;
   const spec = M.active();
@@ -1388,12 +1414,12 @@ function buildFinish() {
   // overwrote the pending award — a prize collected silently, with no
   // moment attached to it. Now the ceremony always happens, and only
   // the destination afterwards differs.
-  const collectThen = (next) => {
-    const award = pendingAward;
-    pendingAward = null;
-    if (award && award.won) { openAwardFlow(award, next); return; }
-    next();
-  };
+  // THE TELLING. Everything in the queue is already true; these
+  // cards only present it, one per reward, in the order it queued —
+  // xp first (the constant), decals next, melon last, because the
+  // melon chains into acceptance and naming and nothing should come
+  // back from a naming ceremony to '+56 XP, tap to continue'.
+  const collectThen = (next) => runRewards(next);
 
   retry.addEventListener('click', () => {
     collectThen(() => {
@@ -1439,7 +1465,7 @@ function buildFinish() {
   // language directly above it ("YOU'VE WON A MELON" on the cup tab)
   // does the informing, so the button is free to celebrate.
   elFinish._paintPrizeButtons = () => {
-    const waiting = !!(pendingAward && pendingAward.won);
+    const waiting = window.FF.melon.pendingRewards().some(e => e.kind === 'melon');
     menu.textContent = waiting ? 'MELON GET!' : 'MAIN MENU';
     menu.classList.toggle('ff-secondary', !waiting);
     retry.classList.toggle('ff-secondary', waiting);
@@ -1851,7 +1877,6 @@ let elNaming = null;
 let namingMode = 'ceremony';
 // The prize rolled at cup completion, waiting to be told and (if the
 // stable is full) resolved. Cleared once the player has seen it out.
-let pendingAward = null;
 // The spec being named by the 'award' mode: a prize is not the active
 // melon, so the screen must be told which melon it is naming.
 let namingAward = null;
@@ -1965,6 +1990,12 @@ flow.register('menu', {
     elMenu._refresh();
     spinners.length = 0;
     elMenu._paintPortrait();   // one definition of "paint the portrait"
+    // Unrevealed rewards re-offer here: they are persisted facts, and
+    // a crash or closed tab between earning and telling loses nothing
+    // but the wait.
+    if (window.FF.melon.pendingRewards().length) {
+      runRewards(() => {});
+    }
   },
   exit(to) {
     // Pressing RACE resets to a clean grid: you cannot be handed a
@@ -2034,6 +2065,139 @@ function cupJustEnded() {
   return !practiceMode && window.FF.cup && window.FF.cup.isComplete();
 }
 
+// ---- THE REWARD CARDS ------------------------------------------------
+// One overlay, reconfigured per entry. Sports-administration voice:
+// the cards read like notices posted by an unseen governing body that
+// takes melon racing entirely seriously. Tap anywhere: a tap during
+// the bar animation completes it instantly; a tap after advances. The
+// sequence must never cost a fast player more taps than it has cards.
+let elReward = null;
+let rewardAnim = null;      // { finish() } while the bar is animating
+
+function buildRewardScreen() {
+  elReward = el('div', 'ff-screen ff-reward-screen');
+  const panel = el('div', 'ff-panel');
+  elReward.appendChild(panel);
+  elReward._panel = panel;
+  document.body.appendChild(elReward);
+}
+
+function showRewardCard(entry, onAdvance) {
+  if (!elReward) buildRewardScreen();
+  const panel = elReward._panel;
+  panel.textContent = '';
+  elReward.style.display = 'flex';
+
+  if (entry.kind === 'xp') paintXpCard(panel, entry);
+  else paintDecalCard(panel, entry);
+
+  // A REAL BUTTON. The quiet style is for the road not taken (QUIT
+  // RACE beside CONTINUE RACE); this is the only road, so it gets the
+  // standard button. The whole card still advances on tap — the
+  // button is the visible affordance, not a smaller hit target.
+  const foot = el('div', 'ff-reward-foot');
+  foot.appendChild(el('button', 'ff-btn', 'CONTINUE'));
+  panel.appendChild(foot);
+
+  const advance = (ev) => {
+    ev.preventDefault();
+    if (rewardAnim) { rewardAnim.finish(); return; }   // first tap: skip anim
+    elReward.removeEventListener('pointerdown', advance);
+    window.removeEventListener('keydown', keyAdvance);
+    elReward.style.display = 'none';
+    onAdvance();
+  };
+  const keyAdvance = (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') advance(ev);
+  };
+  elReward.addEventListener('pointerdown', advance);
+  window.addEventListener('keydown', keyAdvance);
+}
+
+function paintXpCard(panel, e) {
+  const X = window.FF.xp;
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'PILOT RECORD'));
+  head.appendChild(el('p', 'ff-sub ff-reward-sub', 'official adjustment'));
+  panel.appendChild(head);
+  const big = el('div', 'ff-reward-big', '+0 XP');
+  panel.appendChild(big);
+  const stamp = el('div', 'ff-levelup-stamp', 'LEVEL UP');
+  panel.appendChild(stamp);
+  const track = el('div', 'ff-xp-track');
+  const fill = el('div', 'ff-xp-fill');
+  track.appendChild(fill);
+  panel.appendChild(track);
+  const line = el('div', 'ff-xp-line', '');
+  panel.appendChild(line);
+
+  // The bar animates the FACT (from -> to, wrapping at each level it
+  // crossed); nothing here recomputes an award.
+  const dur = Math.min(1200, 300 + 8 * (e.added || 0));
+  const t0 = performance.now();
+  let done = false;
+  const setTo = (xpNow) => {
+    const p = X.progress(Math.round(xpNow));
+    fill.style.width = Math.round(100 * p.into / p.need) + '%';
+    big.textContent = '+' + Math.round(xpNow - e.from) + ' XP';
+    line.textContent = 'PILOT LEVEL ' + p.level + ' \u00b7 '
+      + p.into + ' / ' + p.need + ' XP';
+    if (p.level > e.levelFrom) stamp.classList.add('ff-stamped');
+  };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    rewardAnim = null;
+    setTo(e.to);
+  };
+  rewardAnim = { finish };
+  (function tick(now) {
+    if (done) return;
+    const t = Math.min(1, (now - t0) / dur);
+    const eased = 1 - (1 - t) * (1 - t);
+    setTo(e.from + (e.to - e.from) * eased);
+    if (t >= 1) { finish(); return; }
+    requestAnimationFrame(tick);
+  })(t0);
+}
+
+function paintDecalCard(panel, e) {
+  const D = window.FF.decals;
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'DECAL AWARDED'));
+  head.appendChild(el('p', 'ff-sub ff-reward-sub',
+    'issued at pilot level ' + e.level));
+  panel.appendChild(head);
+  const cv = el('canvas', 'ff-reward-art');
+  cv.width = 176; cv.height = 176;
+  const item = D.byId(e.id);
+  if (item) D.paintArt(cv, item);
+  panel.appendChild(cv);
+  panel.appendChild(el('div', 'ff-reward-name', (e.label || e.id).toUpperCase()));
+  panel.appendChild(el('div', 'ff-xp-line',
+    '1 OF ' + e.setSize + ' \u00b7 ' + e.setLabel));
+}
+
+// Run the queue front-to-back. Melon entries hand off to the existing
+// award ceremony (acceptance, possibly naming) and the runner resumes
+// after it — but since melons queue last, 'resumes' is almost always
+// 'finishes'.
+function runRewards(next) {
+  const M = window.FF.melon;
+  const q = M.pendingRewards();
+  if (!q.length) { next(); return; }
+  const e = q[0];
+  if (e.kind === 'melon') {
+    M.shiftReward();
+    openAwardFlow(e.award, () => runRewards(next));
+    return;
+  }
+  showRewardCard(e, () => {
+    M.shiftReward();                 // popped only after the tap-past
+    runRewards(next);
+  });
+}
+
 flow.register('finish', {
   enter() {
     // THE ONE CAREER WRITE. This is the only moment a race is
@@ -2065,6 +2229,13 @@ flow.register('finish', {
             biggestSurvived: sum.biggestSurvived || 0,
           });
         }
+        // XP BANKS AT THE LINE (5 per cup race finished — the law is
+        // xp.js's). A DNF banks nothing; practice banks nothing. The
+        // fact is written now; any telling of it waits for cup end.
+        if (!practiceMode && window.FF.cup && window.FF.cup.current()
+            && !mine.dnf && M.addXp && window.FF.xp) {
+          M.addXp(window.FF.xp.XP_RACE);
+        }
         if (!practiceMode && window.FF.cup && window.FF.cup.current()) {
           window.FF.cup.completeLeg({
             place: mine.pos,
@@ -2090,12 +2261,35 @@ flow.register('finish', {
             // minted and persisted immediately (melon.js) — a player
             // who closes the tab between this screen and the menu keeps
             // what they won. What follows is only the telling of it.
+            // Completion xp banks with the career write: the cup
+            // bonus plus the points-become-xp law. The reveal card
+            // carries a snapshot (from/to) so the bar it animates is
+            // the fact as it happened, not a re-derivation later.
+            if (done && M.addXp && window.FF.xp) {
+              const X = window.FF.xp;
+              const cupState = window.FF.cup.current() || {};
+              const from = (typeof cupState.xpStart === 'number')
+                ? cupState.xpStart : M.pilotXp();
+              M.addXp(X.XP_CUP + X.XP_PER_POINT * (done.totals.points | 0));
+              const to = M.pilotXp();
+              M.queueReward({ kind: 'xp', from, to, added: to - from,
+                levelFrom: X.levelFor(from), levelTo: X.levelFor(to) });
+              // Every level crossed fires its roll NOW — the sticker
+              // is granted and persisted here; the card only tells it.
+              M.settleLevelRolls();
+            }
             if (done && M.awardForCup) {
-              pendingAward = M.awardForCup({
+              const award = M.awardForCup({
                 day: (window.FF.cup.current() || {}).day,
                 attempt: (done.record && done.record.attempts) || 1,
                 place: done.place,
               });
+              // Won melons join the queue like everything else —
+              // last, per the ruling: the showstopper closes the
+              // sequence because it chains into acceptance and naming.
+              if (award && award.won) {
+                M.queueReward({ kind: 'melon', award });
+              }
             }
           }
         }
@@ -2220,13 +2414,12 @@ function fillCup() {
   // which is the shape a prize wants. A blocked award says so rather
   // than showing nothing, because winning and receiving nothing looks
   // like a bug.
-  if (c.isComplete() && pendingAward) {
-    if (pendingAward.won) {
-      box.appendChild(el('div', 'ff-cup-prize', "YOU'VE WON A MELON"));
-    } else if (pendingAward.reason === 'dailyCap') {
-      box.appendChild(el('div', 'ff-cup-prize dim', 'daily melon limit reached'));
-    }
-  }
+  // THE FINISH SCREEN ANNOUNCES NOTHING (ruled 2026-08-15). It is
+  // performance feedback — positions, points, the truth of the race.
+  // Rewards are already granted and queued; their telling begins when
+  // the player chooses to leave, one card per reward. (The old
+  // dailyCap notice died with the announcement: a blocked award is no
+  // reward, and no reward gets no card.)
 
   // SAME SHAPE AS THE PLACES TAB. A cup standing is a standing: the
   // player reads it the same way, so it gets the same tiered ordinal,

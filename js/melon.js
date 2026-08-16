@@ -146,22 +146,44 @@ function migrate(st) {
     st.player = { name: DEFAULT_PILOT };
     dirty = true;
   }
+  // Career XP: added 2026-08-15 with the pilot progression law. ONE
+  // stored integer — level and bar are always derived through xp.js,
+  // so they can never drift from the total that justifies them.
+  if (typeof st.player.xp !== 'number' || !isFinite(st.player.xp)) {
+    st.player.xp = 0;
+    dirty = true;
+  }
+  // The highest level whose decal roll has FIRED. Rolls are keyed by
+  // level number and settled by walking rolledLevel up to the current
+  // level, so no level ever skips its roll — not across abandoned
+  // cups, not across crashes. Initialised to the CURRENT level so
+  // pre-existing xp never backdates a windfall of rolls.
+  if (typeof st.player.rolledLevel !== 'number') {
+    st.player.rolledLevel = window.FF.xp ? window.FF.xp.levelFor(st.player.xp) : 1;
+    dirty = true;
+  }
+  // THE REWARD QUEUE (2026-08-15). Rewards are GRANTED at the moment
+  // they become true and QUEUED here for the telling; the reveal
+  // screens only present persisted facts. Crash mid-sequence and
+  // nothing is lost — unrevealed entries simply re-offer next visit.
+  if (!Array.isArray(st.rewards)) {
+    st.rewards = [];
+    dirty = true;
+  }
   // THE OWNED-DECALS SET: added 2026-08-15. Per-install, ids only — a
   // SET, not counts: rarity is arithmetic (set size) and duplicates
   // are impossible by design, so there is nothing else to store.
-  // INTERIM DEFAULT (approved 2026-08-15): every install owns the
-  // whole current catalogue, because the award roll that will hand
-  // decals out does not exist yet and an editor with an empty tray is
-  // a dead feature. TOP-UP, not once-only: new catalogue items reach
-  // existing saves too, or a save from yesterday never sees today's
-  // flags. When the roll lands, this list becomes [] and the roll
-  // becomes the only door.
-  const INTERIM_GRANT = ['eye-googly', 'mark-heart', 'mark-star',
-    'flag-fr', 'flag-ie', 'flag-it', 'flag-de', 'flag-pl',
-    'flag-jp', 'flag-vn', 'flag-bd', 'flag-cn'];
+  // THE ROLL ERA (2026-08-15). The interim grant-all that filled the
+  // tray before earning existed is OVER: the level-up roll is the only
+  // door now. Saves from the interim era get wiped ONCE — versioned by
+  // the eraRoll flag, never repeated, so everything earned after this
+  // line is permanent. (Ruled by Eddie: nothing launched, nothing
+  // worth keeping; every sticker should be an earned one.)
   if (!Array.isArray(st.decals)) { st.decals = []; dirty = true; }
-  for (const id of INTERIM_GRANT) {
-    if (st.decals.indexOf(id) === -1) { st.decals.push(id); dirty = true; }
+  if (!st.eraRoll) {
+    st.decals = [];
+    st.eraRoll = true;
+    dirty = true;
   }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
@@ -337,6 +359,120 @@ function grantDecal(id) {
   st.decals.push(id);
   save();
   return true;
+}
+
+// ---- PILOT XP --------------------------------------------------------
+// addXp is the ONLY door: it clamps to non-negative integers, saves,
+// and reports what the addition did in level terms so callers can
+// queue level-up ceremonies without re-deriving anything.
+function pilotXp() {
+  const st = stable || (load(), stable);
+  return (st.player && st.player.xp) || 0;
+}
+function addXp(n) {
+  const X = window.FF.xp;
+  const st = stable || (load(), stable);
+  const add = Math.max(0, Math.floor(n || 0));
+  const before = st.player.xp || 0;
+  st.player.xp = before + add;
+  save();
+  const lv0 = X.levelFor(before), lv1 = X.levelFor(st.player.xp);
+  return { added: add, xp: st.player.xp, level: lv1, levelsGained: lv1 - lv0 };
+}
+
+// ---- THE DECAL ROLL ---------------------------------------------------
+// One roll per pilot level-up (ruled 2026-08-15). PURE: rolling draws,
+// it does not grant — the caller grants, so the draw is testable and
+// the grant is explicit. Determinism: the draw is a seeded fact of
+// (install salt, level reached, owned set at roll time) — the same
+// level-up always yields the same sticker, so there is nothing to
+// re-roll by reloading.
+//
+// RARITY IS ARITHMETIC, and the roll IS the arithmetic: pick an
+// eligible SET uniformly, then an item within it uniformly. A specific
+// flag is therefore exactly nine times rarer than the googly eye,
+// which is precisely what the tray's "1 of 9 FLAGS" line has been
+// claiming all along. Sets with nothing left to give (fully owned, or
+// empty like NUMBERS today) are not eligible.
+//
+// Eyes arrive singly by construction — a roll grants one item, and an
+// eye is one item. The one-eyed melon remains the joke until a second
+// eye is EARNED, which is the joke maturing, not breaking.
+//
+// A full collection rolls null: the level-up beat still plays, the
+// decal beat simply doesn't. Completion is its own reward, deadpan.
+function rollDecal(level) {
+  const D = window.FF.decals;
+  if (!D) return null;
+  const st = stable || (load(), stable);
+  const owned = st.decals || [];
+  const eligible = [];
+  for (const key of Object.keys(D.SETS)) {
+    const items = D.SETS[key].items.filter(it => owned.indexOf(it.id) === -1);
+    if (items.length) eligible.push({ key, label: D.SETS[key].label, items });
+  }
+  if (!eligible.length) return null;
+  const seed = (playerSalt() ^ Math.imul(level >>> 0, 2654435761)) >>> 0;
+  const rng = window.FF.mulberry32(seed);
+  const set = eligible[Math.floor(rng() * eligible.length)];
+  const item = set.items[Math.floor(rng() * set.items.length)];
+  return { id: item.id, label: item.label, setLabel: set.label,
+    setSize: window.FF.decals.SETS[set.key].items.length };
+}
+
+// ---- THE REWARD QUEUE ------------------------------------------------
+function queueReward(entry) {
+  const st = stable || (load(), stable);
+  st.rewards.push(entry);
+  save();
+}
+function pendingRewards() {
+  const st = stable || (load(), stable);
+  return (st.rewards || []).slice();
+}
+// Pop happens when the player ADVANCES PAST a card, not when it is
+// shown — so a crash mid-reveal re-offers rather than swallows.
+function shiftReward() {
+  const st = stable || (load(), stable);
+  const e = (st.rewards || []).shift() || null;
+  if (e) save();
+  return e;
+}
+// Remove and return the first entry of a kind, wherever it sits.
+// Exists for consumers that handle one kind out of order (the melon
+// ceremony predates the card sequence).
+function takeReward(kind) {
+  const st = stable || (load(), stable);
+  const i = (st.rewards || []).findIndex(e => e.kind === kind);
+  if (i === -1) return null;
+  const e = st.rewards.splice(i, 1)[0];
+  save();
+  return e;
+}
+
+// Fire every decal roll the pilot has earned but not yet received:
+// one per level between rolledLevel and the current level. A null
+// roll (complete collection) still CONSUMES the level — completion
+// means the beat simply doesn't play, not that it accrues.
+function settleLevelRolls() {
+  const X = window.FF.xp;
+  const st = stable || (load(), stable);
+  const cur = X.levelFor(st.player.xp || 0);
+  const queued = [];
+  while ((st.player.rolledLevel || 1) < cur) {
+    const L = (st.player.rolledLevel || 1) + 1;
+    const r = rollDecal(L);
+    if (r) {
+      grantDecal(r.id);
+      const entry = { kind: 'decal', level: L, id: r.id, label: r.label,
+        setLabel: r.setLabel, setSize: r.setSize };
+      st.rewards.push(entry);
+      queued.push(entry);
+    }
+    st.player.rolledLevel = L;
+  }
+  save();
+  return queued;
 }
 
 function playerSalt() {
@@ -589,7 +725,13 @@ function stats(seed, fruit, wide) {
 }
 
 window.FF.melon = { derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
-  ownedDecals, hasDecal, grantDecal,
-  awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load };
+  ownedDecals, hasDecal, grantDecal, pilotXp, addXp, rollDecal,
+  queueReward, pendingRewards, shiftReward, takeReward, settleLevelRolls,
+  awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load,
+  // TRUE reload: drops the in-memory stable and re-reads storage.
+  // _load is a cached accessor (production calls it as "get the
+  // stable"); this one exists for harnesses and dev work, where
+  // "survives a reload" must mean the storage, not the object.
+  _reload: () => { stable = null; return load(); } };
 
 })();

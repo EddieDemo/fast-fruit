@@ -130,8 +130,8 @@ const CSS = `
 .ff-editor-screen .ff-panel { max-width: min(94vw, 560px); }
 .ff-edit-canvas { display: block; width: min(78vw, 400px); height: min(78vw, 400px);
   margin: 0 auto; touch-action: none; }
-.ff-edit-slots { text-align: center; font-size: 12px; letter-spacing: 0.08em;
-  opacity: 0.75; margin: 2px 0 6px; }
+.ff-edit-slots { text-align: center; font-size: var(--fs-label);
+  letter-spacing: var(--tr-label); opacity: 0.75; margin: 2px 0 6px; }
 .ff-tray { display: grid; gap: 10px; padding: 6px 2px;
   grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); }
 .ff-tray-chip { display: flex; flex-direction: column;
@@ -140,15 +140,16 @@ const CSS = `
   cursor: pointer; min-width: 0;
   color: inherit; font: inherit; }   /* buttons do NOT inherit these */
 .ff-tray-chip .ff-chip-label { max-width: 100%; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-bold); }
 .ff-tray-chip canvas { width: 44px; height: 44px; display: block; }
-.ff-tray-chip .ff-chip-label { font-size: 11px; }
-.ff-tray-chip .ff-chip-rarity { font-size: 9px; opacity: 0.55;
-  letter-spacing: 0.06em; }
+.ff-tray-chip .ff-chip-label { font-size: var(--fs-body); }
+.ff-tray-chip .ff-chip-rarity { font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro); color: var(--c-faint); }
 .ff-editor-screen .ff-foot { flex-wrap: wrap; gap: 8px; }
 .ff-edit-zone { position: relative; }
 .ff-edit-readout { position: absolute; pointer-events: none; display: none;
-  font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.04em;
+  font-family: ui-monospace, monospace; font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
   background: rgba(16,16,12,0.85); color: rgba(255,255,255,0.95);
   border: 1px solid rgba(255,255,255,0.25); border-radius: 999px;
   padding: 3px 10px; transform: translate(-50%, -130%); white-space: nowrap; }
@@ -522,20 +523,7 @@ function onKeyDown(ev) {
 
 // ---- tray ---------------------------------------------------------------
 function chipCanvasPaint(cv, item) {
-  const D = window.FF.decals;
-  const c2 = cv.getContext('2d');
-  const S = cv.width;
-  const img = c2.createImageData(S, S);
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const ink = D.sampleArt(item, (x / (S - 1)) * 2 - 1, (y / (S - 1)) * 2 - 1);
-      if (!ink) continue;
-      const o = (y * S + x) * 4;
-      img.data[o] = ink[0]; img.data[o + 1] = ink[1];
-      img.data[o + 2] = ink[2]; img.data[o + 3] = 255;
-    }
-  }
-  c2.putImageData(img, 0, 0);
+  window.FF.decals.paintArt(cv, item);   // one painter (see decals.js)
 }
 
 function buildTray() {

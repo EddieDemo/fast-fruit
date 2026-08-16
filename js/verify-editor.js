@@ -43,29 +43,31 @@ function check(name, ok, detail) {
 // A: ownership ---------------------------------------------------------
 {
   M._load();
-  const owned = M.ownedDecals();
-  const wantAll = ['eye-googly', 'mark-heart', 'mark-star',
-    'flag-fr', 'flag-ie', 'flag-it', 'flag-de', 'flag-pl',
-    'flag-jp', 'flag-vn', 'flag-bd', 'flag-cn'];
-  const hasAll = wantAll.every(id => owned.indexOf(id) !== -1);
-  check('A1 interim default grants the current catalogue', hasAll, owned.join(','));
-  // top-up path: a save that predates a catalogue item gets it on load
+  check('A1 roll era: a new save owns nothing', M.ownedDecals().length === 0);
+  // the wipe fires ONCE: an interim-era save (no eraRoll flag) loses
+  // its grant-all, but decals earned AFTER the wipe survive reloads.
   {
     const st = JSON.parse(localStorage.getItem('ff-stable'));
-    st.decals = ['eye-googly', 'mark-heart', 'mark-star', 'flag-fr'];   // yesterday's save
+    delete st.eraRoll;
+    st.decals = ['eye-googly', 'mark-heart', 'flag-fr'];   // interim-era save
     localStorage.setItem('ff-stable', JSON.stringify(st));
-    M._load();
-    check('A1b top-up reaches existing saves',
-      M.hasDecal('flag-pl') && M.hasDecal('flag-de'), M.ownedDecals().join(','));
+    M._reload();
+    const wiped = M.ownedDecals().length === 0;
+    M.grantDecal('flag-bd');                               // earned post-wipe
+    M._reload();
+    check('A1b wipe fires once; earned decals survive reloads',
+      wiped && M.hasDecal('flag-bd') && M.ownedDecals().length === 1,
+      M.ownedDecals().join(','));
   }
   check('A2 grant refuses unknown ids', M.grantDecal('num-varsity-2') === false);
+  M.grantDecal('mark-star');
   check('A3 grant refuses duplicates', M.grantDecal('mark-star') === false);
   // copy, not the live array
   const copy = M.ownedDecals(); copy.push('intruder');
   check('A4 ownedDecals returns a copy', M.ownedDecals().indexOf('intruder') === -1);
-  // round-trip through a reload
-  M._load();
-  check('A5 round-trips through reload', M.hasDecal('flag-fr') && !M.hasDecal('intruder'));
+  // round-trip through a TRUE reload (storage, not the cached object)
+  M._reload();
+  check('A5 round-trips through reload', M.hasDecal('flag-bd') && !M.hasDecal('intruder'));
 }
 
 // B: clampCentre ---------------------------------------------------------

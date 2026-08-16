@@ -981,12 +981,31 @@ function signature(spec) {
     + ',' + x.rot.toFixed(2) + ',' + x.s.toFixed(2)).join(';');
 }
 
+// Paint an item's art flat onto a square canvas — the tray chips and
+// the award card share this, so a sticker can never look different in
+// the two places it is shown small.
+function paintArt(cv, item) {
+  const c2 = cv.getContext('2d');
+  const S = cv.width;
+  const img = c2.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const ink = sampleArt(item, (x / (S - 1)) * 2 - 1, (y / (S - 1)) * 2 - 1);
+      if (!ink) continue;
+      const o = (y * S + x) * 4;
+      img.data[o] = ink[0]; img.data[o + 1] = ink[1];
+      img.data[o + 2] = ink[2]; img.data[o + 3] = 255;
+    }
+  }
+  c2.putImageData(img, 0, 0);
+}
+
 window.FF = window.FF || {};
 window.FF.decals = {
   SETS, ALL, byId, MAX_DECALS,
   project, unproject, pointAt, unitAt, tangentsAt, sampleAt, foreshorten, visible,
   buildStickerMesh, meshSample, meshNFor, MESH_STEP, MESH_N_MIN, MESH_N_MAX, MESH_CELL,
   ART, VARSITY, FLAGS, sampleArt,
-  worn, place, signature,
+  worn, place, signature, paintArt,
 };
 })();

@@ -51,8 +51,13 @@ let active = null;   // { day, tracks, leg, results: [], startedAt }
 
 function begin(day) {
   const tracks = window.FF.dailyCupTracks(day);
+  // Pilot xp at the gun: the cup-end reveal card animates the bar
+  // from here. Tolerated missing on old resumed cups (falls back to
+  // the current total, a bar that simply doesn't move).
+  const xpStart = (window.FF.melon && window.FF.melon.pilotXp) ? window.FF.melon.pilotXp() : 0;
   active = {
     day: window.FF.dailyTrackName(day),
+    xpStart,
     tracks,
     leg: 0,                 // index of the race about to be run
     results: [],            // one per completed leg (the player's)
