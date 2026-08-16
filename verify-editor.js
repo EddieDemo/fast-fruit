@@ -43,18 +43,31 @@ function check(name, ok, detail) {
 // A: ownership ---------------------------------------------------------
 {
   M._load();
-  const owned = M.ownedDecals();
-  const wantAll = ['eye-googly', 'mark-heart', 'mark-star', 'flag-fr'];
-  const hasAll = wantAll.every(id => owned.indexOf(id) !== -1);
-  check('A1 interim default grants the current catalogue', hasAll, owned.join(','));
+  check('A1 roll era: a new save owns nothing', M.ownedDecals().length === 0);
+  // the wipe fires ONCE: an interim-era save (no eraRoll flag) loses
+  // its grant-all, but decals earned AFTER the wipe survive reloads.
+  {
+    const st = JSON.parse(localStorage.getItem('ff-stable'));
+    delete st.eraRoll;
+    st.decals = ['eye-googly', 'mark-heart', 'flag-fr'];   // interim-era save
+    localStorage.setItem('ff-stable', JSON.stringify(st));
+    M._reload();
+    const wiped = M.ownedDecals().length === 0;
+    M.grantDecal('flag-bd');                               // earned post-wipe
+    M._reload();
+    check('A1b wipe fires once; earned decals survive reloads',
+      wiped && M.hasDecal('flag-bd') && M.ownedDecals().length === 1,
+      M.ownedDecals().join(','));
+  }
   check('A2 grant refuses unknown ids', M.grantDecal('num-varsity-2') === false);
+  M.grantDecal('mark-star');
   check('A3 grant refuses duplicates', M.grantDecal('mark-star') === false);
   // copy, not the live array
   const copy = M.ownedDecals(); copy.push('intruder');
   check('A4 ownedDecals returns a copy', M.ownedDecals().indexOf('intruder') === -1);
-  // round-trip through a reload
-  M._load();
-  check('A5 round-trips through reload', M.hasDecal('flag-fr') && !M.hasDecal('intruder'));
+  // round-trip through a TRUE reload (storage, not the cached object)
+  M._reload();
+  check('A5 round-trips through reload', M.hasDecal('flag-bd') && !M.hasDecal('intruder'));
 }
 
 // B: clampCentre ---------------------------------------------------------
@@ -120,6 +133,41 @@ function check(name, ok, detail) {
   }
   check('F clamped centre unprojects and re-projects to itself',
     worst < 1e-6, 'worst=' + worst.toExponential(2) + 'px');
+}
+
+// G: angle snapping ---------------------------------------------------
+{
+  const P2 = window.FF.editor._pure;
+  const d2r = x => x * Math.PI / 180;
+  const near = (a, b) => Math.abs(a - b) < 1e-12;
+  // inside the window: clicks to the detent
+  const s1 = P2.snapAngle(d2r(43));
+  const okIn = s1.snapped && near(s1.rot, d2r(45));
+  // outside: untouched, unsnapped
+  const s2 = P2.snapAngle(d2r(40));
+  const okOut = !s2.snapped && near(s2.rot, d2r(40));
+  // zero detent, negative side, and wrap-scale multiples
+  const s3 = P2.snapAngle(d2r(-2));
+  const s4 = P2.snapAngle(d2r(-92));
+  const s5 = P2.snapAngle(d2r(178));
+  const okEdges = s3.snapped && near(s3.rot, 0)
+    && s4.snapped && near(s4.rot, d2r(-90))
+    && s5.snapped && near(s5.rot, d2r(180));
+  // distinct detents get distinct ids (the haptic fires per detent)
+  const okIds = P2.snapAngle(d2r(45)).detent !== P2.snapAngle(d2r(90)).detent;
+  check('G snapAngle: window, escape, edges, detent ids', okIn && okOut && okEdges && okIds);
+}
+
+// H: double-tap straighten ---------------------------------------------
+{
+  const P2 = window.FF.editor._pure;
+  const d2r = x => x * Math.PI / 180;
+  const near = (a, b) => Math.abs(a - b) < 1e-12;
+  const ok = near(P2.nearestCardinal(d2r(37)), 0)
+    && near(P2.nearestCardinal(d2r(50)), d2r(90))
+    && near(P2.nearestCardinal(d2r(-100)), d2r(-90))
+    && near(P2.nearestCardinal(d2r(140)), d2r(180));
+  check('H nearestCardinal straightens to quarter turns', ok);
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall clear');

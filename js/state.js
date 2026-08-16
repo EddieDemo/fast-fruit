@@ -504,7 +504,52 @@ function racerKey(m) {
   return (m && (m.pilot || m.name)) || '?';
 }
 
+// ---- GRID ORDER (ruled 2026-08-16) ----------------------------------
+// Slot each racer for the grid. keys = every racer's identity, in
+// [players..., bots...] order; order = the previous leg's finishing
+// order (keys, pole first), or null.
+//
+// No order (leg 1, practice, any fresh race): THE PLAYER STARTS LAST —
+// the unknown entrant at the back of a field of eleven knowns — and
+// the rest keep their relative order in the front slots. With an
+// order: slot = finishing position, everyone, no special case; a key
+// the order does not know (cast drift safety) appends behind the
+// matched field, relative order kept.
+function computeGridSlots(keys, order, playerIdx) {
+  const n = keys.length;
+  const slots = new Array(n).fill(-1);
+  if (!order || !order.length) {
+    let s = 0;
+    for (let i = 0; i < n; i++) if (i !== playerIdx) slots[i] = s++;
+    if (playerIdx >= 0 && playerIdx < n) slots[playerIdx] = n - 1;
+    return slots;
+  }
+  const rank = new Map();
+  order.forEach((k, i) => { if (!rank.has(k)) rank.set(k, i); });
+  const matched = [], unmatched = [];
+  for (let i = 0; i < n; i++) {
+    if (rank.has(keys[i])) matched.push(i); else unmatched.push(i);
+  }
+  matched.sort((a, b) => rank.get(keys[a]) - rank.get(keys[b]));
+  let s = 0;
+  for (const i of matched) slots[i] = s++;
+  for (const i of unmatched) slots[i] = s++;
+  return slots;
+}
+
+// Re-place every body by the given slots (same [players..., bots...]
+// indexing as computeGridSlots). prev snapshots re-sync so the first
+// drawn frame cannot interpolate a body across the grid.
+function applyGridSlots(state, slots, lineX, fallbackY) {
+  const all = state.players.concat(state.bots);
+  for (let i = 0; i < all.length && i < slots.length; i++) {
+    gridPlace(state, all[i].melon, slots[i], lineX, fallbackY);
+    Object.assign(all[i].prevMelon, all[i].melon);
+  }
+}
+
+
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale, racerKey });
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
 })();

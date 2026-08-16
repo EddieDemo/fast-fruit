@@ -1,7 +1,7 @@
 (function () {
 'use strict';
 // ============================================================
-// CUP — the daily event: four races on today's four tracks, scored
+// CUP — the daily event: one race per leg on today's tracks, scored
 // together. THE CUP IS THE DAILY. A single race is practice: same
 // track (leg 1), no record, freely retried.
 //
@@ -32,7 +32,13 @@
 // ============================================================
 
 const KEY = 'ff.cup.v1';
-const LEGS = 4;
+// THREE LEGS (ruled 2026-08-15, was four): this is a mobile game, and
+// a cup you can always finish inside a short session beats a grander
+// one you sometimes abandon. The trade is a smaller comeback window —
+// one bad race is now a third of the cup, not a quarter — accepted
+// with eyes open; the points law still rewards consistency across
+// what legs there are.
+const LEGS = 3;
 // What a leg costs a racer who could not finish it. Large enough that
 // no finished lap can outweigh it, finite so the totals stay
 // readable. Applies to the PLAYER too: a cup where you failed to
@@ -63,7 +69,7 @@ function begin(day) {
     results: [],            // one per completed leg (the player's)
     table: {},              // every racer's running total, by name
     // ONE CAST FOR THE WHOLE CUP. Names are normally dealt from the
-    // race seed, which would field four different sets of rivals and
+    // race seed, which would field a different set of rivals per leg and
     // make a points table meaningless. The cup deals its cast once,
     // from the DAY, and every leg reuses it.
     nameSeed: window.FF.trackDefByName(tracks[0]).seed,
@@ -97,7 +103,7 @@ function trackForLeg(i) { return active ? active.tracks[i] : null; }
 
 // Record a finished leg. `standings` is the whole field in order —
 // every racer, not just the player — because a points table is only
-// meaningful if it ranks the SAME cast across four races. The cup
+// meaningful if it ranks the SAME cast across every race. The cup
 // fixes its cast for exactly this reason (see nameSeed below).
 function completeLeg(result) {
   if (!active) return null;
@@ -112,6 +118,17 @@ function completeLeg(result) {
     dnf: !!result.dnf,
     splats: result.splats || 0,
     fieldSize,
+    // THE NEXT GRID (ruled 2026-08-16): the whole field starts leg
+    // N+1 where it finished leg N — everyone, player included, no
+    // special case. Stored as identity keys in finishing order (pos 1
+    // first = pole), so the grid IS the last result made physical.
+    // Rides the results array into the resume snapshot for free. A
+    // DNF's pos already classifies last (the time penalty), so a dead
+    // melon gridding at the back next leg is a consequence, not a
+    // rule.
+    order: (result.standings || []).slice()
+      .sort((a, b) => (a.pos || 99) - (b.pos || 99))
+      .map(r => r.key || r.pilot || r.name || '?'),
   });
   // Everyone's running total, keyed by name. Ranking the cup is then
   // a fact rather than an estimate.
@@ -158,6 +175,15 @@ function table() {
   rows.sort((a, b) => (b.points - a.points) || (a.timeSec - b.timeSec));
   rows.forEach((r, i) => { r.pos = i + 1; });
   return rows;
+}
+
+// The grid for the leg about to run: the previous leg's finishing
+// order, or null when there is no previous leg (leg 1) — the caller's
+// default then applies (player at the back, the unknown entrant).
+function gridOrder() {
+  if (!active || !active.results.length) return null;
+  const last = active.results[active.results.length - 1];
+  return (last.order && last.order.length) ? last.order.slice() : null;
 }
 
 function playerPlace() {
@@ -232,7 +258,7 @@ function finish() {
 }
 
 window.FF.cup = {
-  LEGS, pointsFor, DNF_PENALTY_SEC, begin, current, isRunning, isComplete, trackForLeg,
+  LEGS, pointsFor, DNF_PENALTY_SEC, begin, current, isRunning, isComplete, trackForLeg, gridOrder,
   completeLeg, totals, table, playerPlace, finish, abandon, dayRecord, resume,
   nameSeed: () => (active ? active.nameSeed : null),
   _load: load,

@@ -133,7 +133,7 @@ function createRenderer(canvas) {
     const compact = height < COMPACT_H_PX;
     const mh = compact ? MIN_H_M_COMPACT : MIN_H_M_FULL;
     const mw = compact ? MIN_W_M_COMPACT : MIN_W_M_FULL;
-    const zoom = Math.min(1, height / (mh * 100), width / (mw * 100));
+    let zoom = Math.min(1, height / (mh * 100), width / (mw * 100));
 
     // ---- Camera: forward-biased on x, centered on y ----
     // Target puts the melon at MELON_SCREEN_FRAC of screen width;
@@ -141,25 +141,24 @@ function createRenderer(canvas) {
     // low = long dreamy lag, high = locked. Vertical stays centered:
     // jump arcs need vision both ways.
     const cam = state.camera;
-    // The pre-race pan: the camera starts up the track and travels
-    // back to the grid. Expressed as an OFFSET on the normal follow
-    // target, so the follow behaviour is unchanged and the pan cannot
-    // fight it. Duration is fixed in ticks (gridstart.js), not in the
-    // lerp coefficient, so tuning the camera never changes how long
-    // the ceremony lasts.
-    const panOffset = (window.FF.gridStart && window.FF.gridStart.cameraOffset)
-      ? window.FF.gridStart.cameraOffset(state) : 0;
-    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom + panOffset;
-    if (!cam.initialized) {
+    // THE GRID WALK: while gridstart holds a shot, the shot owns the
+    // frame absolutely — pose and zoom both — so no follow lerp can
+    // fight it. Its end (timeout or touch) drops camera.initialized,
+    // and the branch below snaps to the follow target: that IS the
+    // hard cut, one grammar for both exits, immune to camera tuning.
+    const shot = (window.FF.gridStart && window.FF.gridStart.cameraShot)
+      ? window.FF.gridStart.cameraShot(state) : null;
+    if (shot) zoom *= shot.zoomMul;
+    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom;
+    if (shot) {
+      cam.x = shot.x;
+      cam.y = shot.y;
+      // initialized stays false through the walk, so the first frame
+      // after the shot snaps rather than travels.
+    } else if (!cam.initialized) {
       cam.x = targetX;
       cam.y = iy;
       cam.initialized = true;
-    } else if (panOffset > 0) {
-      // Snap to the pan's own easing: two easings fighting (the pan's
-      // and the follow lerp) would make the ceremony's length depend
-      // on the camera tuning.
-      cam.x = targetX;
-      cam.y += (iy - cam.y) * Math.min(1, CONFIG.cameraLerp * dtFrame);
     } else {
       const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
       cam.x += (targetX - cam.x) * k;

@@ -151,6 +151,24 @@ function respawnRace(opts) {
     }
   }
 
+  // ---- THE GRID ORDER (ruled 2026-08-16) ---------------------------
+  // Solo races re-grid the whole field after the cast is dressed:
+  // mid-cup, everyone starts where they finished the previous leg —
+  // the grid is the last result made physical, the leg winner on
+  // pole, and the walk becomes a recap that ends on the front-runner.
+  // With no previous leg (leg 1, practice, any fresh race) the player
+  // starts LAST: the unknown entrant behind eleven knowns, which also
+  // opens the walk on the player's own melon. Netplay keeps protocol
+  // slots; the exhibition is scenery and grids as dealt.
+  if (!netSession && !exhibition) {
+    const keys = state.players.map(p => window.FF.racerKey(p.melon))
+      .concat(state.bots.map(b => window.FF.racerKey(b.melon)));
+    const order = (window.FF.cup && window.FF.cup.isRunning && window.FF.cup.isRunning())
+      ? window.FF.cup.gridOrder() : null;
+    const slots = window.FF.computeGridSlots(keys, order, localSlot);
+    window.FF.applyGridSlots(state, slots, SPAWN.x, -CONFIG.semiMinor - 200);
+  }
+
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
   // A NEW RACE STARTS FROM A CENTRED WHEEL. Whatever drove the world

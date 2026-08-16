@@ -939,7 +939,8 @@ function buildMenu() {
   // A half-finished run is the most urgent thing on this screen, so
   // it takes the primary slot and pushes the cup down to secondary.
   const resumeBtn = el('button', 'ff-btn', 'RESUME');
-  const cupBtn = el('button', 'ff-btn', 'DAILY CUP \u00b7 4 RACES');
+  const cupBtn = el('button', 'ff-btn',
+    'DAILY CUP \u00b7 ' + ((window.FF.cup && window.FF.cup.LEGS) || 3) + ' RACES');
   const race = el('button', 'ff-btn ff-secondary', "PRACTICE TODAY'S TRACK");
   const foot = el('div', 'ff-foot');
   foot.appendChild(resumeBtn);

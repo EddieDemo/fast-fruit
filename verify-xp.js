@@ -38,7 +38,7 @@ function check(name, ok, detail) {
 }
 
 // A: the table -----------------------------------------------------------
-check('A the ruled table', X.XP_RACE === 5 && X.XP_CUP === 10 && X.XP_PER_POINT === 1
+check('A the ruled table', X.XP_RACE === 7 && X.XP_CUP === 10 && X.XP_PER_POINT === 1
   && X.XP_BASE === 50 && X.XP_RAMP === 25 && X.XP_CAP === 200);
 
 // B: curve shape -----------------------------------------------------------
@@ -69,19 +69,19 @@ check('A the ruled table', X.XP_RACE === 5 && X.XP_CUP === 10 && X.XP_PER_POINT 
 
 // D: the spread claims, in cup arithmetic -----------------------------------
 {
-  // 4 races, 12 racers, points = 13 - place per race
-  const last = X.cupXp(4, true, 4 * 1);
-  const sweep = X.cupXp(4, true, 4 * 12);
-  const median = X.cupXp(4, true, 26);
-  check('D spread: 34 floor, 78 ceiling, ~56 median',
-    last === 34 && sweep === 78 && median === 56,
+  // 3 races, 12 racers, points = 13 - place per race
+  const last = X.cupXp(3, true, 3 * 1);
+  const sweep = X.cupXp(3, true, 3 * 12);
+  const median = X.cupXp(3, true, 20);
+  check('D spread: 34 floor, 67 ceiling, ~51 median',
+    last === 34 && sweep === 67 && median === 51,
     last + ' / ' + median + ' / ' + sweep + '  ratio ' + (sweep / last).toFixed(2) + 'x');
 }
 
 // E: first-level pacing -------------------------------------------------------
 {
-  const median = X.cupXp(4, true, 26);
-  const worst = X.cupXp(4, true, 4);
+  const median = X.cupXp(3, true, 20);
+  const worst = X.cupXp(3, true, 3);
   check('E first level inside 1 median cup, 2 worst cups',
     median >= X.costFrom(1) && 2 * worst >= X.costFrom(1),
     'median ' + median + ' vs cost 50; worst 2x' + worst);
@@ -89,26 +89,26 @@ check('A the ruled table', X.XP_RACE === 5 && X.XP_CUP === 10 && X.XP_PER_POINT 
 
 // F: cupXp edges ----------------------------------------------------------------
 {
-  const ok = X.cupXp(2, false, 19) === 10          // abandoned: 2 races, no cup, no points
+  const ok = X.cupXp(2, false, 19) === 14          // abandoned: 2 races, no cup, no points
     && X.cupXp(0, false, 0) === 0
-    && X.cupXp(4, false, 48) === 20                // four legs raced but cup not counted
+    && X.cupXp(3, false, 36) === 21                // legs raced but cup not counted
     && X.cupXp(2.9, true, 7.9) === X.cupXp(2, true, 7);   // integer clamp
   check('F abandoned cups pay base only; points need completion', ok);
 }
 
 // G: storage round-trip ------------------------------------------------------------
 {
-  M._load();
+  M._reload();
   const ok0 = M.pilotXp() === 0;
-  const r1 = M.addXp(56);
-  const ok1 = r1.added === 56 && r1.xp === 56 && r1.level === 2 && r1.levelsGained === 1;
-  const r2 = M.addXp(56);                          // 112 total -> L2 spans 50..124
+  const r1 = M.addXp(51);
+  const ok1 = r1.added === 51 && r1.xp === 51 && r1.level === 2 && r1.levelsGained === 1;
+  const r2 = M.addXp(56);                          // 107 total -> L2 spans 50..124
   const ok2 = r2.level === 2 && r2.levelsGained === 0;
   const r3 = M.addXp(-40);                         // clamps to 0
-  const ok3 = r3.added === 0 && r3.xp === 112;
-  M._load();                                       // reload from storage
-  const ok4 = M.pilotXp() === 112;
-  const r5 = M.addXp(200);                         // 312 -> spent 50+75+100=225, L4
+  const ok3 = r3.added === 0 && r3.xp === 107;
+  M._reload();                                     // TRUE reload from storage
+  const ok4 = M.pilotXp() === 107;
+  const r5 = M.addXp(205);                         // 312 -> spent 50+75+100=225, L4
   const ok5 = r5.level === 4 && r5.levelsGained === 2;
   check('G addXp clamps, accumulates, persists, reports gains',
     ok0 && ok1 && ok2 && ok3 && ok4 && ok5,

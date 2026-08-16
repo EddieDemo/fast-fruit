@@ -176,10 +176,15 @@ function trackDefByName(name) {
   return null;
 }
 
-// The four legs of a day's cup, in order. Leg 1 is the plain daily.
+// The legs of a day's cup, in order. Leg 1 is the plain daily; the
+// COUNT is the cup's law (cup.js LEGS), read at call time so the two
+// can never disagree. Falls back to 3 for load order.
 function dailyCupTracks(d) {
   const base = dailyTrackName(d);
-  return [base, base + ' #2', base + ' #3', base + ' #4'];
+  const n = (window.FF.cup && window.FF.cup.LEGS) || 3;
+  const out = [base];
+  for (let i = 2; i <= n; i++) out.push(base + ' #' + i);
+  return out;
 }
 
 // Today's daily name, from the local date: the seed IS the date.

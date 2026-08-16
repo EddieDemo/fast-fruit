@@ -8,10 +8,17 @@
 // does NOTHING reads as broken, so the finger is never ignored, only
 // re-purposed.
 //
-//   PAN    the camera starts 25m up the track and travels back to
-//          the grid, previewing the first hazards of terrain nobody
-//          has seen before. It completes on its own; a touch during
-//          it just skips ahead.
+//   PAN    THE GRID WALK (reworked 2026-08-15, was a terrain
+//          preview). The camera sweeps the field close-up, tail to
+//          pole — every racer and their decals pass through frame,
+//          the pre-race athlete close-ups of sports coverage, played
+//          straight at melons. It ends in a HARD CUT to normal race
+//          framing on the player: cuts are broadcast grammar, and a
+//          decelerating camera settling into place reads as mush. A
+//          touch at any point is the same cut, earlier. The old
+//          terrain preview is not missed: the READY hold is
+//          indefinite at race framing, so the road ahead can be
+//          studied for free until a thumb says go.
 //   READY  the grid HOLDS, indefinitely, until the player plants a
 //          thumb. This is the point of the whole sequence: with an
 //          auto-start the player still has to choose where to put
@@ -54,15 +61,29 @@
 // ============================================================
 
 const HZ = 120;
-const PAN_TICKS = Math.round(1.6 * HZ);    // fixed SECONDS, not a lerp
 const COUNT_TICKS = Math.round(1.0 * HZ);  // per number: 3, 2, 1
 const GO_HOLD_TICKS = Math.round(0.6 * HZ);
-const PAN_AHEAD_PX = 2500;                 // 25 m up the track
+// The grid walk: constant speed derived from the REAL grid extent,
+// clamped so a strange field can neither flash past nor drag. Zoom is
+// a multiplier on the device zoom, close enough that an eye-sized
+// sticker reads, not so close a melon overflows a phone.
+const PAN_SPEED = 250;                     // px per second along the grid
+                                           // (900 -> 450 -> 250 on feel.
+                                           // Note the easing concentrates
+                                           // speed mid-walk at 1.5x the
+                                           // average — right where the
+                                           // racers are — so equal FELT
+                                           // speed needs a lower average
+                                           // than the linear cut did.)
+const PAN_MIN_TICKS = Math.round(1.0 * HZ);
+const PAN_MAX_TICKS = Math.round(10.0 * HZ);
+const PAN_ZOOM = 2.5;
 
 const state = {
   phase: 'off',      // off | pan | ready | count | go
   startedAt: 0,      // tick the current phase began
   bodies: null,      // the bodies held on the grid
+  walk: null,        // { xs, ys, from, to, ticks } — the grid walk path
   armed: false,
   // A press only arms the grid if the finger LANDED after the race
   // was built. Set false at begin(), true by the first pointerup /
@@ -97,6 +118,27 @@ function begin(gameState, opts) {
     m.pinX = m.x;
     m.pinY = m.y;
   }
+  // The walk's path: bodies sorted along the track, swept tail ->
+  // pole (builds toward the front-runners, ends on the presumptive
+  // favourite, then cuts to you). Duration from the real extent —
+  // never an assumption about field size. One body: the walk is a
+  // brief held close-up.
+  const sorted = state.bodies.slice().sort((a, b) => a.x - b.x);
+  const xs = sorted.map(m => m.x), ys = sorted.map(m => m.y);
+  const extent = xs[xs.length - 1] - xs[0];
+  state.walk = {
+    xs, ys,
+    from: xs[0], to: xs[xs.length - 1],
+    ticks: Math.max(PAN_MIN_TICKS,
+      Math.min(PAN_MAX_TICKS, Math.round(extent / PAN_SPEED * HZ))),
+  };
+}
+
+// THE CUT. One camera grammar for both exits (timeout and touch):
+// dropping initialized makes the renderer snap to the follow target
+// on its next frame — instant, tuning-proof, nothing decelerates.
+function cutToPlayer(gameState) {
+  if (gameState && gameState.camera) gameState.camera.initialized = false;
 }
 
 function cancel() {
@@ -118,6 +160,7 @@ function arm(gameState) {
   if (state.phase === 'pan') {
     state.phase = 'ready';
     state.startedAt = gameState.tick;
+    cutToPlayer(gameState);
     // A single press both skips the pan AND starts the countdown, so
     // an impatient player taps once, not twice — but only if that
     // press was fresh.
@@ -141,10 +184,11 @@ function update(gameState) {
   if (state.phase === 'off' || !gameState) return;
   const elapsed = gameState.tick - state.startedAt;
   if (state.phase === 'pan') {
-    // The pan completes by itself and hands over to the waiting grid.
-    if (elapsed >= PAN_TICKS) {
+    // The walk completes by itself and hands over to the waiting grid.
+    if (elapsed >= ((state.walk && state.walk.ticks) || PAN_MIN_TICKS)) {
       state.phase = 'ready';
       state.startedAt = gameState.tick;
+      cutToPlayer(gameState);
     }
     return;
   }
@@ -170,20 +214,47 @@ function update(gameState) {
 }
 
 // ---- What the presentation layer needs -----------------------------
-// The camera's offset up the track, easing to zero as the pan ends.
-function cameraOffset(gameState) {
-  if (state.phase !== 'pan' || !gameState) return 0;
-  const t = Math.min(1, (gameState.tick - state.startedAt) / PAN_TICKS);
-  // Ease-out: fast away from the preview, gentle into the grid.
-  const e = 1 - Math.pow(1 - t, 3);
-  return PAN_AHEAD_PX * (1 - e);
+// The grid-walk shot, or null when the camera belongs to the normal
+// follow. An absolute pose: the shot OWNS the frame while it exists,
+// so no follow lerp can fight it, and its absence IS the cut. Travel
+// is EASY-EASED (ruled on feel, 2026-08-16, over the linear first
+// cut): smoothstep both ends, so the walk gathers itself off the tail
+// and settles onto the pole racer for a beat before the cut. Same
+// ticks, same distance — easing only redistributes the speed. The
+// suite verifies the VELOCITY PROFILE, not just positions: an earlier
+// "easing" change silently failed to apply and every position check
+// passed anyway.
+function cameraShot(gameState) {
+  if (state.phase !== 'pan' || !gameState || !state.walk) return null;
+  const w = state.walk;
+  const t = Math.min(1, (gameState.tick - state.startedAt) / w.ticks);
+  const e = t * t * (3 - 2 * t);   // smoothstep: ease in, ease out
+  const x = w.from + (w.to - w.from) * e;
+  // y rides the bodies being passed: lerp between the two racers
+  // bracketing the camera, so the shot follows the field over the
+  // terrain they settled on rather than a fixed height.
+  let y = w.ys[0];
+  for (let i = 1; i < w.xs.length; i++) {
+    if (x <= w.xs[i]) {
+      const span = w.xs[i] - w.xs[i - 1];
+      const f = span > 1e-9 ? (x - w.xs[i - 1]) / span : 1;
+      y = w.ys[i - 1] + (w.ys[i] - w.ys[i - 1]) * f;
+      break;
+    }
+    y = w.ys[i];
+  }
+  return { x, y, zoomMul: PAN_ZOOM };
 }
 
 // The word on screen, or null.
 function caption(gameState) {
   if (!gameState) return null;
   const elapsed = gameState.tick - state.startedAt;
-  if (state.phase === 'pan') return { text: 'TOUCH TO START', kind: 'hint' };
+  // THE WALK IS UNCAPTIONED (ruled 2026-08-16): the prompt was sitting
+  // on top of the racers the shot exists to show. A touch still skips
+  // — the finger is never ignored — the invitation just waits for the
+  // cut, where the READY grid says it over race framing instead.
+  if (state.phase === 'pan') return null;
   if (state.phase === 'ready') {
     return { text: state.freshPress ? 'TOUCH TO START' : 'LIFT, THEN TOUCH', kind: 'hint' };
   }
@@ -197,7 +268,7 @@ function caption(gameState) {
 
 window.FF.gridStart = {
   begin, update, arm, start, noteRelease, cancel, release, phase, isHolding,
-  silenceBots, cameraOffset, caption,
-  PAN_TICKS, COUNT_TICKS, GO_HOLD_TICKS, PAN_AHEAD_PX,
+  silenceBots, cameraShot, caption,
+  COUNT_TICKS, GO_HOLD_TICKS, PAN_SPEED, PAN_MIN_TICKS, PAN_MAX_TICKS, PAN_ZOOM,
 };
 })();
