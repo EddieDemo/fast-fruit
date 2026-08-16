@@ -1,0 +1,661 @@
+/* ---------- SCREEN LANES ----------
+   Fixed controls live in named lanes so nothing has to guess where
+   anything else is. Two rules:
+
+     PLAYER controls own the corners: HUD top-left, pause top-right,
+     multiplayer bottom-right.
+
+     DEV controls stack VERTICALLY down the left edge, beneath the
+     HUD. Vertical is the important word: the old arrangement offset
+     dev buttons horizontally from the right edge, so a button whose
+     label changed width ('tune' -> 'close') could overlap its
+     neighbour. A vertical stack is immune to label width.
+
+   Because the lanes are declared once here, turning the dev gate on
+   can never shift or cover a player control. */
+:root {
+  --lane-t: max(10px, env(safe-area-inset-top));
+  --lane-r: max(10px, env(safe-area-inset-right));
+  --lane-l: max(10px, env(safe-area-inset-left));
+  --lane-b: max(10px, env(safe-area-inset-bottom));
+  /* MEASURED, not guessed: hud.js publishes the real box (see
+     publishHudBox). These are only the fallbacks for the first frame
+     and for any build without the HUD. The cockpit toggle reveals
+     extra telemetry rows, so a fixed 76px left the dev stack sitting
+     underneath the taller HUD. */
+  --hud-h: 76px;
+  --hud-w: 128px;
+  --dev-step: 40px;       /* vertical pitch of the dev stack */
+  --dev-top: calc(var(--lane-t) + var(--hud-h));
+}
+/* ============================================================
+   Fast Fruit — Stage 1
+   The canvas is the game. Everything else is overlay chrome.
+   ============================================================ */
+
+:root {
+  --panel-bg: rgba(20, 28, 18, 0.88);
+  --panel-fg: #e8f2df;
+  --panel-accent: #ff5d73;   /* watermelon flesh */
+  --panel-dim: #93a689;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #000000;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* The game surface. touch-action: none is load-bearing:
+   without it, mobile browsers steal our pointer events for scrolling. */
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- HUD (top-left telemetry) ---------- */
+#hud {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  padding: 8px 12px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  pointer-events: none;
+  min-width: 128px;
+}
+.hud-row { display: flex; justify-content: space-between; gap: 12px; }
+.hud-label { color: var(--panel-dim); }
+#hud-impact { color: var(--panel-accent); }
+
+/* ---------- Touch hint ---------- */
+#touch-hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 24px calc(28px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: opacity 0.6s ease;
+}
+#touch-hint.hidden { opacity: 0; }
+
+/* ---------- Respawn button ---------- */
+#respawn-btn {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: var(--fs-lead);
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#respawn-btn:active { color: var(--panel-accent); }
+
+/* ---------- Shader Studio (dev) ---------- */
+/* Bottom-left: the only empty corner (HUD top-left, toggles top-right,
+   multiplayer bottom-right). At right:56px this dev button sat ON TOP
+   of the tune panel's controls with z-index 30 winning every tap. */
+#studio-btn {
+  position: fixed;
+  top: calc(var(--dev-top) + var(--dev-step) * 2);
+  left: var(--lane-l);
+  z-index: 30;
+  background: var(--panel-bg, #161616);
+  color: #ddd;
+  border: none;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+#studio-btn.active { outline: 1px solid #00ff00; }
+#studio-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+}
+#studio-panels {
+  position: fixed;
+  top: 52px;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 26;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+#studio-panels .studio-panel {
+  width: 330px;
+  overflow-y: auto;
+  pointer-events: auto;
+  background: rgba(12, 12, 12, 0.92);
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: #ccc;
+}
+#studio-tabs { display: none; }
+/* Portrait / narrow: one panel, switched by tab, so the stage survives */
+@media (orientation: portrait), (max-width: 860px) {
+  #studio-panels {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  #studio-tabs {
+    display: flex;
+    gap: 6px;
+    pointer-events: auto;
+    margin-bottom: 6px;
+  }
+  #studio-tabs button {
+    flex: 1;
+    background: #161616;
+    color: var(--c-dim);
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 6px;
+    font-family: var(--mono);
+    font-size: var(--fs-label);
+  }
+  #studio-tabs button.on { background: #223; color: var(--c-accent); }
+  #studio-panels .studio-panel { width: auto; flex: 1; }
+  #studio-panels[data-tab="left"] #studio-panel-right { display: none; }
+  #studio-panels[data-tab="right"] #studio-panel-left { display: none; }
+}
+#studio-panels .studio-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: #fff;
+  margin-bottom: 8px;
+}
+#studio-panels .studio-head button {
+  background: #222;
+  color: var(--c-accent);
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+#studio-panels .studio-group { margin: 10px 0 4px; }
+#studio-panels .studio-group-title {
+  color: #888;
+  letter-spacing: 0.12em;
+  font-size: var(--fs-micro);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+#studio-panels .studio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+#studio-panels .studio-row > span:first-child { flex: 0 0 92px; }
+#studio-panels .studio-slider { display: flex; align-items: center; gap: 5px; flex: 1; }
+#studio-panels .studio-slider input[type=range] { flex: 1; accent-color: var(--c-accent); }
+#studio-panels .studio-val { width: 34px; text-align: right; color: var(--c-dim); }
+#studio-panels select, #studio-panels input[type=checkbox] { accent-color: var(--c-accent); }
+
+/* Dual-handle range: one bar per channel, handles may cross */
+#studio-panels .dual-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+}
+#studio-panels .dual-track {
+  position: relative;
+  flex: 1;
+  height: 18px;
+  cursor: pointer;
+}
+#studio-panels .dual-track::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 8px;
+  height: 3px;
+  background: #2c2c2c;
+  border-radius: 2px;
+}
+#studio-panels .dual-span {
+  position: absolute;
+  top: 8px;
+  height: 3px;
+  background: #00ff00;
+  opacity: 0.75;
+  border-radius: 2px;
+}
+#studio-panels .dual-h {
+  position: absolute;
+  top: 3px;
+  width: 13px;
+  height: 13px;
+  margin-left: -6.5px;
+  border-radius: 50%;
+  background: #e8e8e8;
+  border: 1px solid #111;
+}
+#studio-panels .dual-h.hi { background: #00ff00; }
+#studio-panels .dual-num {
+  width: 44px;
+  background: #0e0e0e;
+  color: var(--c-dim);
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  padding: 2px 3px;
+  text-align: center;
+}
+
+/* Palette grid: two rows (A / B) x n columns, values beside colours */
+#studio-panels .studio-row-wide {
+  display: block;
+}
+#studio-panels .studio-row-wide > span:first-child { display: none; }
+#studio-panels .pal-grid {
+  display: grid;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+#studio-panels .pal-cell {
+  background: #161616;
+  border-radius: 5px;
+  padding: 3px;
+}
+#studio-panels .pal-swatch {
+  height: 26px;
+  border-radius: 3px;
+  font-size: var(--fs-micro);
+  line-height: 26px;
+  text-align: center;
+  color: rgba(0, 0, 0, 0.5);
+  font-family: var(--mono);
+  cursor: pointer;
+}
+#studio-panels .pal-swatch:hover { outline: 1px solid #0f0; }
+#studio-panels .pal-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+}
+#studio-panels .pal-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-micro);
+}
+#studio-panels .pal-field i {
+  color: #777;
+  font-style: normal;
+  width: 12px;
+}
+#studio-panels .pal-field b { color: #666; font-weight: 400; }
+#studio-panels .pal-field.ro { opacity: 0.75; }
+#studio-panels .pal-field input {
+  width: 100%;
+  min-width: 0;
+  background: #0e0e0e;
+  color: var(--c-dim);
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  padding: 1px 2px;
+  cursor: ns-resize;
+}
+#studio-panels select.studio-slot {
+  flex: 1;
+  background: #1a1a1a;
+  color: var(--c-dim);
+  border: 1px solid #333;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+
+/* ---------- Naming ceremony ---------- */
+/* The naming ceremony's card RETIRED from this file (2026-08-14):
+   it is now the 'naming' flow screen, built from the same components
+   as the start screen and styled by flow.js's own CSS. The block that
+   was here predated type.js — #111 panels, #fff titles, #9a9a9a
+   labels and a pink keep button — and was the last unmigrated surface
+   in the interface. */
+
+/* ---------- Daily button ---------- */
+#daily-btn {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: calc(50% + 34px);
+  z-index: 10;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+#daily-btn.active { color: var(--panel-accent); }
+
+/* ---------- Ghost banner + challenge button ---------- */
+#ghost-banner {
+  display: none;
+  position: fixed;
+  top: calc(var(--lane-t) + 46px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  z-index: 9;
+  pointer-events: none;
+}
+#challenge-btn {
+  display: none;
+  position: fixed;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 44px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-accent);
+  color: #1a1a1a;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  cursor: pointer;
+  z-index: 9;
+}
+
+/* ---------- Death overlay ---------- */
+#death-overlay {
+  position: fixed;
+  top: 26%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.94);
+  text-align: center;
+  font-family: var(--mono);
+  color: #fff;
+  z-index: 8;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+#death-overlay.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+#death-overlay .death-title {
+  font-size: var(--fs-hero);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 18px rgba(255, 71, 87, 0.55);
+}
+#death-overlay .death-sub {
+  margin-top: 8px;
+  font-size: var(--fs-body);
+  color: rgba(255, 255, 255, 0.75);
+}
+/* The coach line: green, because it speaks for the flare (green is
+   the up-stick's colour on the thumbstick ring and the splat
+   predictor). Quieter than the headline — advice, not verdict. */
+#death-overlay .death-coach {
+  margin-top: 10px;
+  font-size: var(--fs-body);
+  letter-spacing: 0.08em;
+  color: rgba(92, 235, 110, 0.9);
+  text-shadow: 0 0 14px rgba(92, 235, 110, 0.35);
+}
+
+/* ---------- Clean mode / cockpit toggle ---------- */
+#cockpit-toggle {
+  position: fixed;
+  top: calc(var(--dev-top) + var(--dev-step));
+  left: var(--lane-l);
+  right: auto;
+  z-index: 10;
+  background: var(--panel-bg);
+  color: var(--panel-dim);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+body.clean .cockpit-only { display: none; }
+body.clean #debug-root { display: none; }
+
+/* ---------- Sound toggle ---------- */
+/* Retired (sound is a pause-screen setting). Rule kept for a build
+   that wants the old chrome; parked in the dev lane so it cannot
+   collide with the pause button if it ever returns. */
+#snd-toggle {
+  position: fixed;
+  top: calc(var(--dev-top) + var(--dev-step) * 3);
+  left: var(--lane-l);
+  right: auto;
+  z-index: 10;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+/* ---------- Post-race sponsor line ---------- */
+#sponsor-line {
+  display: none;
+  position: fixed;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(92vw, 640px);
+  padding: 8px 14px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  text-align: center;
+  z-index: 9;
+}
+#sponsor-line .sponsor-label { color: var(--panel-dim); }
+#sponsor-line a { color: var(--panel-accent); text-decoration: none; }
+#sponsor-line a:active { text-decoration: underline; }
+
+/* ---------- Multiplayer panel ---------- */
+#mp-root {
+  position: fixed;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 11;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+}
+#mp-toggle {
+  display: block;
+  margin-left: auto;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+#mp-panel {
+  margin-top: 8px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: min(320px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+}
+#mp-panel.collapsed { display: none; }
+.mp-status { color: var(--panel-accent); margin-bottom: 8px; }
+.mp-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.mp-row button, #mp-panel .mp-primary, .mp-codebox button {
+  background: rgba(255,255,255,0.12);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+#mp-panel .mp-primary {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: var(--panel-accent);
+  color: #1a1a1a;
+  font-weight: 700;
+}
+.mp-codebox { margin-top: 10px; }
+.mp-label { color: var(--panel-dim); margin-bottom: 4px; }
+.mp-codebox textarea {
+  width: 100%;
+  height: 56px;
+  background: rgba(0,0,0,0.35);
+  color: var(--panel-fg);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  font: inherit;
+  font-size: var(--fs-micro);
+  padding: 6px;
+  resize: vertical;
+}
+.mp-codebox button { margin-top: 4px; }
+
+/* ---------- Debug tuning panel ---------- */
+#debug-root {
+  position: fixed;
+  top: var(--dev-top);
+  left: var(--lane-l);
+  right: auto;
+  z-index: 10;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+}
+
+.debug-toggle {
+  display: block;
+  margin-left: auto;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.debug-panel {
+  margin-top: 8px;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: min(280px, calc(100vw - 24px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.debug-panel.collapsed { display: none; }
+
+.debug-group-title {
+  color: var(--panel-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--fs-micro);
+  margin: 10px 0 4px;
+}
+.debug-group-title:first-child { margin-top: 0; }
+
+.debug-row { margin-bottom: 8px; }
+.debug-row label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.debug-row .val { color: var(--panel-accent); }
+
+.debug-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--panel-accent);
+  touch-action: manipulation; /* sliders may pan, but not zoom */
+}
+
+.debug-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.debug-actions button {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--panel-fg);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 0;
+  font: inherit;
+  cursor: pointer;
+}
+.debug-actions button:active { background: rgba(255, 255, 255, 0.25); }
+.debug-actions button.active {
+  background: var(--panel-accent);
+  color: #1a1a1a;
+  font-weight: 700;
+}
