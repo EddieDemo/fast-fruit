@@ -620,7 +620,15 @@ window.FF._openRelease = (spec) => openRelease(spec);
 //   FF._dress()                             strip it back to bare
 // Dev door for the roll era: grant a decal by id, until earning is
 // the only path anyone uses. FF._grant('flag-bd')
-window.FF._grant = (id) => window.FF.melon.grantDecal(id);
+// Refreshes an open editor tray, because a dev door that grants
+// invisibly reads as a dev door that failed (it did, 2026-08-16).
+window.FF._grant = (id) => {
+  const ok = window.FF.melon.grantDecal(id);
+  if (ok && window.FF.editor && window.FF.editor.refreshTray) {
+    window.FF.editor.refreshTray();
+  }
+  return ok;
+};
 window.FF._dress = (...ids) => {
   const M = window.FF.melon, D = window.FF.decals;
   const spec = M.active();
@@ -663,6 +671,11 @@ function computeStandings(state, resolved) {
     fruit: m.fruit || 'watermelon',
     color: m.bodyColor || '#37a01c',
     patKey: m.patKey || m.name || 'x',
+    // THE OUTFIT IS PART OF WHAT A MELON LOOKS LIKE (ruled
+    // 2026-08-16): any surface that draws a melon draws its decals.
+    // Bots carry null today; the day bot decals ship, every table
+    // shows them for free.
+    decals: m.decals || null,
     a: m.a, b: m.b,
     x: m.x,
     isPlayer,
@@ -1466,8 +1479,17 @@ function buildFinish() {
   // language directly above it ("YOU'VE WON A MELON" on the cup tab)
   // does the informing, so the button is free to celebrate.
   elFinish._paintPrizeButtons = () => {
-    const waiting = window.FF.melon.pendingRewards().some(e => e.kind === 'melon');
-    menu.textContent = waiting ? 'MELON GET!' : 'MAIN MENU';
+    // ONE LABEL LAW (ruled 2026-08-16, replacing the MAIN MENU /
+    // MELON GET! switch): the button says GET XP exactly when
+    // pressing it gets you something — the reward queue is non-empty
+    // after every completed cup (xp is the constant), and the same
+    // press still runs decals and the melon ceremony after it. XP,
+    // not EXP: every shipped surface already says XP (+76 XP, PILOT
+    // LEVEL 2 · 26/75 XP), and two spellings of one number is noise.
+    // Practice and reward-less exits keep MAIN MENU, because a button
+    // that promises xp it cannot pay is a lie.
+    const waiting = window.FF.melon.pendingRewards().length > 0;
+    menu.textContent = waiting ? 'GET XP' : 'MAIN MENU';
     menu.classList.toggle('ff-secondary', !waiting);
     retry.classList.toggle('ff-secondary', waiting);
   };
@@ -2321,7 +2343,8 @@ flow.register('finish', {
       row.appendChild(nm);
       rows.appendChild(row);
       clearCanvas(c);
-      spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b, color: r.color, patKey: r.patKey, fruit: r.fruit });
+      spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b,
+        color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals });
     }
     fillFacts();
     fillSummary();
@@ -2458,7 +2481,7 @@ function fillCup() {
     clearCanvas(cv);
     if (s) {
       spinners.push({ canvas: cv, angle: r.pos * 0.7, a: s.a, b: s.b,
-        color: s.color, patKey: s.patKey, fruit: s.fruit });
+        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
     }
   }
 }

@@ -679,24 +679,28 @@ const ART = {
     // and a melon's green diverge under the same light.
     const H = 0.62;                       // half-height for 2:3 at full width
     if (Math.abs(ny) > H || Math.abs(nx) > 0.88) return null;
-    const f = FLAGS[(item && item.flag) || 'fr'];
-    if (!f) return null;
-    if (f.bands) {
-      const t = f.h ? (ny + H) / (2 * H)  // horizontal bands, top down
-                    : (nx + 0.88) / 1.76; // vertical bands, hoist to fly
-      const B2 = f.bands;
-      return B2[Math.max(0, Math.min(B2.length - 1, Math.floor(t * B2.length)))];
-    }
-    if (f.stars) {
-      for (const st of f.stars) {
-        if (starHit(FLAG_STAR_PTS, nx, ny, st.x, st.y, st.r, st.aim)) return st.color;
-      }
-    }
-    if (f.disc) {
-      const dx = nx - f.disc.x, dy = ny - f.disc.y;
-      if (dx * dx + dy * dy <= f.disc.r * f.disc.r) return f.disc.color;
-    }
-    return f.field;
+    return flagInk(FLAGS[(item && item.flag) || 'fr'], nx, ny);
+  },
+
+  // --- flag WRAPS (ruled 2026-08-16) ---------------------------------
+  // A wrap covers the whole visible face, and the trick that keeps it
+  // reading as a FLAG is BLEED, the print-production move: the flag
+  // rect keeps its true proportions on the flat central region of the
+  // face, and the artboard extends WRAP_BLEED per side by edge-clamp
+  // sampling — bands run on along their run, fields extend their
+  // colour, and no emblem grows, because no emblem in the catalogue
+  // touches its flag's boundary. The margins land exactly where the
+  // surface foreshortens, so they mostly vanish into the curvature:
+  // expendable colour spends the distorted real estate, the emblem
+  // keeps the legible middle. Full coverage by construction — clamped
+  // coordinates are always inside the rect, so a wrap has no
+  // letterbox and never returns null.
+  flagwrap(nx, ny, item) {
+    const H = 0.62;
+    const S = 1 + 2 * WRAP_BLEED;
+    const fx = Math.max(-0.88, Math.min(0.88, nx * S));
+    const fy = Math.max(-H, Math.min(H, ny * S));
+    return flagInk(FLAGS[(item && item.flag) || 'fr'], fx, fy);
   },
 
   // --- numbers: varsity block, with a derived outline ---------------
@@ -729,6 +733,62 @@ const ART = {
 // hair taller than 2:3, so the grid hangs from the TOP edge and the
 // spare height stays field — invisible on a red field). Each small
 // star aims its tip at the big star's centre, per the construction.
+// The wrap's bleed per side, as a fraction of the flag artboard.
+// 0.25 puts the true-proportion flag on the central two-thirds; the
+// final number is a proof-render ruling, not arithmetic.
+const WRAP_BLEED = 0.25;
+// A wrap's fixed pose: centred on the visible face at full square
+// coverage. Not resizable, not movable, not rotatable — a wrap is
+// binary. s = 2.0 covers the face; the mesh resolution law already
+// handles the size.
+const WRAP_POSE = { u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 };
+
+// The flag's ink at a point INSIDE the rect — the letterbox lives in
+// the callers (the sticker letterboxes, the wrap clamps).
+// OVERLAYS FIRST (Wave A, 2026-08-16): an emblem sits ON the ground
+// whether the ground is a field or bands — Ghana's black star rides
+// the gold band — so stars and discs test before the ground resolves.
+// Bands may carry WEIGHTS (Spain 1:2:1, Colombia 2:1:1, Thailand
+// 1:1:2:1:1); absent weights mean equal, as ever.
+function flagInk(f, nx, ny) {
+  if (!f) return null;
+  const H = 0.62;
+  if (f.stars) {
+    for (const st of f.stars) {
+      if (starHit(FLAG_STAR_PTS, nx, ny, st.x, st.y, st.r, st.aim)) return st.color;
+    }
+  }
+  if (f.disc) {
+    const dx = nx - f.disc.x, dy = ny - f.disc.y;
+    if (dx * dx + dy * dy <= f.disc.r * f.disc.r) return f.disc.color;
+  }
+  // The CANTON (first needed by the USA, 2026-08-16): a rect anchored
+  // at the hoist-top, resolved after emblems (its stars sit ON it)
+  // and before the ground (it sits on the stripes). Under the wrap's
+  // edge-clamp its blue extends into the bleed at the hoist and top,
+  // exactly as a real flag's canton meets the pole.
+  if (f.canton) {
+    const c = f.canton;
+    if (nx <= c.x1 && ny <= c.y1) return c.color;
+  }
+  if (f.bands) {
+    const t = f.h ? (ny + H) / (2 * H)  // horizontal bands, top down
+                  : (nx + 0.88) / 1.76; // vertical bands, hoist to fly
+    const B2 = f.bands;
+    if (f.weights) {
+      const total = f.weights.reduce((a, w) => a + w, 0);
+      let acc = 0;
+      for (let i = 0; i < B2.length; i++) {
+        acc += f.weights[i] / total;
+        if (t < acc) return B2[i];
+      }
+      return B2[B2.length - 1];
+    }
+    return B2[Math.max(0, Math.min(B2.length - 1, Math.floor(t * B2.length)))];
+  }
+  return f.field;
+}
+
 const CN_U = 1.76 / 30;
 const CN = (gx, gy) => ({ x: -0.88 + gx * CN_U, y: -0.62 + gy * CN_U });
 const CN_BIG = CN(5, 5);
@@ -748,6 +808,53 @@ const FLAGS = {
   // star circumradius 3/10 of flag height, tip up
   vn: { field: [218, 37, 29],
         stars: [{ x: 0, y: 0, r: 0.372, aim: null, color: [255, 222, 0] }] },
+  // ---- WAVE A (2026-08-16, see docs/flag-roadmap.md) ---------------
+  // Free with today's primitives, colours official-ish.
+  id: { h: true, bands: [[215, 25, 32], [246, 246, 246]] },           // Indonesia
+  nl: { h: true, bands: [[174, 28, 40], [246, 246, 246], [33, 70, 139]] },
+  ng: { h: false, bands: [[0, 135, 68], [246, 246, 246], [0, 135, 68]] },
+  hu: { h: true, bands: [[206, 42, 52], [246, 246, 246], [71, 112, 80]] },
+  at: { h: true, bands: [[237, 41, 57], [246, 246, 246], [237, 41, 57]] },
+  be: { h: false, bands: [[24, 24, 24], [253, 218, 36], [239, 51, 64]] },
+  ro: { h: false, bands: [[0, 43, 127], [252, 209, 22], [206, 17, 38]] },
+  ci: { h: false, bands: [[247, 126, 0], [246, 246, 246], [0, 158, 96]] },
+  // band + star: the emblem rides the middle band (overlays-first law)
+  gh: { h: true, bands: [[206, 17, 38], [252, 201, 0], [0, 107, 63]],
+        stars: [{ x: 0, y: 0, r: 0.2, aim: null, color: [24, 24, 24] }] },
+  sn: { h: false, bands: [[0, 133, 63], [253, 220, 35], [227, 27, 35]],
+        stars: [{ x: 0, y: 0, r: 0.18, aim: null, color: [0, 133, 63] }] },
+  cm: { h: false, bands: [[0, 122, 61], [206, 17, 38], [252, 209, 22]],
+        stars: [{ x: 0, y: 0, r: 0.18, aim: null, color: [252, 209, 22] }] },
+  // weighted bands
+  es: { h: true, weights: [1, 2, 1],
+        bands: [[170, 21, 27], [241, 189, 0], [170, 21, 27]] },       // civil flag
+  co: { h: true, weights: [2, 1, 1],
+        bands: [[252, 209, 22], [0, 56, 147], [206, 17, 38]] },
+  th: { h: true, weights: [1, 1, 2, 1, 1],
+        bands: [[165, 25, 49], [246, 246, 246], [45, 42, 74],
+                [246, 246, 246], [165, 25, 49]] },
+  // USA (2026-08-16): 13 equal stripes; canton height = 7 stripes
+  // exactly (7/13 of the letterbox), length 0.4 of the flag; 50 stars
+  // in the official 9-row 6/5 alternation on the 12x10 canton grid,
+  // generated, not typed. Star radius ~0.031 of flag height — dots at
+  // sticker size, a star field at wrap size, both correct.
+  us: (() => {
+    const RED = [178, 34, 52], WHT = [246, 246, 246], BLU = [60, 59, 110];
+    const bands = [];
+    for (let i = 0; i < 13; i++) bands.push(i % 2 ? WHT : RED);
+    const x0 = -0.88, y0 = -0.62;
+    const cw = 0.4 * 1.76, ch = (7 / 13) * 1.24;
+    const stars = [];
+    for (let r = 0; r < 9; r++) {
+      const y = y0 + (r + 1) * ch / 10;
+      const cols = r % 2 ? [2, 4, 6, 8, 10] : [1, 3, 5, 7, 9, 11];
+      for (const cc of cols) {
+        stars.push({ x: x0 + cc * cw / 12, y, r: 0.038, aim: null, color: WHT });
+      }
+    }
+    return { h: true, bands, stars,
+      canton: { x1: x0 + cw, y1: y0 + ch, color: BLU } };
+  })(),
   cn: { field: [238, 28, 37],
         stars: [
           { x: CN_BIG.x, y: CN_BIG.y, r: 3 * CN_U, aim: null, color: [255, 222, 0] },
@@ -891,6 +998,55 @@ const SETS = {
       { id: 'flag-vn', label: 'Vietnam', art: 'flag', flag: 'vn', size: 2 },
       { id: 'flag-bd', label: 'Bangladesh', art: 'flag', flag: 'bd', size: 2 },
       { id: 'flag-cn', label: 'China', art: 'flag', flag: 'cn', size: 2 },
+      { id: 'flag-id', label: 'Indonesia', art: 'flag', flag: 'id', size: 2 },
+      { id: 'flag-nl', label: 'Netherlands', art: 'flag', flag: 'nl', size: 2 },
+      { id: 'flag-ng', label: 'Nigeria', art: 'flag', flag: 'ng', size: 2 },
+      { id: 'flag-hu', label: 'Hungary', art: 'flag', flag: 'hu', size: 2 },
+      { id: 'flag-at', label: 'Austria', art: 'flag', flag: 'at', size: 2 },
+      { id: 'flag-be', label: 'Belgium', art: 'flag', flag: 'be', size: 2 },
+      { id: 'flag-ro', label: 'Romania', art: 'flag', flag: 'ro', size: 2 },
+      { id: 'flag-ci', label: "C\u00f4te d'Ivoire", art: 'flag', flag: 'ci', size: 2 },
+      { id: 'flag-gh', label: 'Ghana', art: 'flag', flag: 'gh', size: 2 },
+      { id: 'flag-sn', label: 'Senegal', art: 'flag', flag: 'sn', size: 2 },
+      { id: 'flag-cm', label: 'Cameroon', art: 'flag', flag: 'cm', size: 2 },
+      { id: 'flag-es', label: 'Spain', art: 'flag', flag: 'es', size: 2 },
+      { id: 'flag-co', label: 'Colombia', art: 'flag', flag: 'co', size: 2 },
+      { id: 'flag-th', label: 'Thailand', art: 'flag', flag: 'th', size: 2 },
+      { id: 'flag-us', label: 'USA', art: 'flag', flag: 'us', size: 2 },
+    ],
+  },
+  wraps: {
+    label: 'WRAPS',
+    // The luxury edition of the flag you already love (ruled
+    // 2026-08-16, its own set): one per flag, earned by the roll like
+    // everything else, rarity from the arithmetic as always. wrap:
+    // true is the behaviour flag the editor and place() read — fixed
+    // pose, binary apply, pinned to the bottom of the pile.
+    items: [
+      { id: 'wrap-fr', label: 'France', art: 'flagwrap', flag: 'fr', wrap: true },
+      { id: 'wrap-ie', label: 'Ireland', art: 'flagwrap', flag: 'ie', wrap: true },
+      { id: 'wrap-it', label: 'Italy', art: 'flagwrap', flag: 'it', wrap: true },
+      { id: 'wrap-de', label: 'Germany', art: 'flagwrap', flag: 'de', wrap: true },
+      { id: 'wrap-pl', label: 'Poland', art: 'flagwrap', flag: 'pl', wrap: true },
+      { id: 'wrap-jp', label: 'Japan', art: 'flagwrap', flag: 'jp', wrap: true },
+      { id: 'wrap-vn', label: 'Vietnam', art: 'flagwrap', flag: 'vn', wrap: true },
+      { id: 'wrap-bd', label: 'Bangladesh', art: 'flagwrap', flag: 'bd', wrap: true },
+      { id: 'wrap-cn', label: 'China', art: 'flagwrap', flag: 'cn', wrap: true },
+      { id: 'wrap-id', label: 'Indonesia', art: 'flagwrap', flag: 'id', wrap: true },
+      { id: 'wrap-nl', label: 'Netherlands', art: 'flagwrap', flag: 'nl', wrap: true },
+      { id: 'wrap-ng', label: 'Nigeria', art: 'flagwrap', flag: 'ng', wrap: true },
+      { id: 'wrap-hu', label: 'Hungary', art: 'flagwrap', flag: 'hu', wrap: true },
+      { id: 'wrap-at', label: 'Austria', art: 'flagwrap', flag: 'at', wrap: true },
+      { id: 'wrap-be', label: 'Belgium', art: 'flagwrap', flag: 'be', wrap: true },
+      { id: 'wrap-ro', label: 'Romania', art: 'flagwrap', flag: 'ro', wrap: true },
+      { id: 'wrap-ci', label: "C\u00f4te d'Ivoire", art: 'flagwrap', flag: 'ci', wrap: true },
+      { id: 'wrap-gh', label: 'Ghana', art: 'flagwrap', flag: 'gh', wrap: true },
+      { id: 'wrap-sn', label: 'Senegal', art: 'flagwrap', flag: 'sn', wrap: true },
+      { id: 'wrap-cm', label: 'Cameroon', art: 'flagwrap', flag: 'cm', wrap: true },
+      { id: 'wrap-es', label: 'Spain', art: 'flagwrap', flag: 'es', wrap: true },
+      { id: 'wrap-co', label: 'Colombia', art: 'flagwrap', flag: 'co', wrap: true },
+      { id: 'wrap-th', label: 'Thailand', art: 'flagwrap', flag: 'th', wrap: true },
+      { id: 'wrap-us', label: 'USA', art: 'flagwrap', flag: 'us', wrap: true },
     ],
   },
   numbers: {
@@ -929,6 +1085,14 @@ function worn(spec) {
 // will write the same four numbers.
 function place(spec, itemId, index) {
   const item = byId(itemId);
+  // A WRAP HAS ONE POSE. No seed, no region, no roll of the dice —
+  // centred, full coverage, square. The stored form is the same
+  // { id, u, v, rot, s } as everything else, so nothing downstream
+  // knows wraps exist.
+  if (item && item.wrap) {
+    return { id: itemId, u: WRAP_POSE.u, v: WRAP_POSE.v,
+      rot: WRAP_POSE.rot, s: WRAP_POSE.s };
+  }
   const seed = ((spec && spec.seed) || 0) ^ hash(itemId + ':' + index);
   const rng = window.FF.mulberry32(seed >>> 0);
   const set = item ? item.set : 'markings';
@@ -981,6 +1145,18 @@ function signature(spec) {
     + ',' + x.rot.toFixed(2) + ',' + x.s.toFixed(2)).join(';');
 }
 
+// The scale ceiling BY KIND (ruled 2026-08-16): wraps are fixed (the
+// knob never appears); flag STICKERS cap at 1.2, low enough that the
+// emblem-too-big failure mode is retired from the sticker path too —
+// full coverage is the wrap's job now; everything else keeps the
+// full-coverage ceiling.
+function maxScaleFor(item) {
+  if (!item) return 2.6;
+  if (item.wrap) return WRAP_POSE.s;
+  if (item.art === 'flag') return 1.2;
+  return 2.6;
+}
+
 // Paint an item's art flat onto a square canvas — the tray chips and
 // the award card share this, so a sticker can never look different in
 // the two places it is shown small.
@@ -1006,6 +1182,6 @@ window.FF.decals = {
   project, unproject, pointAt, unitAt, tangentsAt, sampleAt, foreshorten, visible,
   buildStickerMesh, meshSample, meshNFor, MESH_STEP, MESH_N_MIN, MESH_N_MAX, MESH_CELL,
   ART, VARSITY, FLAGS, sampleArt,
-  worn, place, signature, paintArt,
+  worn, place, signature, paintArt, maxScaleFor, WRAP_POSE, WRAP_BLEED,
 };
 })();

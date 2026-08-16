@@ -79,7 +79,7 @@ const ALL_IDS = D.ALL.map(i => i.id);
     seen.push(r.id);
     M.grantDecal(r.id);
     lv++;
-    if (++guard > 50) { seen.push('RUNAWAY'); break; }
+    if (++guard > 200) { seen.push('RUNAWAY'); break; }
   }
   const okAll = seen.length === ALL_IDS.length
     && ALL_IDS.every(id => seen.indexOf(id) !== -1);
@@ -116,19 +116,25 @@ const ALL_IDS = D.ALL.map(i => i.id);
     const r = M.rollDecal(2);
     counts[r.id] = (counts[r.id] || 0) + 1;
   }
+  // Four eligible sets; flag/wrap lists DERIVED from the catalogue so
+  // this check survives catalogue growth (learned when Wave A landed).
+  const nF = D.SETS.flags.items.length, nW = D.SETS.wraps.items.length;
   const pEye = (counts['eye-googly'] || 0) / N;
   const pHeart = (counts['mark-heart'] || 0) / N;
-  const pFlagAvg = ['flag-fr', 'flag-ie', 'flag-it', 'flag-de', 'flag-pl',
-    'flag-jp', 'flag-vn', 'flag-bd', 'flag-cn']
-    .reduce((a, id) => a + (counts[id] || 0), 0) / 9 / N;
-  const okEye = Math.abs(pEye - 1 / 3) < 0.015;
-  const okHeart = Math.abs(pHeart - 1 / 6) < 0.012;
-  const okFlag = Math.abs(pFlagAvg - 1 / 27) < 0.006;
+  const pFlagAvg = D.SETS.flags.items
+    .reduce((a, it) => a + (counts[it.id] || 0), 0) / nF / N;
+  const pWrapAvg = D.SETS.wraps.items
+    .reduce((a, it) => a + (counts[it.id] || 0), 0) / nW / N;
+  const okEye = Math.abs(pEye - 1 / 4) < 0.015;
+  const okHeart = Math.abs(pHeart - 1 / 8) < 0.012;
+  const okFlag = Math.abs(pFlagAvg - 1 / (4 * nF)) < 0.003;
+  const okWrap = Math.abs(pWrapAvg - 1 / (4 * nW)) < 0.003;
   const ratio = pEye / pFlagAvg;
-  check('G set-uniform, item-uniform: eye ~1/3, heart ~1/6, a flag ~1/27',
-    okEye && okHeart && okFlag && Math.abs(ratio - 9) < 1.2,
+  check('G set-uniform, item-uniform: eye ~1/4, heart ~1/8, a flag ~1/' + (4 * nF),
+    okEye && okHeart && okFlag && okWrap && Math.abs(ratio - nF) < 0.12 * nF,
     'eye ' + pEye.toFixed(3) + ' heart ' + pHeart.toFixed(3)
-    + ' flag ' + pFlagAvg.toFixed(4) + ' eye/flag ' + ratio.toFixed(1) + 'x');
+    + ' flag ' + pFlagAvg.toFixed(4) + ' wrap ' + pWrapAvg.toFixed(4)
+    + ' eye/flag ' + ratio.toFixed(1) + 'x (want ~' + nF + ')');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall clear');

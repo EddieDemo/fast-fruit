@@ -61,6 +61,11 @@ const cases = [
   ['vn',     { id: 'flag-vn',  u: 0.9,  v: Math.PI / 2, rot: 0,    s: 0.60 }],
   ['bd',     { id: 'flag-bd',  u: 0.9,  v: Math.PI / 2, rot: 0,    s: 0.60 }],
   ['cn',     { id: 'flag-cn',  u: 0.9,  v: Math.PI / 2, rot: 0,    s: 0.60 }],
+  ['wrapjp', { id: 'wrap-jp',  u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 }],
+  ['wrapcn', { id: 'wrap-cn',  u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 }],
+  ['wrapgh', { id: 'wrap-gh',  u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 }],
+  ['wrapes', { id: 'wrap-es',  u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 }],
+  ['wrapus', { id: 'wrap-us',  u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 }],
   ['star',  { id: 'mark-star', u: 1.05, v: Math.PI / 2, rot: 0, s: 0.40 }],
   ['eye',    { id: 'eye-googly', u: 1.0, v: 1.0,        rot: 0.3,  s: 0.13 }],
 ];

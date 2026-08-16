@@ -240,8 +240,11 @@ function drawSelection(preview) {
   // Re-deriving it from the mesh every preview frame made it pop to a
   // different boundary vertex when a corner wrapped past the
   // silhouette mid-gesture; it re-homes on release.
+  const selItem = window.FF.decals.byId(wd.id);
+  const selIsWrap = !!(selItem && selItem.wrap);
   const grabbed = gesture && gesture.kind === 'handle';
-  const h = grabbed && gesture.pNow ? gesture.pNow : handlePos(mesh);
+  const h = selIsWrap ? null                 // a wrap has no knob
+    : (grabbed && gesture.pNow ? gesture.pNow : handlePos(mesh));
   if (h) {
     const kr = (grabbed ? 9 : 7) / fit * dpr;      // pressed swell
     ctx.beginPath();
@@ -351,7 +354,8 @@ function onPointerDown(ev) {
   const p = toBody(ev);
   pointers.set(ev.pointerId, p);
 
-  // second finger while a decal is held -> pinch
+  // second finger while a decal is held -> pinch (never reachable for
+  // wraps: a wrap never enters a drag gesture in the first place)
   if (gesture && (gesture.kind === 'drag' || gesture.kind === 'handle')
       && pointers.size === 2 && selected >= 0) {
     const pts = [...pointers.values()];
@@ -384,16 +388,21 @@ function onPointerDown(ev) {
 
   const i = hitDecal(p);
   if (i >= 0) {
+    const isWrap = (() => {
+      const it = window.FF.decals.byId(worn()[i].id);
+      return !!(it && it.wrap);
+    })();
     // Double-tap straightens: nearest quarter turn (mirror is out —
-    // flags must not mirror).
+    // flags must not mirror). A wrap's rot is fixed at 0: no-op.
     const now = Date.now();
     if (now - lastTap.t < 350 && lastTap.i === i) {
       lastTap = { t: 0, i: -1 };
       const spec0 = body.spec;
-      spec0.decals = bumpToTop(worn(), i);
+      const prevArr = worn();
+      spec0.decals = bumpForTouch(prevArr, i);
       rebuildHitMeshes();
-      selected = 0;
-      worn()[0].rot = nearestCardinal(worn()[0].rot);
+      selected = (spec0.decals === prevArr) ? i : 0;
+      if (!isWrap) worn()[selected].rot = nearestCardinal(worn()[selected].rot);
       buzz(8);
       gesture = null;
       updateFoot();
@@ -403,6 +412,15 @@ function onPointerDown(ev) {
       return;
     }
     lastTap = { t: now, i };
+    if (isWrap) {
+      // A wrap SELECTS but never raises, never drags: fixed pose,
+      // binary existence — the X is its only affordance.
+      selected = i;
+      gesture = null;
+      updateFoot();
+      draw(false);
+      return;
+    }
     // LAST TOUCHED ON TOP, at the moment of touching.
     const spec = body.spec;
     spec.decals = bumpToTop(worn(), i);
@@ -451,13 +469,37 @@ function onPointerMove(ev) {
 }
 
 // Snap, tick, lock. shiftLockS non-null = rotate-only (the one
-// Photoshop modifier worth importing).
+// Photoshop modifier worth importing). Scale clamps to the ITEM'S
+// ceiling (decals.js maxScaleFor): flag stickers stop at 1.2, since
+// full coverage is the wrap's job.
 function applyPose(wd, pose, shiftLockS) {
+  const D = window.FF.decals;
   const sn = snapAngle(pose.rot);
   wd.rot = sn.rot;
-  wd.s = shiftLockS !== null ? shiftLockS : pose.s;
+  const cap = D.maxScaleFor(D.byId(wd.id));
+  wd.s = Math.min(cap, shiftLockS !== null ? shiftLockS : pose.s);
   if (sn.snapped && gesture.lastDetent !== sn.detent) buzz(8);
   gesture.lastDetent = sn.snapped ? sn.detent : null;
+}
+
+// ---- the wrap grammar (ruled 2026-08-16), pure ------------------------
+// A wrap is BINARY and sits at the BOTTOM of the pile: stickers ride
+// on wraps, never under. One wrap at a time — applying one replaces
+// any other. Stickers still arrive on top.
+function wornWithApplied(worn, wd, isWrap) {
+  if (isWrap) {
+    const byIdF = window.FF.decals.byId;
+    return worn.filter(w => { const it = byIdF(w.id); return !(it && it.wrap); })
+      .concat([wd]);
+  }
+  return [wd].concat(worn);
+}
+// Last-touched-on-top, EXCEPT wraps: touching a wrap selects it but
+// never raises it — the pile has a floor.
+function bumpForTouch(worn, i) {
+  const it = window.FF.decals.byId(worn[i] && worn[i].id);
+  if (it && it.wrap) return worn;
+  return bumpToTop(worn, i);
 }
 
 function onPointerUp(ev) {
@@ -565,9 +607,13 @@ function applyItem(id, chipBtn) {
   }
   // Seeded landing keeps the gift-moment charm; then it's in your
   // hands. Index by count so re-applying the same item lands fresh.
+  // Wraps arrive at the BOTTOM of the pile and replace any other wrap
+  // (one at a time — a hidden underlayer is a wasted slot pretending
+  // to be a choice); stickers arrive on top, as ever.
+  const item = D.byId(id);
   const wd = D.place(spec, id, w.length);
-  spec.decals = [wd].concat(w);          // arrives on top, selected
-  selected = 0;
+  spec.decals = wornWithApplied(w, wd, !!(item && item.wrap));
+  selected = (item && item.wrap) ? spec.decals.length - 1 : 0;
   rebuildHitMeshes();
   updateFoot();
   draw(false);
@@ -691,9 +737,20 @@ function close() {
 }
 
 window.FF = window.FF || {};
-window.FF.editor = { open, close };
+// Rebuild the tray in place if the editor is on screen — for grants
+// that arrive while it is open (today only the console dev door; in
+// production ownership changes at cup end, never mid-edit).
+function refreshTray() {
+  if (elScreen && elScreen.parentNode && trayEl) {
+    buildTray();
+    updateFoot();
+  }
+}
+
+window.FF.editor = { open, close, refreshTray };
 // Pure laws, exposed for the headless harness only.
 window.FF.editor._pure = { clampCentre, clampScale, handlePose, bumpToTop,
+  wornWithApplied, bumpForTouch,
   snapAngle, nearestCardinal, S_MIN, S_MAX, SNAP_EPS, DETENT };
 
 })();
