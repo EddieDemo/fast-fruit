@@ -261,6 +261,17 @@ canvas.ff-spin.ff-portrait { width: min(52vw, 34vh, 260px); height: min(52vw, 34
    treatment the rest of the interface implies — panel-dark, accent
    text, the button's own border colour and radius. */
 /* The prize line on the cup tab, and the blocked-award note. */
+.ff-racer-screen .ff-panel { max-width: min(92vw, 420px); }
+.ff-racer-screen .ff-spin { display: block; margin: 4px auto; width: 128px; height: 128px; }
+.ff-racer-screen .ff-stats { grid-template-columns: 1fr; }
+.ff-rc-prow { display: flex; align-items: center; justify-content: center;
+  gap: 10px; }
+.ff-rc-decals { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  margin: 8px 0 2px; }
+.ff-rc-chip { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ff-rc-chip canvas { width: 36px; height: 36px; display: block; }
+.ff-rc-chip div { font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-faint); }
 .ff-reward-screen .ff-panel { max-width: min(92vw, 440px); text-align: center;
   cursor: pointer; user-select: none; }
 .ff-reward-big { font-size: var(--fs-hero); font-weight: var(--fw-bold);
@@ -676,6 +687,11 @@ function computeStandings(state, resolved) {
     // Bots carry null today; the day bot decals ship, every table
     // shows them for free.
     decals: m.decals || null,
+    // The body's OWN physics mass, in kg: BASE_KG is the scale-1
+    // anchor and 1/(invM * CONFIG.mass) is the mass ratio the physics
+    // actually integrates. One law for player and bots — the card
+    // must never invent a number the collision didn't feel.
+    kg: m.invM ? window.FF.melon.BASE_KG / (m.invM * window.FF.CONFIG.mass) : null,
     a: m.a, b: m.b,
     x: m.x,
     isPlayer,
@@ -2088,6 +2104,132 @@ function cupJustEnded() {
   return !practiceMode && window.FF.cup && window.FF.cup.isComplete();
 }
 
+// ---- THE RACER CARD ---------------------------------------------------
+// Tap any standings row and the melon gets the start-screen treatment:
+// name, pilot, spinning portrait, species, the body's own weight, the
+// result you tapped it from, and what it's wearing. The moment the
+// fixed cast becomes INSPECTABLE — "who exactly just bullied me into a
+// ravine" gets an answer, and the day bot decals ship there is already
+// a place to admire them. NEXT browses the field in table order;
+// CLOSE (or the scrim) leaves.
+let elRacer = null;
+let racerSpin = null;    // this card's entry in the spinner list
+let racerCtx = null;     // { rows, idx }
+
+function closeRacerCard() {
+  if (racerSpin) {
+    const i = spinners.indexOf(racerSpin);
+    if (i !== -1) spinners.splice(i, 1);
+    racerSpin = null;
+  }
+  if (elRacer) elRacer.style.display = 'none';
+  racerCtx = null;
+}
+
+function openRacerCard(rows, idx) {
+  const r = rows[idx];
+  if (!r) return;
+  if (!elRacer) {
+    elRacer = el('div', 'ff-screen ff-racer-screen');
+    elRacer.addEventListener('pointerdown', (ev) => {
+      if (ev.target === elRacer) closeRacerCard();   // the scrim closes
+    });
+    document.body.appendChild(elRacer);
+  }
+  if (racerSpin) {
+    const i = spinners.indexOf(racerSpin);
+    if (i !== -1) spinners.splice(i, 1);
+    racerSpin = null;
+  }
+  racerCtx = { rows, idx };
+  elRacer.textContent = '';
+  const panel = el('div', 'ff-panel');
+  elRacer.appendChild(panel);
+
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', r.name || '?'));
+  head.appendChild(el('p', 'ff-sub', r.isPlayer ? 'driven by you' : r.pilot));
+  panel.appendChild(head);
+
+  // The chevrons are the collection-browser language from the start
+  // screen (ruled 2026-08-16, replacing a NEXT button): browsing the
+  // field reads the same as browsing your stable, and the foot drops
+  // to ONE full-width button — the house .ff-btn is a block, and two
+  // in a row is how the first cut burst the panel.
+  const prow = el('div', 'ff-rc-prow');
+  const left = el('button', 'ff-arrow', '\u25C0');
+  left.addEventListener('click', () => {
+    if (racerCtx) openRacerCard(racerCtx.rows,
+      (racerCtx.idx - 1 + racerCtx.rows.length) % racerCtx.rows.length);
+  });
+  const cv = el('canvas', 'ff-spin');
+  cv.width = 256; cv.height = 256;
+  const right = el('button', 'ff-arrow', '\u25B6');
+  right.addEventListener('click', () => {
+    if (racerCtx) openRacerCard(racerCtx.rows,
+      (racerCtx.idx + 1) % racerCtx.rows.length);
+  });
+  prow.appendChild(left);
+  prow.appendChild(cv);
+  prow.appendChild(right);
+  panel.appendChild(prow);
+  clearCanvas(cv);
+  racerSpin = { canvas: cv, angle: (r.pos || 1) * 0.7, a: r.a, b: r.b,
+    color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals };
+  spinners.push(racerSpin);
+
+  const stats = el('div', 'ff-stats');
+  const stat = (k, v) => {
+    const rowEl = el('div', 'ff-stat-row');
+    rowEl.appendChild(el('div', 'k', k));
+    rowEl.appendChild(el('div', 'v', v));
+    stats.appendChild(rowEl);
+  };
+  stat('SPECIES', (r.fruit || 'watermelon').toUpperCase());
+  if (r.kg != null) stat('WEIGHT', r.kg.toFixed(1) + ' kg');
+  const res = r.dnf ? 'DNF'
+    : r.pos + ordinalSuffix(r.pos)
+      + (r.timeSec != null ? ' \u00b7 ' + fmtTime(r.timeSec) : '')
+      + (r.points != null ? ' \u00b7 ' + r.points + ' pts' : '');
+  stat('RESULT', res);
+  panel.appendChild(stats);
+
+  // What it's wearing — the same painter as the tray, so a sticker
+  // can never look different here. The zero-state is a fact, stated
+  // in the dossier voice: most of this field wears nothing, which is
+  // exactly what makes the one melon in a wrap funny.
+  const D = window.FF.decals;
+  const wornList = (r.decals || []).map(w => D.byId(w.id)).filter(Boolean);
+  if (wornList.length) {
+    const strip = el('div', 'ff-rc-decals');
+    for (const item of wornList) {
+      const chip = el('div', 'ff-rc-chip');
+      const c2 = el('canvas');
+      c2.width = 72; c2.height = 72;
+      D.paintArt(c2, item);
+      chip.appendChild(c2);
+      chip.appendChild(el('div', '', item.label));
+      strip.appendChild(chip);
+    }
+    panel.appendChild(strip);
+  } else {
+    const none = el('div', 'ff-stats');
+    const rowEl = el('div', 'ff-stat-row');
+    rowEl.appendChild(el('div', 'k', 'DECALS'));
+    rowEl.appendChild(el('div', 'v', 'none'));
+    none.appendChild(rowEl);
+    panel.appendChild(none);
+  }
+
+  const foot = el('div', 'ff-reward-foot');
+  const closeBtn = el('button', 'ff-btn', 'CLOSE');
+  closeBtn.addEventListener('click', closeRacerCard);
+  foot.appendChild(closeBtn);
+  panel.appendChild(foot);
+
+  elRacer.style.display = 'flex';
+}
+
 // ---- THE REWARD CARDS ------------------------------------------------
 // One overlay, reconfigured per entry. Sports-administration voice:
 // the cards read like notices posted by an unseen governing body that
@@ -2328,8 +2470,22 @@ flow.register('finish', {
     const rows = elFinish._rows;
     rows.textContent = '';
     spinners.length = 0;
-    for (const r of computeStandings(stateRef, lastResolved)) {
+    closeRacerCard();                    // never carry a card between races
+    // The handshake layer: fresh rows, and the response plan seeded by
+    // THIS race's identity — a retry is a new race and rolls anew.
+    if (window.FF.emote) {
+      window.FF.emote.reset(((stateRef.raceStartTick | 0) * 2654435761) >>> 0);
+    }
+    const standRows = computeStandings(stateRef, lastResolved);
+    elFinish._standRows = standRows;     // the RACE tab's facts look up here
+    for (let ri = 0; ri < standRows.length; ri++) {
+      const r = standRows[ri];
       const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
+      // BARE ROWS ARE DOORS (ruled 2026-08-16): tap any melon row for
+      // its card. No chevron — this is a bonus surface, found by the
+      // curious, and the screen is dense enough already.
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => openRacerCard(standRows, ri));
       // Ordinal, with the suffix styled small: the NUMBER is the
       // thing you read across the room.
       const pos = el('div', 'ff-pos', String(r.pos));
@@ -2338,6 +2494,19 @@ flow.register('finish', {
       const c = el('canvas', 'ff-spin');
       c.width = 104; c.height = 104; // hint; syncCanvasSize owns it
       row.appendChild(c);
+      if (window.FF.emote) {
+        window.FF.emote.registerRow(r.key, row, c);
+        if (r.isPlayer) {
+          // YOUR portrait is the emote button (ruled 2026-08-16); the
+          // rest of your row still opens your card. You can only
+          // speak as yourself; you can only inspect others in full.
+          c.style.cursor = 'pointer';
+          c.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            window.FF.emote.playerEmote(r.key);
+          });
+        }
+      }
       const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
       nm.appendChild(el('div', 'ff-rtime', r.dnf ? 'DNF' : fmtTime(r.timeSec)));
       row.appendChild(nm);
@@ -2454,6 +2623,7 @@ function fillCup() {
   // them.)
   const list = el('div', 'ff-rows ff-cup-rows');
   box.appendChild(list);
+  const cardRows = [];                   // cup standing + race-row visuals
 
   // The cup's cast is fixed for all four legs, so a racer's
   // appearance can be looked up from this race's standings by name —
@@ -2480,8 +2650,28 @@ function fillCup() {
     list.appendChild(row);
     clearCanvas(cv);
     if (s) {
+      if (window.FF.emote) {
+        window.FF.emote.registerRow(s.key, row, cv);
+        if (s.isPlayer) {
+          cv.style.cursor = 'pointer';
+          cv.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            window.FF.emote.playerEmote(s.key);
+          });
+        }
+      }
       spinners.push({ canvas: cv, angle: r.pos * 0.7, a: s.a, b: s.b,
         color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
+      // The card for a cup row: the CUP's standing (pos, points,
+      // cumulative time) wearing this race's body — same one-source
+      // rule the row itself follows.
+      const cardIdx = cardRows.length;
+      cardRows.push({ name: s.name, pilot: s.pilot, isPlayer: s.isPlayer,
+        fruit: s.fruit, kg: s.kg, a: s.a, b: s.b, color: s.color,
+        patKey: s.patKey, decals: s.decals,
+        pos: r.pos, timeSec: r.timeSec, dnf: false, points: r.points });
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => openRacerCard(cardRows, cardIdx));
     }
   }
 }
@@ -2513,6 +2703,16 @@ function fillFacts() {
     right.appendChild(el('div', 'ff-fact-n', f.name));
     right.appendChild(el('div', 'ff-fact-v', f.value));
     row.appendChild(right);
+    // The RACE tab has no melon rows, but its superlatives NAME
+    // melons, and any representation of a melon is a door (same
+    // ruling as the rows). Looked up by name in this race's
+    // standings; a miss (a fact about no one) simply isn't a door.
+    const sr = elFinish._standRows || [];
+    const idx = sr.findIndex(x => x.name === f.name);
+    if (idx !== -1) {
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => openRacerCard(sr, idx));
+    }
     box.appendChild(row);
   }
 }

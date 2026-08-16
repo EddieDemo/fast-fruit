@@ -724,7 +724,7 @@ function stats(seed, fruit, wide) {
   return rows;
 }
 
-window.FF.melon = { derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
+window.FF.melon = { BASE_KG, derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
   ownedDecals, hasDecal, grantDecal, pilotXp, addXp, rollDecal,
   queueReward, pendingRewards, shiftReward, takeReward, settleLevelRolls,
   awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load,
