@@ -223,6 +223,7 @@ function createRenderer(canvas) {
     // pixels); the tail restores everything before the blit and the
     // UI-glass sticks. Menus and HUD are DOM — untouched by design.
     const px = !!window.FF.PIXELATE && typeof document !== 'undefined';
+    pxMode = px;                       // sprite melons follow the mode
     const realW = width, realH = height, realDpr = dpr;
     if (px) {
       if (!pxCanvas) pxCanvas = document.createElement('canvas');
@@ -1244,7 +1245,120 @@ function createRenderer(canvas) {
     ctx.fillText(suf, x0 + wNum, y - size * 0.17);
   }
 
+  // ---- BAKED SPRITE MELONS (pixelation mode) ----
+  // Per-frame rasterization of a small rotating body is the worst
+  // case for low-res rendering: the same melon re-rasterizes to
+  // different pixels every frame (boiling). The retro-correct cure:
+  // bake each melon ONCE per (colour, pattern, body, radius, decal
+  // loadout) at 32 quantized rotations, then blit the identical
+  // pixels forever. The bake renders at 8x through the SAME vector
+  // painter, then MAJORITY-VOTE downsamples: each sprite pixel takes
+  // the dominant colour of its 8x8 block, not the average — voting
+  // answers "what IS this pixel" where averaging answers "what is
+  // the mean near it" (that mean is anti-aliasing, the mush we are
+  // escaping). Stepped 32-angle rotation is a period artifact, kept
+  // deliberately.
+  let pxMode = false;                  // set by render() per frame
+  const SPRITE_ANGLES = 32;
+  const melonSprites = new Map();
+  function decalsSig(decals) {
+    if (!decals || !decals.length) return '';
+    let sig = '';
+    for (const wd of decals) {
+      sig += (wd.id || '') + '@' + Math.round((wd.u || 0) * 50) + ','
+        + Math.round((wd.v || 0) * 50) + ',' + Math.round((wd.rot || 0) * 10)
+        + ',' + Math.round((wd.s || 1) * 20) + ';';
+    }
+    return sig;
+  }
+  function bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals) {
+    const SS = 8, pad = 2;
+    const spr = 2 * (rPx + pad);       // even square, body + pad
+    const big = spr * SS;
+    const bc = document.createElement('canvas');
+    bc.width = big; bc.height = big;
+    const btx = bc.getContext('2d');
+    const zoomBake = (rPx * SS) / a;
+    const half = (SS * SS) * 0.45;     // opacity vote threshold
+    const frames = [];
+    for (let k = 0; k < SPRITE_ANGLES; k++) {
+      btx.setTransform(1, 0, 0, 1, 0, 0);
+      btx.clearRect(0, 0, big, big);
+      drawMelonVector(btx, big / 2, big / 2, k * 2 * Math.PI / SPRITE_ANGLES,
+        null, color, zoomBake, seedKey, a, b, fruit, decals);
+      let src;
+      try { src = btx.getImageData(0, 0, big, big); } catch (e) { return null; }
+      const sd = src.data;
+      const fc = document.createElement('canvas');
+      fc.width = spr; fc.height = spr;
+      const ftx = fc.getContext('2d');
+      const out = ftx.createImageData(spr, spr);
+      const od = out.data;
+      for (let y = 0; y < spr; y++) {
+        for (let x = 0; x < spr; x++) {
+          const tally = new Map();
+          let opaque = 0;
+          for (let sy2 = 0; sy2 < SS; sy2++) {
+            const row = ((y * SS + sy2) * big + x * SS) * 4;
+            for (let sx2 = 0; sx2 < SS; sx2++) {
+              const i4 = row + sx2 * 4;
+              if (sd[i4 + 3] < 128) continue;
+              opaque++;
+              const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
+              tally.set(kk, (tally.get(kk) || 0) + 1);
+            }
+          }
+          const o4 = (y * spr + x) * 4;
+          if (opaque >= half) {
+            let bk = 0, bc2 = -1;
+            for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
+            od[o4] = bk >> 16; od[o4 + 1] = (bk >> 8) & 255;
+            od[o4 + 2] = bk & 255; od[o4 + 3] = 255;
+          }
+        }
+      }
+      ftx.putImageData(out, 0, 0);
+      frames.push(fc);
+    }
+    return { frames, spr };
+  }
+  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals) {
+    const key = color + '|' + seedKey + '|' + (fruit || '') + '|'
+      + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals);
+    if (melonSprites.has(key)) return melonSprites.get(key);
+    const e = bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals);
+    melonSprites.set(key, e);          // null caches too: no re-fail
+    return e;
+  }
   function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
+    if (pxMode) {
+      const a = bodyA || CONFIG.semiMajor;
+      const b = bodyB || CONFIG.semiMinor;
+      const rPx = Math.max(3, Math.round(a * zoom));
+      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
+      if (e) {
+        const TAU = Math.PI * 2;
+        const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
+          + SPRITE_ANGLES) % SPRITE_ANGLES;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.translate(Math.round(sx), Math.round(sy));
+        // Squash rides the blit with the exact vector transform:
+        // transient impact frames may resample, rest frames are 1:1.
+        if (squash && squash.squash > 0.003) {
+          ctx.rotate(squash.squashAngle + Math.PI / 2);
+          ctx.scale(1 + squash.squash, 1 - squash.squash);
+          ctx.rotate(-(squash.squashAngle + Math.PI / 2));
+        }
+        ctx.drawImage(e.frames[k], -e.spr / 2, -e.spr / 2);
+        ctx.restore();
+        return;
+      }
+    }
+    drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals);
+  }
+
+  function drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
     const a = bodyA || CONFIG.semiMajor;
     const b = bodyB || CONFIG.semiMinor;
 
