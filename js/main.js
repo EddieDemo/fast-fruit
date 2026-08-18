@@ -23,6 +23,11 @@ const GRID_SIZE = 12;    // total racers; bots fill whatever humans don't
 const NET_DELAY = 6;     // lockstep input delay in ticks (~50ms at 120Hz)
 const GEN_AHEAD = 3600;  // terrain kept generated in front of the leaders
 const KEEP_BEHIND = 2600; // and behind the backmarkers
+// Provider revision last captured into state.terrain — declared HERE
+// because respawnRace (which seeds it) runs at boot, long before the
+// frame loop's code is reached; a later `let` was a temporal dead
+// zone and a black screen (measured, 2026-08-18).
+let lastProviderRev = -1;
 const SPAWN = { x: 0 }; // the start LINE is world position 0: the lap
 // seam, the "0" distance marker, and the flag are all the same place.
 const MIN_LAP_TICKS = 240; // ignore "laps" under 2s (line back-and-forth)
@@ -505,8 +510,6 @@ function checkAutoRestart() {
 const MAX_FRAME_DT = 0.1; // clamp huge gaps (tab switch) — avoid spiral of death
 let accumulator = 0;
 let last = performance.now();
-
-let lastProviderRev = -1;
 
 function frame(now) {
   let dtFrame = (now - last) / 1000;
