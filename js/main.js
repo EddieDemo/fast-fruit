@@ -34,6 +34,10 @@ function createEndlessProvider(seed) {
   return {
     period: null,
     get pts() { return gen.pts; },
+    // The world as a strand list: real terrain plus the wall strand
+    // (stage 1 moved the sentinel out of the point list; it is
+    // physics-only — slab.js collides it, the renderer skips it).
+    polys() { return [gen.pts, gen.wall, ...gen.branches]; },
     reset() { gen.reset(); },
     update(loX, hiX) { gen.ensure(hiX); gen.prune(loX); },
   };
@@ -67,8 +71,22 @@ function respawnRace(opts) {
   window.FF.debris.reset(); // wreckage persists per race, not across them
   provider.reset();
   provider.update(SPAWN.x - KEEP_BEHIND - 800, SPAWN.x + GEN_AHEAD);
-  state.terrain = [provider.pts];
+  // The strand list: track providers hand back [pts]; the endless
+  // provider adds the wall strand (physics-only, renderer skips it).
+  // The strand list (stage 4): primary first — surfaceAt's
+  // first-poly-wins rule makes the PRIMARY strand canonical for
+  // overlapped spine intervals — then the wall, then branches.
+  state.terrain = provider.polys ? provider.polys() : [provider.pts];
   state.period = provider.period;
+  // THE SPINE IS BUILT BEFORE THE GRID (stage 2): grid placement now
+  // asks the spine for the surface, so the spine must exist before
+  // resetPlayers/resetBots below. The degenerate spine binds the
+  // terrain it answers from; raceStartX (set further down) equals
+  // SPAWN.x, the same startX given here.
+  // METRIC (stage 3): the lap unit is the template's ARC length —
+  // provider.lapArc — not its x-span. Endless has no lap.
+  state.spine = window.FF.trackSpace.metricSpine(SPAWN.x,
+    provider.lapArc || null, state.terrain);
 
   const humans = netSession ? netSession.ls.playerCount : 1;
   const localSlot = netSession ? netSession.ls.localSlot : 0;
@@ -171,6 +189,9 @@ function respawnRace(opts) {
 
   state.raceStartTick = state.tick;
   state.raceStartX = SPAWN.x;
+  // TRACK-SPACE (stage 0.5): progress consumers read the SPINE, not
+  // raw x. Since stage 2 the spine is built earlier (above, before
+  // the grid) because placement queries it too.
   // A NEW RACE STARTS FROM A CENTRED WHEEL. Whatever drove the world
   // a moment ago — the menu's exhibition, the post-flag autopilot —
   // must not leak a held throttle into the grid.
@@ -186,7 +207,13 @@ function respawnRace(opts) {
   const race = state.race;
   const def = window.FF.trackDefByName(modeName);
   race.mode = def ? 'track' : 'endless';
-  race.lapLengthPx = def ? def.lapLengthM * 100 : 0;
+  // lapLengthPx is a LAP OF ARC since stage 3 (the spine's unit):
+  // finish targets, splits, and the HUD's lap position all follow.
+  race.lapLengthPx = def ? (provider.lapArc || def.lapLengthM * 100) : 0;
+  // The race's SEED (stage 5): the key for every seeded per-race
+  // decision — today, the bots' fork commitments. Endless races key
+  // on the world seed the same way.
+  race.seed = (def ? def.seed : (provider.seed || 0)) >>> 0;
   // An unreachable lap target is the whole trick: finishedTick is
   // never set, so every downstream rule (finish screen, career write,
   // ghost save) stays correct without knowing this race is different.
@@ -428,7 +455,7 @@ function observeTick() {
 function checkLapCrossings() {
   const race = state.race;
   if (race.mode !== 'track' || race.finishedTick !== null) return;
-  const dist = state.melon.x - state.raceStartX;
+  const dist = state.spine.progressOf(state.melon);
   const lap = Math.floor(dist / race.lapLengthPx);
   if (lap > race.lapIndex) {
     for (let l = race.lapIndex; l < Math.min(lap, race.laps); l++) {

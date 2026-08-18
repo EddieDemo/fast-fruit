@@ -123,12 +123,24 @@ function begin(gameState, opts) {
   // favourite, then cuts to you). Duration from the real extent —
   // never an assumption about field size. One body: the walk is a
   // brief held close-up.
-  const sorted = state.bodies.slice().sort((a, b) => a.x - b.x);
+  // SPINE-NATIVE since stage 5: the tail-to-pole order is GRID order
+  // — progress along the spine — and the sweep is parameterized by
+  // cumulative path length through the bodies' positions, not by x.
+  // The grid sits on the previous period's tail, which may fold; an
+  // x-sorted, x-interpolated walk would zigzag there. The bare-state
+  // fallback (no spine) keeps the old x sort.
+  const sp = gameState.spine;
+  const keyOf = (m) => (sp && sp.progressOf) ? sp.progressOf(m) : m.x;
+  const sorted = state.bodies.slice().sort((a, b) => keyOf(a) - keyOf(b));
   const xs = sorted.map(m => m.x), ys = sorted.map(m => m.y);
-  const extent = xs[xs.length - 1] - xs[0];
+  const cum = [0];
+  for (let i = 1; i < xs.length; i++) {
+    const dx = xs[i] - xs[i - 1], dy = ys[i] - ys[i - 1];
+    cum.push(cum[i - 1] + Math.sqrt(dx * dx + dy * dy));
+  }
+  const extent = cum[cum.length - 1];
   state.walk = {
-    xs, ys,
-    from: xs[0], to: xs[xs.length - 1],
+    xs, ys, cum,
     ticks: Math.max(PAN_MIN_TICKS,
       Math.min(PAN_MAX_TICKS, Math.round(extent / PAN_SPEED * HZ))),
   };
@@ -229,19 +241,22 @@ function cameraShot(gameState) {
   const w = state.walk;
   const t = Math.min(1, (gameState.tick - state.startedAt) / w.ticks);
   const e = t * t * (3 - 2 * t);   // smoothstep: ease in, ease out
-  const x = w.from + (w.to - w.from) * e;
-  // y rides the bodies being passed: lerp between the two racers
-  // bracketing the camera, so the shot follows the field over the
-  // terrain they settled on rather than a fixed height.
-  let y = w.ys[0];
-  for (let i = 1; i < w.xs.length; i++) {
-    if (x <= w.xs[i]) {
-      const span = w.xs[i] - w.xs[i - 1];
-      const f = span > 1e-9 ? (x - w.xs[i - 1]) / span : 1;
+  // The sweep advances by CUMULATIVE PATH LENGTH through the sorted
+  // bodies (stage 5): both x and y lerp between the two racers
+  // bracketing the camera, so the shot follows the field over
+  // whatever ground they settled on — folds included.
+  const cum = w.cum;
+  const target = cum[cum.length - 1] * e;
+  let x = w.xs[0], y = w.ys[0];
+  for (let i = 1; i < cum.length; i++) {
+    if (target <= cum[i]) {
+      const span = cum[i] - cum[i - 1];
+      const f = span > 1e-9 ? (target - cum[i - 1]) / span : 1;
+      x = w.xs[i - 1] + (w.xs[i] - w.xs[i - 1]) * f;
       y = w.ys[i - 1] + (w.ys[i] - w.ys[i - 1]) * f;
       break;
     }
-    y = w.ys[i];
+    x = w.xs[i]; y = w.ys[i];
   }
   return { x, y, zoomMul: PAN_ZOOM };
 }

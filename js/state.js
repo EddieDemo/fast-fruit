@@ -83,6 +83,8 @@ function createState() {
     camera: {
       x: 0,
       y: 0,
+      fwd: 1,          // travel sign at the focus: +1 right, -1 left
+                       // (the camera NEVER rotates — ruled 2026-08-17)
       initialized: false,
     },
 
@@ -296,9 +298,14 @@ const GRID_DROP = 25;
 function gridPlace(state, melon, gridIndex, lineX, fallbackY) {
   const gx = lineX - (gridIndex + 0.5) * METRE; // centre of the metre
   melon.x = gx;
-  const gy = window.FF.terrainYAt(state.terrain, gx);
-  // No terrain yet (boot-time createState): keep the caller's y.
-  melon.y = gy === null ? fallbackY : gy - melon.b - GRID_DROP;
+  // The SPINE answers surface questions (stage 2). No spine yet
+  // (boot-time createState, bare suite worlds): keep the caller's y,
+  // exactly as the old null return did.
+  // Since stage 3 the x-keyed question carries a reference y — the
+  // apron is x-monotone, so the projection foot IS the surface at gx.
+  const sp = (state.spine && state.spine.projectPoint)
+    ? state.spine.projectPoint(gx, fallbackY) : null;
+  melon.y = sp === null ? fallbackY : sp.y - melon.b - GRID_DROP;
 }
 
 // Set up `count` human players in canonical slot order on the grid:

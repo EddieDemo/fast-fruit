@@ -28,7 +28,11 @@
 //    be recorded positions, not re-simulation (per design).
 // ============================================================
 
-const { CONFIG, melonInertia, terrainYAt, segStartIndex, debris, dmath, damage } = window.FF;
+const { CONFIG, debris, dmath, damage, slab } = window.FF;
+// Surface questions (respawn placement, below) go to the SPINE as of
+// stage 2 — the heightfield fast path died in stage 1 for contacts,
+// and terrainYAt itself is deleted now. Contact generation never
+// touches either: only the slab world.
 // Motion-affecting transcendentals MUST be deterministic (lockstep).
 const dsin = dmath.sin, dcos = dmath.cos, dpow = dmath.pow;
 const { snapshotPrev } = window.FF;
@@ -41,6 +45,13 @@ const contact = {
   pen: 0,         // penetration depth along normal (px)
   curvR: 1,       // ellipse curvature radius at the contact (px)
 };
+
+// Slab-query scratch (stage 1): candidate face indices, and the two
+// endpoint shells the narrowphase reads — reused every test, same
+// no-churn discipline as `contact`.
+const CAND = [];
+const SEG_A = { x: 0, y: 0 };
+const SEG_B = { x: 0, y: 0 };
 
 // step() advances every body through the IDENTICAL simulation path.
 // This is the fairness guarantee for the bots: same stepBody, same
@@ -105,10 +116,23 @@ function step(state, dt) {
   }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----
+  // THE CANONICAL CONTACT ORDER, pair half (stage 1, spec §3): pair
+  // contacts resolve AFTER terrain contacts (structural — stepBody
+  // above did the terrain), ordered by (racerKey a, racerKey b)
+  // lexicographic. Spawn order was deterministic already, but it was
+  // an ACCIDENT of construction; the law names an order that any
+  // future construction (netplay joins, mid-race substitutions,
+  // permuted rosters) must land on identically. Ties — bodies with
+  // equal or missing keys — fall back to canonical spawn index, so
+  // the comparator is a total order and the sort cannot invent
+  // nondeterminism. resolveMelonPair(A, B) is role-sensitive in the
+  // last float (the contact point leans on rA), so WHICH body is A is
+  // part of the law, not a nicety.
 
   bodyList.length = 0;
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
+  sortBodiesCanonical(bodyList);
   for (const m of bodyList) { m.pairSeverity = 0; m.pairWorst = 0; }
   if (bodyList.length > 1) {
     const PAIR_ITERS = 3;
@@ -196,6 +220,14 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     debris.spawnFromBody(m, state, tick, bodyIndex);
     m.alive = false;
     m.respawnAtTick = tick + CONFIG.respawnDelayTicks;
+    // THE DEATH REMEMBERS ITS STRAND (stage 5): the projection foot's
+    // owning poly at the moment of death, so the respawn walk can run
+    // on the strand the body actually died on (strand.js).
+    {
+      const pr = (state.spine && state.spine.projectPoint)
+        ? state.spine.projectPoint(m.x, m.y) : null;
+      m.deathPoly = (pr && pr.dist < 260) ? pr.poly : undefined;
+    }
     // The certificate is built for EVERY body: the ticker commentates
     // the whole field, not just the local player. Only the player's
     // lands in state.lastDeath (the death overlay's single slot).
@@ -315,7 +347,28 @@ const RESPAWN_DROP = 200; // 2m above the surface; the melon falls back in
 
 function reviveIfDue(m, state, tick) {
   if (m.alive || tick < m.respawnAtTick) return;
-  const wy = terrainYAt(state.terrain, m.x);
+  // Respawn placement asks the SPINE for the surface (stage 2), and
+  // since the RESPAWN-WALK ruling (2026-08-17) it first walks BACK
+  // to the nearest climbable spot (uphill grade <= G_GRIND) — a body
+  // reborn at zero speed must be somewhere it can actually drive.
+  // Deaths on climbable ground respawn in place, exactly as before.
+  // A state without a spine (bare suite worlds) keeps the body's y.
+  const laws = window.FF.terrainLaws;
+  const maxG = laws && laws.G_GRIND !== undefined ? laws.G_GRIND : 0.5;
+  const walked = (state.spine && state.spine.respawnPointBehind)
+    ? state.spine.respawnPointBehind(m, maxG) : null;
+  let wy = null;
+  if (walked && !walked.inPlace) {
+    // The walk hands back the placement POINT (stage 3: found by
+    // arc, not x — on a reversed deck "behind" means +x).
+    m.x = walked.x;
+    wy = walked.y;
+  } else if (state.spine && state.spine.projectPoint) {
+    // In place: the surface is the nearest riding face to the body —
+    // the deck it died on, not whatever is vertically above.
+    const pr = state.spine.projectPoint(m.x, m.y);
+    wy = pr ? pr.y : null;
+  }
   m.alive = true;
   // 200px falls in ~0.41s arriving at ~9.8 m/s flat-side — well inside
   // the safe envelope, and spawn protection covers the landing anyway.
@@ -344,6 +397,29 @@ function reviveIfDue(m, state, tick) {
 
 // Reused list to avoid per-step allocation.
 const bodyList = [];
+
+// Sort bodies into the pair law's order: racerKey ascending, ties by
+// the position they already hold (canonical spawn index). No field is
+// written on any body — the declared-schema law (state.js) — so the
+// sort runs on an index permutation and writes back through scratch.
+const SORT_IDX = [];
+const SORT_TMP = [];
+function sortBodiesCanonical(list) {
+  const n = list.length;
+  const keyOf = window.FF.racerKey;
+  SORT_IDX.length = n;
+  for (let i = 0; i < n; i++) SORT_IDX[i] = i;
+  SORT_IDX.sort((a, b) => {
+    const ka = keyOf(list[a]), kb = keyOf(list[b]);
+    if (ka < kb) return -1;
+    if (ka > kb) return 1;
+    return a - b;
+  });
+  SORT_TMP.length = n;
+  for (let i = 0; i < n; i++) SORT_TMP[i] = list[SORT_IDX[i]];
+  for (let i = 0; i < n; i++) list[i] = SORT_TMP[i];
+  SORT_TMP.length = 0;
+}
 
 // Ellipse radius from center along world direction (nx, ny).
 // r(dir) = ab / sqrt(b^2*cos^2 + a^2*sin^2) with the angle measured
@@ -497,7 +573,8 @@ function resolveMelonPair(A, B, period) {
     const rbCt = rbx * ty - rby * tx;
     const kt = invMA + invMB + raCt * raCt * invIA + rbCt * rbCt * invIB;
     let jt = -vt / kt;
-    const maxJt = CONFIG.friction * jn;
+    // rind on rind: the two-coefficient friction law
+    const maxJt = CONFIG.rindFriction * jn;
     if (jt > maxJt) jt = maxJt;
     if (jt < -maxJt) jt = -maxJt;
     A.vx -= jt * tx * invMA; A.vy -= jt * ty * invMA; A.omega -= raCt * jt * invIA;
@@ -521,6 +598,9 @@ function resolveMelonPair(A, B, period) {
 function stepBody(m, inp, terrain, dt, sink) {
   const invM = m.invM;
   const invI = m.invI;
+  // The slab world, once per body step: the motor reads strand dir
+  // from it and the collision phase queries it.
+  const world = slab.worldFor(terrain);
 
   // ---- 1. Input smoothing (ease torqueAxis toward rawAxis) ----
   const ease = Math.min(1, CONFIG.inputResponse * dt);
@@ -543,8 +623,25 @@ function stepBody(m, inp, terrain, dt, sink) {
   // as spin approaches maxAngVel in the driven direction. Driving
   // AGAINST current spin (braking / reversing) gets a boost — this is
   // what makes backspin-to-brake feel authoritative.
+  //
+  // SEMANTIC INPUT (stage 2 plumbing): axis means FORWARD — spin
+  // toward the strand's travel direction — not "+x". Every strand
+  // today runs dir +1, so the branch below never fires and the
+  // arithmetic is untouched (the bit-parity contract); reversed
+  // strands (stage 3 folds) make it real. The dir is read from the
+  // slab world so physics and rendering share one source of truth.
   const axis = inp.torqueAxis;
   if (axis !== 0) {
+    // RAW INPUT (ruled by Eddie, 2026-08-17, replacing stage-3
+    // semantic input): stick right spins the melon clockwise and
+    // rolls it right, EVERYWHERE, on every surface. The camera never
+    // rotates, so the screen is world-space — Sonic logic, not
+    // car-game logic. Semantic input flipped torque by the nearest
+    // face's point-order direction; it shipped as reasoning and was
+    // never felt in play (v1's reversed deck was unreachable), and
+    // its flip was the hidden engine of the watershed attractor.
+    // Direction choice now lives in the BRAINS (pilot.js), where it
+    // is a tunable behaviour, not a physics inevitability.
     let torque;
     // ENGINE SCALING: bigger fruit, bigger engine. Motor torque scales
     // as I/r (i.e. s^4), which makes LINEAR acceleration size-neutral:
@@ -605,47 +702,52 @@ function stepBody(m, inp, terrain, dt, sink) {
   let impactVn = 0;
   m.hitSeverity = 0;
 
-  // Broad phase: only segments near the melon can touch it. Terrain
-  // points are x-sorted, so binary-search the window start instead of
-  // scanning every segment (matters with long streamed polylines).
-  const cullR = CONFIG.semiMajor * 1.08 + 80; // headroom for size-varied bots
+  // Broad phase: the slab world's spatial hash (stage 1). Candidates
+  // are COLLECTED then returned in CANONICAL (strandId, segmentIndex,
+  // face) order — hash iteration order can never influence results
+  // (THE LAW, spec §2/§3). The query AABB is the body's bound radius
+  // plus slack for the solver's positional corrections; anything the
+  // inflation admits beyond that is non-contacting and resolves to
+  // nothing, so the candidate set is a superset of the contact set
+  // and the inflation amount cannot move trajectories.
+  const boundR = m.a * (1 + (m.taper || 0)) + 32;
   for (let iter = 0; iter < CONFIG.solverIterations; iter++) {
-    for (const poly of terrain) {
-      const startIdx = segStartIndex(poly, m.x - cullR);
-      for (let i = startIdx; i < poly.length - 1; i++) {
-        const A = poly[i], B = poly[i + 1];
-        if (A.x > m.x + cullR) break;
-        if (B.x < m.x - cullR) continue;
-        if (m.taper) eggVsSegment(m, A, B, contact);
-        else ellipseVsSegment(m, A, B, contact);
-        if (!contact.hit) continue;
-        grounded = true;
+    const nCand = world.query(m.x - boundR, m.y - boundR,
+      m.x + boundR, m.y + boundR, CAND);
+    for (let ci = 0; ci < nCand; ci++) {
+      const fi = CAND[ci];
+      SEG_A.x = world.fax[fi]; SEG_A.y = world.fay[fi];
+      SEG_B.x = world.fbx[fi]; SEG_B.y = world.fby[fi];
+      const A = SEG_A, B = SEG_B;
+      if (m.taper) eggVsSegment(m, A, B, contact);
+      else ellipseVsSegment(m, A, B, contact);
+      if (!contact.hit) continue;
+      grounded = true;
 
-        const omegaPre = m.omega; // spin AT approach: the certificate's spin term
-        const applied = resolveContact(m, contact, invM, invI);
-        const ev = damage.dissipated(applied.vn, applied.kn, applied.e);
-        // The law charges the tick's TOTAL: every contact's dissipation
-        // adds (a wedge landing's two walls both count — under the old
-        // max a 35-degree vee read at barely half its honest energy).
-        // Iterations can't double-count: once a contact's approach is
-        // resolved, its vn is non-negative and dissipates zero.
-        sumE += ev;
-        // The worst SINGLE blow still picks the event's direction and
-        // telemetry — drama follows the biggest hit, damage follows
-        // the total.
-        if (ev > strongestE) {
-          strongestE = ev;
-          impactNormalAngle = Math.atan2(contact.ny, contact.nx);
-          impactVn = applied.vn;
-          // Escape direction of the blow (away from the ground) —
-          // pinned ops only: the debris burst aims along this, so it
-          // must be deterministic (Math.atan2 above is telemetry-only).
-          m.hitNx = contact.nx;
-          m.hitNy = contact.ny;
-          m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
-          m.hitRxn = applied.rxn;     // r x n at the blow: the spin term's lever
-          m.hitOmegaPre = omegaPre;   // certificate breadcrumb (presentation)
-        }
+      const omegaPre = m.omega; // spin AT approach: the certificate's spin term
+      const applied = resolveContact(m, contact, invM, invI);
+      const ev = damage.dissipated(applied.vn, applied.kn, applied.e);
+      // The law charges the tick's TOTAL: every contact's dissipation
+      // adds (a wedge landing's two walls both count — under the old
+      // max a 35-degree vee read at barely half its honest energy).
+      // Iterations can't double-count: once a contact's approach is
+      // resolved, its vn is non-negative and dissipates zero.
+      sumE += ev;
+      // The worst SINGLE blow still picks the event's direction and
+      // telemetry — drama follows the biggest hit, damage follows
+      // the total.
+      if (ev > strongestE) {
+        strongestE = ev;
+        impactNormalAngle = Math.atan2(contact.ny, contact.nx);
+        impactVn = applied.vn;
+        // Escape direction of the blow (away from the ground) —
+        // pinned ops only: the debris burst aims along this, so it
+        // must be deterministic (Math.atan2 above is telemetry-only).
+        m.hitNx = contact.nx;
+        m.hitNy = contact.ny;
+        m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
+        m.hitRxn = applied.rxn;     // r x n at the blow: the spin term's lever
+        m.hitOmegaPre = omegaPre;   // certificate breadcrumb (presentation)
       }
     }
   }

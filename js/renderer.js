@@ -10,7 +10,20 @@
 // never knows the melon looks like anything at all.
 // ============================================================
 
-const { CONFIG, terrainYAt } = window.FF;
+const { CONFIG } = window.FF;
+// Surface questions go to the SPINE (stage 2): surfY(state, wx) is
+// the renderer's one conversion point from world x to a spine query —
+// the shape every call site had with terrainYAt, so the rewiring is
+// mechanical, and when folds retire "y under x" as a concept there is
+// exactly one place to revisit.
+// Since stage 3 the question carries a REFERENCE Y: "the ground
+// under x" is multivalued beneath a fold, and the projection foot
+// nearest (wx, refY) picks the deck the asker means.
+function surfY(state, wx, refY) {
+  const sp = (state.spine && state.spine.projectPoint)
+    ? state.spine.projectPoint(wx, refY === undefined ? 0 : refY) : null;
+  return sp === null ? null : sp.y;
+}
 
 const COLORS = {
   sky: '#000000',            // pure black background
@@ -96,7 +109,63 @@ window.FF.racerColor = function (state, bodyIndex) {
 const PLAYER_PALETTE = ['#00ff00', '#ff2d2d', '#2d8cff', '#ffd22d'];
 
 function createRenderer(canvas) {
-  const ctx = canvas.getContext('2d');
+  const baseCtx = canvas.getContext('2d');
+  let ctx = baseCtx;   // render() rebinds to the pixelation offscreen
+                       // when FF.PIXELATE is on; every helper receives
+                       // ctx as a parameter, so the swap is total
+  let pxCanvas = null; // lazy: the low-res world layer
+
+  // ---- THE AA-KILLER (pixelation mode) ----
+  // Canvas 2D anti-aliases every shape INTO the low-res buffer and
+  // the spec offers no off switch — so blend pixels are removed
+  // after the fact. Palette-free dominant-snap: any colour covering
+  // real area this frame is GENUINE; every stray pixel (AA blends
+  // live on edges, so they are always rare) snaps to its nearest
+  // genuine colour. Self-calibrating — no palette imposed, so the
+  // full palette-discipline lever stays a separate, later decision.
+  // Cost: one histogram + one cached nearest-lookup per DISTINCT
+  // stray colour (a few hundred), trivial at 380-wide.
+  function crispSnap(c2d, w, h) {
+    let img;
+    try { img = c2d.getImageData(0, 0, w, h); } catch (e) { return; }
+    const d = img.data, n = w * h;
+    const hist = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
+      hist.set(k, (hist.get(k) || 0) + 1);
+    }
+    // Lenient on purpose: AA blends are DISPERSED (each distinct
+    // blend colour counts 1-5 px), so a low cut still catches them
+    // all — while small legitimate features (place tags, name text,
+    // decal details) keep their colours instead of being eaten.
+    const cut = Math.max(12, (n / 2400) | 0);
+    const commons = [];
+    for (const [k, c] of hist) if (c >= cut) commons.push(k);
+    if (!commons.length || commons.length === hist.size) return;
+    const snap = new Map();
+    for (const k of commons) snap.set(k, k);
+    const nearest = (k) => {
+      const hit = snap.get(k);
+      if (hit !== undefined) return hit;
+      const r = k >> 16, g = (k >> 8) & 255, b = k & 255;
+      let best = commons[0], bd = Infinity;
+      for (const c of commons) {
+        const dr = r - (c >> 16), dg = g - ((c >> 8) & 255), db = b - (c & 255);
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bd) { bd = dist; best = c; }
+      }
+      snap.set(k, best);
+      return best;
+    };
+    for (let i = 0; i < n; i++) {
+      const k = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
+      const t = nearest(k);
+      if (t !== k) {
+        d[i * 4] = t >> 16; d[i * 4 + 1] = (t >> 8) & 255; d[i * 4 + 2] = t & 255;
+      }
+    }
+    c2d.putImageData(img, 0, 0);
+  }
   let width = 0, height = 0, dpr = 1;
 
   function resize() {
@@ -117,6 +186,27 @@ function createRenderer(canvas) {
     const ix = p.x + (m.x - p.x) * alpha;
     const iy = p.y + (m.y - p.y) * alpha;
     const iangle = p.angle + (m.angle - p.angle) * alpha;
+
+    // ---- PIXELATION (FF.PIXELATE, toggled from the HUD) ----
+    // The whole world pass renders into a 380-wide offscreen, then
+    // blits to screen nearest-neighbour. The swap happens BEFORE the
+    // zoom computation on purpose: zoom derives from width/height, so
+    // shadowing them makes ALL camera math self-scale — the min-box
+    // law is resolution-independent and the visible world box stays
+    // identical either way. dpr shadows to 1 (the offscreen is raw
+    // pixels); the tail restores everything before the blit and the
+    // UI-glass sticks. Menus and HUD are DOM — untouched by design.
+    const px = !!window.FF.PIXELATE && typeof document !== 'undefined';
+    const realW = width, realH = height, realDpr = dpr;
+    if (px) {
+      if (!pxCanvas) pxCanvas = document.createElement('canvas');
+      const pw = 380;
+      const ph = Math.max(1, Math.round(pw * height / Math.max(1, width)));
+      if (pxCanvas.width !== pw) pxCanvas.width = pw;
+      if (pxCanvas.height !== ph) pxCanvas.height = ph;
+      ctx = pxCanvas.getContext('2d');
+      width = pw; height = ph; dpr = 1;
+    }
 
     // ---- Zoom: guarantee a minimum visible BOX of world ----
     // At least 10m vertically AND 16m horizontally on every device.
@@ -149,7 +239,8 @@ function createRenderer(canvas) {
     const shot = (window.FF.gridStart && window.FF.gridStart.cameraShot)
       ? window.FF.gridStart.cameraShot(state) : null;
     if (shot) zoom *= shot.zoomMul;
-    const targetX = ix + (0.5 - MELON_SCREEN_FRAC) * width / zoom;
+    const fwdBias = cam.fwd === undefined ? 1 : cam.fwd;
+    const targetX = ix + fwdBias * (0.5 - MELON_SCREEN_FRAC) * width / zoom;
     if (shot) {
       cam.x = shot.x;
       cam.y = shot.y;
@@ -164,8 +255,48 @@ function createRenderer(canvas) {
       cam.x += (targetX - cam.x) * k;
       cam.y += (iy - cam.y) * k;
     }
-    const toScreenX = (wx) => (wx - cam.x) * zoom + width / 2;
-    const toScreenY = (wy) => (wy - cam.y) * zoom + height / 2;
+    // THE SNAP (pixelation only): the camera lerp stays smooth in
+    // world space, but the MAPPING quantises cam to whole low-res
+    // pixels — otherwise every world edge re-rasterises each frame
+    // and the whole screen shimmers (pixel crawl). Snapping the
+    // mapping, not cam itself, keeps the lerp state untouched.
+    const camX = px ? Math.round(cam.x * zoom) / zoom : cam.x;
+    const camY = px ? Math.round(cam.y * zoom) / zoom : cam.y;
+    const cxs = px ? Math.round(width / 2) : width / 2;
+    const cys = px ? Math.round(height / 2) : height / 2;
+    const toScreenX = (wx) => (wx - camX) * zoom + cxs;
+    const toScreenY = (wy) => (wy - camY) * zoom + cys;
+
+    // ---- CAMERA DIRECTION v1 (stage 3 amendment) ----
+    // FORWARD-BIAS FOLLOWS TRAVEL: on a reversed deck the player
+    // drives -x, so the look-ahead margin flips to the left — the
+    // camera keeps showing where they are GOING. The sign comes from
+    // the same projection oracle progress and semantic input use,
+    // smoothed so the flip is a pan, not a cut.
+    //
+    // GROUNDED-GATED (fix, 2026-08-17): travel direction is a
+    // property of the deck you are ON, not of whichever face happens
+    // to be nearest mid-flight. A big drop falls past a STACK of
+    // faces with alternating point-order signs (lip deck +1, drop
+    // faces and return deck -1, landing deck +1), and reading the
+    // oracle airborne made the camera slosh through every one of
+    // them. Airborne, the bias HOLDS the last grounded direction —
+    // you fly the way you left — and flips only on landing, as a
+    // smoothed pan.
+    //
+    {
+      let fwdT = cam.fwd === undefined ? 1 : (cam.fwd < 0 ? -1 : 1);
+      if (state.melon && state.melon.grounded
+          && state.spine && state.spine.projectPoint) {
+        const pr = state.spine.projectPoint(ix, iy);
+        if (pr) fwdT = pr.dirX;
+      }
+      if (cam.fwd === undefined || !cam.initialized) cam.fwd = fwdT;
+      else {
+        const fk = Math.min(1, CONFIG.cameraLerp * dtFrame);
+        cam.fwd += (fwdT - cam.fwd) * fk;
+      }
+    }
     // Screen y where world y=0 sits this frame (grid anchor).
     const groundScreenY = toScreenY(0);
 
@@ -187,29 +318,92 @@ function createRenderer(canvas) {
     ctx.fillStyle = COLORS.sky;
     ctx.fillRect(0, 0, width, height);
 
+    // THE CAMERA NEVER ROTATES (ruled by Eddie, 2026-08-17):
+    // gravity-down is a permanent invariant of the presentation.
+    // Every skill read in this game — landings, flare timing, the
+    // express drop, the precision stop — hangs off the vertical
+    // axis, and direction changes are a HORIZONTAL framing question,
+    // answered by the forward-bias flip above. The stage-2 tangent-
+    // rotation idea disproved itself the moment a reversed deck
+    // existed (its tangent rolls the world upside down); the
+    // machinery is deleted, not dormant — a mechanism that exists is
+    // a mechanism that gets called.
+
     // Grid: world-anchored so it scrolls with the camera. Drawn before
     // terrain, so the ground fill covers the below-surface portion.
     drawGrid(ctx, cam.x, width, height, groundScreenY, zoom);
 
     // ---- Terrain ----
-    // The polygon fill below IS the ground — no screen-wide pre-fill.
-    // (A leftover flat-ground fillRect here was painting a phantom
-    // surface at world y=0, burying the melon in dips below it.)
-    // Build the ground path once: fill it, then reuse it as a CLIP so
-    // the terrain's own grid draws only inside the ground.
-    ctx.beginPath();
-    for (const poly of state.terrain) {
-      ctx.moveTo(toScreenX(poly[0].x), toScreenY(poly[0].y));
-      for (let i = 1; i < poly.length; i++) {
-        ctx.lineTo(toScreenX(poly[i].x), toScreenY(poly[i].y));
+    // RIBBONS, not fills (stage 1): each strand draws as its SLAB
+    // polygon — top polyline out, bottom (the SLAB_T offset) back,
+    // closed. Fill-to-screen-bottom died with the heightfield: the
+    // ground is now a solid with an underside, which is what gives
+    // terraces headroom when they arrive. Geometry comes from the
+    // SAME slab world physics collides (slab.worldFor) — silhouette
+    // equals collider, by construction rather than by discipline.
+    // The wall strand is physics-only and never draws.
+    const slabWorld = window.FF.slab.worldFor(state.terrain);
+    const traceSlabPath = () => {
+      ctx.beginPath();
+      for (const sl of slabWorld.slabs) {
+        if (sl.isWall) continue;
+        const t = sl.top, bo = sl.bottom;
+        ctx.moveTo(toScreenX(t[0].x), toScreenY(t[0].y));
+        for (let i = 1; i < t.length; i++) {
+          ctx.lineTo(toScreenX(t[i].x), toScreenY(t[i].y));
+        }
+        for (let i = bo.length - 1; i >= 0; i--) {
+          ctx.lineTo(toScreenX(bo[i].x), toScreenY(bo[i].y));
+        }
+        ctx.closePath();
       }
-      // Close down to the bottom of the screen to fill the ground.
-      ctx.lineTo(toScreenX(poly[poly.length - 1].x), height);
-      ctx.lineTo(toScreenX(poly[0].x), height);
-      ctx.closePath();
-    }
+    };
+    traceSlabPath();
     ctx.fillStyle = COLORS.ground;
     ctx.fill();
+
+    // DEBUG VOCABULARY COLOURING (FF.DEV_TERRAIN_COLORS = true):
+    // repaint each segment's slab column in its chunk-kind tint —
+    // the standard grey nudged, never shouted, so the track still
+    // reads as itself while the vocabulary becomes legible. A
+    // segment's kind is its END point's tag (points are laid left to
+    // right, so a chunk's first point belongs to its predecessor).
+    // The column's bottom edge is the SLAB bottom now, not the
+    // screen (spec §4).
+    if (window.FF.DEV_TERRAIN_COLORS) {
+      const TINT = {
+        slope: '#3a3a3a',        // the base grey: the default word
+        roller: '#37413a',       // toward green: the rhythm section
+        flat: '#454545',         // lighter: the rest note
+        kicker: '#463c34',       // warm: air incoming
+        gap: '#46343c',          // toward red: the void
+        sw: '#343c46',           // toward blue: the fold
+        tunnel: '#3c3446',       // toward violet: the roof
+        trap: '#41412f',         // toward olive: the choice
+        runway: '#3a3a3a',
+      };
+      for (const sl of slabWorld.slabs) {
+        if (sl.isWall) continue;
+        const t = sl.top, bo = sl.bottom;
+        for (let i = 1; i < t.length; i++) {
+          const k = t[i].k;
+          if (!k || k === 'slope' || k === 'runway') continue;   // base stays base
+          const x0 = toScreenX(t[i - 1].x), x1 = toScreenX(t[i].x);
+          if (x1 < 0 || x0 > width) continue;
+          ctx.beginPath();
+          ctx.moveTo(x0, toScreenY(t[i - 1].y));
+          ctx.lineTo(x1, toScreenY(t[i].y));
+          ctx.lineTo(toScreenX(bo[i].x), toScreenY(bo[i].y));
+          ctx.lineTo(toScreenX(bo[i - 1].x), toScreenY(bo[i - 1].y));
+          ctx.closePath();
+          ctx.fillStyle = TINT[k] || COLORS.ground;
+          ctx.fill();
+        }
+      }
+      // The tint pass consumed the slab path; the grid clip below
+      // needs it back.
+      traceSlabPath();
+    }
 
     // Terrain grid: 2m squares (vs the background's 1m), world-anchored
     // to the same origin so every terrain line coincides with every
@@ -225,14 +419,17 @@ function createRenderer(canvas) {
 
     // Start/finish line each lap (track mode): a post on the surface.
     if (state.period && state.race.mode === 'track') {
-      const L = state.period.L;
-      const lo = Math.floor((cam.x - (width / 2) / zoom - state.raceStartX) / L);
-      const hi = Math.ceil((cam.x + (width / 2) / zoom - state.raceStartX) / L);
+      // Metric (stage 3): lap boundaries live at ARC multiples — the
+      // spine hands back each post's world point directly. The
+      // visible k-range brackets the player's lap; ±2 covers the
+      // screen at any zoom the lens allows.
+      const lapA = state.race.lapLengthPx || state.period.L;
+      const kMid = Math.round(state.spine.progressOf(state.melon) / lapA);
       ctx.fillStyle = '#ffffff';
-      for (let k = lo; k <= hi; k++) {
-        const wx = state.raceStartX + k * L;
-        const wy = terrainYAt(state.terrain, wx);
-        if (wy === null) continue;
+      for (let k = kMid - 2; k <= kMid + 2; k++) {
+        const spk = state.spine.surfaceAt(k * lapA);
+        if (!spk) continue;
+        const wx = spk.x, wy = spk.y;
         const sx = toScreenX(wx), sy = toScreenY(wy);
         // Post and flag are world objects: they scale with the lens.
         ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 4 * zoom, 150 * zoom);
@@ -378,7 +575,7 @@ function createRenderer(canvas) {
       // anyway. Screen-space and presentation-only: nothing the sim
       // can see, and free to differ between peers.
       if (d.name) {
-        const wy = terrainYAt(state.terrain, dxw);
+        const wy = surfY(state, dxw, dyw);
         if (wy !== null) {
           const baseY = toScreenY(wy) + 34 + Math.round(150 * zoom);
           ctx.font = '700 14px "Geist Mono", ui-monospace, monospace';
@@ -402,7 +599,7 @@ function createRenderer(canvas) {
       // narrows with pose, hugs the local tangent, and is CLIPPED to
       // the terrain fill — it can never bleed past a cliff edge.
       if (RIG.P.castShadow) {
-        const wyG0 = terrainYAt(state.terrain, dxw);
+        const wyG0 = surfY(state, dxw, dyw);
         if (wyG0 !== null) {
           const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / 100);
           if (hM < RIG.P.castMaxM) {
@@ -410,7 +607,7 @@ function createRenderer(canvas) {
             const shC = spT * d.melon.a / 4; // geometric center offset from the COM
             const fp = RIG.castFootprint(dxw + shC * Math.cos(d.angle), dyw + shC * Math.sin(d.angle),
               d.angle, d.melon.a, d.melon.b,
-              (gx) => terrainYAt(state.terrain, gx), spT);
+              (gx) => surfY(state, gx, dyw), spT);
             if (fp) {
               const fade = 1 - hM / RIG.P.castMaxM;
               const rx = fp.half * RIG.P.castStretch * zoom;
@@ -423,7 +620,7 @@ function createRenderer(canvas) {
               const steps = 8;
               for (let i = 0; i <= steps; i++) {
                 const gx = fp.x - spanW / 2 + (i / steps) * spanW;
-                const gy = terrainYAt(state.terrain, gx);
+                const gy = surfY(state, gx, dyw);
                 const px2 = toScreenX(gx), py2 = gy === null ? syS : toScreenY(gy);
                 if (i === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
               }
@@ -466,7 +663,7 @@ function createRenderer(canvas) {
       drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals);
       // ---- Contact shadow: the body darkens near its ground touch ----
       if (RIG.P.contactShadow) {
-        const wyG = terrainYAt(state.terrain, dxw);
+        const wyG = surfY(state, dxw, dyw);
         if (wyG !== null) {
           const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);
           if (hM < RIG.P.contactMaxM) {
@@ -550,6 +747,34 @@ function createRenderer(canvas) {
     // Dev only (CONFIG.practiceSplat): the binary verdict ring.
     drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
     ringLogFrame(state);
+
+    // ---- Pixelation blit: world layer up to the screen ----
+    // Restore the real surface, then nearest-neighbour the offscreen
+    // over the full canvas (opaque sky = full cover, no clear
+    // needed). The sticks below then draw native — UI glass never
+    // pixelates.
+    if (px) {
+      width = realW; height = realH; dpr = realDpr;
+      ctx = baseCtx;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Nearest-neighbour, insisted on three ways: the standard flag,
+      // the WebKit-prefixed one (Safari honoured only the prefix for
+      // years and some builds still do), and the CSS hint on the
+      // element itself — compositor-side scaling of the canvas
+      // ignores ctx flags entirely, and THAT was the visible blur.
+      crispSnap(pxCanvas.getContext('2d'), pxCanvas.width, pxCanvas.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.webkitImageSmoothingEnabled = false;
+      if (canvas.style && canvas.style.imageRendering !== 'pixelated') {
+        canvas.style.imageRendering = 'pixelated';
+      }
+      ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
+        0, 0, width, height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.webkitImageSmoothingEnabled = true;
+    } else if (canvas.style && canvas.style.imageRendering) {
+      canvas.style.imageRendering = '';   // native mode: no CSS hint
+    }
 
     // The visible thumbstick sits on top of everything: it's UI glass.
     drawInputSticks(ctx);
@@ -2455,7 +2680,6 @@ function createRenderer(canvas) {
   function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY, zoom) {
     const SPACING = 200;
     const span = (w / 2) / zoom;
-    const first = Math.floor((camX - span) / SPACING) * SPACING;
     ctx.fillStyle = COLORS.marker;
     ctx.textAlign = 'center';
     // In TRACK mode the numbers are LAP POSITION, not odometer: they
@@ -2463,22 +2687,36 @@ function createRenderer(canvas) {
     // and the apron behind it counts down the closing metres (398,
     // 396...) — the line is always 0 (Eddie, 2026-08-10). Endless has
     // no laps, so it keeps the absolute ruler.
-    const lapPx = (state.race.mode === 'track' && state.period) ? state.period.L : 0;
-    const labelM = (wx) => {
-      if (!lapPx) return wx / 100 | 0;
-      const rel = ((wx - state.raceStartX) % lapPx + lapPx) % lapPx;
+    // METRIC MARKERS (stage 3): the ruler measures ARC now — the
+    // distance racers actually cover — so marker stops live at s
+    // multiples ON THE STRAND, found by walking the loaded points
+    // (every 200-arc boundary inside a segment gets its interpolated
+    // world point). Under a switchback all three decks carry their
+    // own stops, each labelled with its own arc — the ruler follows
+    // the track through the fold instead of pretending x is truth.
+    const lapPx = (state.race.mode === 'track') ? state.race.lapLengthPx : 0;
+    const labelM = (sv) => {
+      if (!lapPx) return sv / 100 | 0;
+      const rel = (sv % lapPx + lapPx) % lapPx;
       return rel / 100 | 0;
     };
-    // Labels stay screen-sized: they're UI, not world objects. SIZE
-    // carries the hierarchy — the numbers are the readable layer, so
-    // milestones grow (and take an 'm' suffix) rather than brighten.
-    for (let wx = first; wx < camX + span + SPACING; wx += SPACING) {
-      const wy = terrainYAt(state.terrain, wx);
-      if (wy === null) continue;
-      const m = labelM(wx);
-      const t = tierOf(m);
-      ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
-      ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
+    const xLo = camX - span - SPACING, xHi = camX + span + SPACING;
+    for (const poly of state.terrain) {
+      if (poly.isWall || !poly.length || poly[0].s === undefined) continue;
+      for (let i = 1; i < poly.length; i++) {
+        const a = poly[i - 1], b = poly[i];
+        if (Math.max(a.x, b.x) < xLo || Math.min(a.x, b.x) > xHi) continue;
+        const kLo = Math.floor(a.s / SPACING) + 1, kHi = Math.floor(b.s / SPACING);
+        for (let k = kLo; k <= kHi; k++) {
+          const sv = k * SPACING;
+          const t2 = (sv - a.s) / (b.s - a.s);
+          const wx = a.x + (b.x - a.x) * t2, wy = a.y + (b.y - a.y) * t2;
+          const m = labelM(sv);
+          const t = tierOf(m);
+          ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
+          ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
+        }
+      }
     }
     // (The 25m catcher block retired with the 25m tier: every
     // surviving milestone lands on the 2m label stops above.)

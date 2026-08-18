@@ -55,7 +55,7 @@ function createHud(state) {
     const endTick = race.finishedTick !== null ? race.finishedTick : state.tick;
     elTime.textContent = fmtTicks(endTick - state.raceStartTick);
 
-    const dist = Math.max(0, (m.x - state.raceStartX) / 100); // metres
+    const dist = Math.max(0, state.spine.progressOf(m) / 100); // metres
     elDist.textContent = dist < 1000
       ? `${dist.toFixed(1)} m`
       : `${(dist / 1000).toFixed(2)} km`;

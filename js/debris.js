@@ -28,7 +28,8 @@
 (function () {
 'use strict';
 
-const { CONFIG, mulberry32, segStartIndex, dmath } = window.FF;
+const { CONFIG, mulberry32, dmath } = window.FF;
+const FRAG_CAND = []; // slab-world candidate scratch (stage 3)
 const dsin = dmath.sin, dcos = dmath.cos;
 const dhyp = (x, y) => Math.sqrt(x * x + y * y); // sqrt IS pinned; hypot is not
 
@@ -237,7 +238,7 @@ function spawnFromBody(m, state, tick, bodyIndex) {
 
   // The stain: the fragments account for the solids; this is the
   // liquid. The track remembers in two mediums.
-  spawnStain(state, cpx, tick, rng);
+  spawnStain(state, cpx, cpy, tick, rng);
 }
 
 // Seeded irregular shard polygons — fracture STATISTICS, not fracture
@@ -346,24 +347,36 @@ function confettiBurst(x, y, baseVx, baseVy, tick, seed, count) {
 const MAX_STAINS = 200;
 const stains = []; // {x, y, r, seed, born}
 
-function spawnStain(state, wx, tick, rng) {
-  const wy = window.FF.terrainYAt(state.terrain, wx);
+function spawnStain(state, wx, wyRef, tick, rng) {
+  // Stains land on the deck the pulp was made on: project with the
+  // burst point's y (stage 3 — "under wx" is multivalued now).
+  const sp = (state.spine && state.spine.projectPoint)
+    ? state.spine.projectPoint(wx, wyRef) : null;
+  const wy = sp ? sp.y : null;
   if (wy === null) return;
   if (stains.length >= MAX_STAINS) stains.shift(); // oldest out
   stains.push({ x: wx, y: wy, r: 26 + rng() * 26, seed: (rng() * 1e9) | 0, born: tick });
 }
 
 // ---- Circle-vs-terrain bounce (the ellipse collider's little sibling) ----
+// STAGE 3: fragments query the SLAB WORLD, not x-sorted polylines —
+// segStartIndex assumes x-monotone points and a fold breaks both the
+// binary search and the early-out, so pulp near a switchback would
+// fall through decks. The hash query returns candidates in canonical
+// face order (deterministic), and brings the ribbon's bottoms and
+// caps with it: pulp now bounces off deck undersides and slab ends,
+// which is not a workaround but the material being real.
 function collideFragTerrain(f, terrain) {
   f.grounded = false;
   let sawTerrain = false;
   const cullR = f.r + 60;
-  for (const poly of terrain) {
-    const start = segStartIndex(poly, f.x - cullR);
-    for (let i = start; i < poly.length - 1; i++) {
-      const A = poly[i], B = poly[i + 1];
-      if (A.x > f.x + cullR) break;
-      if (B.x < f.x - cullR) continue;
+  const world = window.FF.slab.worldFor(terrain);
+  const n = world.query(f.x - cullR, f.y - cullR, f.x + cullR, f.y + cullR, FRAG_CAND);
+  {
+    for (let ci = 0; ci < n; ci++) {
+      const fi = FRAG_CAND[ci];
+      const A = { x: world.fax[fi], y: world.fay[fi] };
+      const B = { x: world.fbx[fi], y: world.fby[fi] };
       sawTerrain = true;
       const abx = B.x - A.x, aby = B.y - A.y;
       const len2 = abx * abx + aby * aby || 1;
@@ -377,7 +390,8 @@ function collideFragTerrain(f, terrain) {
       // and push it deeper. Teleport it back to the surface and kill
       // any remaining downward speed. Handles ANY injection velocity,
       // so no future shove/burst tuning can reopen this hole.
-      if (Math.abs(abx) > 1e-9 && f.x >= Math.min(A.x, B.x) && f.x <= Math.max(A.x, B.x)) {
+      const isTopFace = world.fs0[fi] === world.fs0[fi]; // s-annotated = riding surface
+      if (isTopFace && Math.abs(abx) > 1e-9 && f.x >= Math.min(A.x, B.x) && f.x <= Math.max(A.x, B.x)) {
         const yLine = A.y + aby * ((f.x - A.x) / abx);
         if (f.y - yLine > 0.5) {
           f.y = yLine - f.r;

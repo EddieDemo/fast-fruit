@@ -62,7 +62,10 @@ function begin(day) {
   // the current total, a bar that simply doesn't move).
   const xpStart = (window.FF.melon && window.FF.melon.pilotXp) ? window.FF.melon.pilotXp() : 0;
   active = {
-    day: window.FF.dailyTrackName(day),
+    // The day key derives from the tracks already drawn — a second
+    // dailyTrackName() call would mint a DIFFERENT name under the dev
+    // random-track flag and split the cup from its own record key.
+    day: tracks[0],
     xpStart,
     tracks,
     leg: 0,                 // index of the race about to be run

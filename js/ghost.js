@@ -25,7 +25,7 @@
 (function () {
 'use strict';
 
-const { CONFIG, terrainYAt } = window.FF;
+const { CONFIG } = window.FF;
 
 const SAMPLE_TICKS = 120;      // 1Hz coarse trace for the share code
 const LOCAL_EVERY = 2;         // full-fidelity local ghost cadence
@@ -96,7 +96,7 @@ function currentTrackName(state) {
 function update(state) {
   if (!rec || state.race.mode !== 'track' || state.players.length > 1) return;
   const elapsed = state.tick - rec.startTick;
-  const dist = state.melon.x - state.raceStartX;
+  const dist = state.spine.progressOf(state.melon);
 
   if (!recFrozen) {
     // Coarse trace: one sample per second of race time.
@@ -174,9 +174,14 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
   // Shared challenge ghost: surface-rolling pace marker.
   if (challenge) {
     const dist = coarsePos(challenge.coarse, elapsed);
-    const wx = state.raceStartX + dist;
-    drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, null, null,
-      challenge.name, dist, period, '#ffffff', challenge.melonSeed);
+    // Metric (stage 3): the coarse ghost lives AT arc `dist` — the
+    // spine hands back the world point directly, correct through
+    // folds (worldXAt died with the x parameterization).
+    const spd = state.spine.surfaceAt(dist);
+    if (spd) {
+      drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, spd.x, null, null,
+        challenge.name, dist, period, '#ffffff', challenge.melonSeed, spd.y);
+    }
   }
 
   // Local best ghost: full-fidelity replay (skip if a challenge is
@@ -184,11 +189,11 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
   if (!challenge && localGhost && localGhost.frames.length >= 3) {
     const f = framePos(localGhost.frames, elapsed);
     drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, f.x, f.y, f.angle,
-      'BEST', f.x - state.raceStartX, period, '#9fdf9f');
+      'BEST', state.spine.progressOf(f), period, '#9fdf9f');
   }
 }
 
-function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle, label, dist, period, color, melonSeed) {
+function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle, label, dist, period, color, melonSeed, surfYAt) {
   // Nearest image to the camera.
   let gx = wx, gy = wy;
   if (period) {
@@ -203,8 +208,10 @@ function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle,
   let gAngle = angle;
   if (gy === null) {
     // Coarse ghost: ride the surface, fake a rolling angle from distance.
-    const sy = terrainYAt(state.terrain, gx);
-    if (sy === null) return;
+    // The caller resolved the surface from the spine already (arc-
+    // keyed, fold-correct).
+    if (surfYAt === undefined || surfYAt === null) return;
+    const sy = surfYAt;
     gy = sy - b - 0.5;
     gAngle = (wx / ((a + b) / 2)) % (Math.PI * 2);
   }
@@ -227,9 +234,11 @@ function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle,
   ctx.restore();
 
   // Nameplate with the live gap: + means the ghost is ahead.
-  const gap = (dist - (state.melon.x - state.raceStartX)) / 100;
+  const gap = (dist - state.spine.progressOf(state.melon)) / 100;
   const gapTxt = (gap >= 0 ? '+' : '\u2212') + Math.abs(gap).toFixed(0) + 'm';
-  const surfY = terrainYAt(state.terrain, gx);
+  const sgn = state.spine.projectPoint
+    ? state.spine.projectPoint(gx, gy) : null;
+  const surfY = sgn === null ? null : sgn.y;
   if (surfY !== null) {
     ctx.save();
     ctx.globalAlpha = 0.7;

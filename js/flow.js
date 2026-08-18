@@ -451,13 +451,30 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
   -webkit-tap-highlight-color: transparent;
   display: flex; align-items: flex-start; justify-content: flex-end; }
 /* The visible pill lives inside that target. */
-#ff-pause-btn .ff-pause-pill { display: inline-block;
+#ff-pause-btn .ff-pause-pill,
+#ff-pix-btn .ff-pause-pill { display: inline-block;
   background: var(--panel-bg, #161616); color: var(--panel-fg, #ddd);
   border-radius: 10px; padding: 8px 12px;
   font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-body);
   line-height: 1; }
 #ff-pause-btn:active .ff-pause-pill { color: var(--panel-accent, #39ff5f); }
 #ff-pause-btn[hidden] { display: none; }
+
+/* THE PIXEL TOGGLE sits immediately LEFT of pause: same pill
+   language, same oversized tap target philosophy, offset clear of
+   the corner button's padded zone. Accent colour while the mode is
+   on — the pill is the state indicator. */
+#ff-pix-btn { position: fixed; z-index: 10;
+  top: 0; right: 78px;
+  padding: calc(var(--lane-t, 10px) + 6px) 8px 16px 8px;
+  min-width: 44px; min-height: 56px;
+  box-sizing: content-box;
+  background: none; border: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: flex; align-items: flex-start; justify-content: flex-end; }
+#ff-pix-btn:active .ff-pause-pill { color: var(--panel-accent, #39ff5f); }
+#ff-pix-btn.ff-on .ff-pause-pill { color: var(--panel-accent, #39ff5f); }
+#ff-pix-btn[hidden] { display: none; }
 
 /* LANDSCAPE PHONES: short viewports. Everything that costs vertical
    space shrinks — the standings list keeps the space it needs to
@@ -1135,7 +1152,16 @@ function buildMenu() {
     practiceMode = true;
     if (window.FF.cup) window.FF.cup.abandon();
     if (window.FF.exhibition) window.FF.exhibition.stop();
-    if (respawnFn) respawnFn();
+    // Select TODAY'S leg-1 track at press time (2026-08-17). The old
+    // path just respawned whatever main.js resolved at page load —
+    // which silently raced YESTERDAY'S daily after midnight without a
+    // reload, and pinned the dev random-track flag to one boot track.
+    // Same selection call a cup leg uses; fresh name each press.
+    if (startLegFn && window.FF.dailyTrackName) {
+      startLegFn(window.FF.dailyTrackName());
+    } else if (respawnFn) {
+      respawnFn();
+    }
     flow.go('race');
   });
   // THE CUP: four legs, scored together.
@@ -1173,7 +1199,7 @@ function buildMenu() {
   elMenu._stats = statsEl;
 }
 
-let elPause = null, elPauseBtn = null;
+let elPause = null, elPauseBtn = null, elPixBtn = null;
 let elFinishNote = null, elFinishTitle = null;
 let fromMenuOrRetry = true; // set by the paths that BEGIN a race
 function buildPause() {
@@ -1312,6 +1338,27 @@ function buildPause() {
   elPauseBtn.addEventListener('click', () => {
     if (flow.state === 'race') flow.go('pause');
     else if (flow.state === 'pause') flow.go('race');
+  });
+
+  // The pixelation toggle (aesthetic test, Eddie 2026-08-18): flips
+  // FF.PIXELATE, which the renderer reads per frame — the world
+  // layer drops to 380px nearest-neighbour; menus, HUD, and the
+  // stick glass stay native. Persisted so an A/B verdict survives
+  // reloads. localStorage is try/caught: file:// contexts can deny.
+  try { window.FF.PIXELATE = localStorage.getItem('ff-pixelate') === '1'; }
+  catch (e) { window.FF.PIXELATE = false; }
+  elPixBtn = el('button', null, '');
+  elPixBtn.id = 'ff-pix-btn';
+  elPixBtn.appendChild(el('span', 'ff-pause-pill', 'PX'));
+  elPixBtn.setAttribute('aria-label', 'Toggle pixelation');
+  elPixBtn.hidden = true;
+  elPixBtn.classList.toggle('ff-on', !!window.FF.PIXELATE);
+  document.body.appendChild(elPixBtn);
+  elPixBtn.addEventListener('click', () => {
+    window.FF.PIXELATE = !window.FF.PIXELATE;
+    elPixBtn.classList.toggle('ff-on', !!window.FF.PIXELATE);
+    try { localStorage.setItem('ff-pixelate', window.FF.PIXELATE ? '1' : '0'); }
+    catch (e) { /* file:// may deny persistence; the toggle still works */ }
   });
   // Escape/P toggle for desktop; ignored while the studio has focus.
   window.addEventListener('keydown', (e) => {
@@ -2056,6 +2103,7 @@ flow.register('race', {
   enter() {
     clearFade();          // a new race is never dimmed
     if (elPauseBtn) elPauseBtn.hidden = false;
+    if (elPixBtn) elPixBtn.hidden = false;
     // Commentary records are RACE-scoped: "biggest hit survived"
     // means this race, not this session. Only a fresh start clears
     // them — resuming from pause must not (you'd re-earn records you
@@ -2067,7 +2115,10 @@ flow.register('race', {
       fromMenuOrRetry = false;
     }
   },
-  exit() { if (elPauseBtn) elPauseBtn.hidden = true; },
+  exit() {
+    if (elPauseBtn) elPauseBtn.hidden = true;
+    if (elPixBtn) elPixBtn.hidden = true;
+  },
 });
 
 // PAUSE: a frozen world, nothing captured, nothing reset. main.js

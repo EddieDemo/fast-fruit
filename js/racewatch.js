@@ -125,13 +125,21 @@ function emit(type, data, state) {
   if (bus) bus.emit(type, data, state);
 }
 
-// The field, ranked by true race progress (absolute x, same rule the
-// renderer's place labels use — a body a lap ahead really is ahead).
+// The field, ranked by true race progress. SPINE-NATIVE since stage 5:
+// progress is ARC along the spine, not x — a body on a fold's return
+// leg is moving forward while its x runs backward, and a body on the
+// trapdoor's far deck is ahead of one entering the chute below it.
+// Raw x lied about both. The bare-suite fallback (no spine) keeps x.
+function progressKey(state, m) {
+  return (state.spine && state.spine.progressOf) ? state.spine.progressOf(m) : m.x;
+}
 function rank(state) {
   const all = [];
   for (const pl of state.players) all.push(pl.melon);
   for (const b of state.bots) all.push(b.melon);
-  all.sort((a, b) => b.x - a.x);
+  const key = new Map();
+  for (const m of all) key.set(m, progressKey(state, m));
+  all.sort((a, b) => key.get(b) - key.get(a));
   return all;
 }
 
@@ -148,14 +156,15 @@ function update(state) {
   const tick = state.tick;
 
   // ---- Death resets the streak; respawn starts a new one ----
+  const myProg = progressKey(state, me);
   if (wasAlive && !me.alive) {
     streakBaseX = null;
     streakNext = STREAK_STEP_M;
   } else if (!wasAlive && me.alive) {
-    streakBaseX = me.x;
+    streakBaseX = myProg;   // streaks measure ARC survived (stage 5)
   }
   wasAlive = me.alive;
-  if (streakBaseX === null && me.alive) streakBaseX = me.x;
+  if (streakBaseX === null && me.alive) streakBaseX = myProg;
 
   // ---- Airtime: report the flight the moment it ENDS ----
   // The ledger physics keeps (lastFlightTicks, lastFallPx) is written
@@ -191,11 +200,13 @@ function update(state) {
       const dt = (tick - prev.tick) / ((window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120);
       for (const body of field) {
         const was = prev.x.get(body);
-        if (was !== undefined && dt > 0) body.recentPacePx = Math.max(0, (body.x - was) / dt);
+        // Pace is ARC per second now (stage 5): the finish estimator
+        // divides remaining ARC by it, so the units must agree.
+        if (was !== undefined && dt > 0) body.recentPacePx = Math.max(0, (progressKey(state, body) - was) / dt);
       }
     }
     const x = new Map();
-    for (const body of field) x.set(body, body.x);
+    for (const body of field) x.set(body, progressKey(state, body));
     state._paceMark = { tick, x };
   }
 
@@ -207,7 +218,7 @@ function update(state) {
     if (sp > s.topSpeed) s.topSpeed = sp;
     const air = body.airTicks || 0;
     if (air > s.bestAirTicks) s.bestAirTicks = air;
-    s.distance = body.x;
+    s.distance = progressKey(state, body);   // arc, not x (stage 5)
   }
 
   // ---- The book: flare usage can only be sampled, never evented ----
@@ -266,7 +277,7 @@ function update(state) {
     const all = field;
     for (const body of all) {
       if (body.finishTick !== undefined && body.finishTick !== null) continue;
-      const laps = (body.x - state.raceStartX) / race.lapLengthPx;
+      const laps = state.spine.progressOf(body) / race.lapLengthPx;
       if (laps >= race.laps) body.finishTick = tick;
     }
   }
@@ -286,7 +297,7 @@ function update(state) {
 
   // ---- Clean-run streaks ----
   if (me.alive && streakBaseX !== null) {
-    const metres = (me.x - streakBaseX) / 100;
+    const metres = (myProg - streakBaseX) / 100;
     if (metres > book.longestStreakM) book.longestStreakM = metres;
     if (metres >= streakNext) {
       emit('streak', { metres: streakNext }, state);

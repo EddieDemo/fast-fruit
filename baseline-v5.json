@@ -1,0 +1,1762 @@
+{
+ "capturedAt": "2026-08-17T14:32:19.735Z",
+ "wallSec": 76.1,
+ "seeds": [
+  2654770274,
+  1014238739,
+  3668674500,
+  2028142965,
+  387611430,
+  3042047191,
+  1401515656,
+  4055951417,
+  2415419882,
+  774888347,
+  3429324108,
+  1788792573
+ ],
+ "laps": 3,
+ "agg": {
+  "races": 12,
+  "finished": 144,
+  "dnf": 0,
+  "stuck": 6,
+  "deaths": 656,
+  "meanTime": 100.10040509259258,
+  "medianTime": 99.34166666666667,
+  "minTime": 72.05,
+  "maxTime": 169.89166666666668
+ },
+ "races": [
+  {
+   "seed": 2654770274,
+   "ticks": 12905,
+   "deathsByKind": {
+    "roller": 28,
+    "flat": 11,
+    "slope": 13,
+    "kicker": 3
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 99.35,
+     "deaths": 8,
+     "maxImpact": 3662.993,
+     "pathHash": 2891773456,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 107.15833333333333,
+     "deaths": 8,
+     "maxImpact": 3545.275,
+     "pathHash": 2566383844,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 104.48333333333333,
+     "deaths": 5,
+     "maxImpact": 3102.528,
+     "pathHash": 965867065,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 98.65,
+     "deaths": 1,
+     "maxImpact": 1663.476,
+     "pathHash": 3609038189,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 96.56666666666666,
+     "deaths": 8,
+     "maxImpact": 3467.644,
+     "pathHash": 3481476098,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 95.19166666666666,
+     "deaths": 2,
+     "maxImpact": 3119.881,
+     "pathHash": 3607577604,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 93.09166666666667,
+     "deaths": 2,
+     "maxImpact": 1841.714,
+     "pathHash": 2655458554,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 106.2,
+     "deaths": 5,
+     "maxImpact": 2669.353,
+     "pathHash": 1513795860,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 107.54166666666667,
+     "deaths": 3,
+     "maxImpact": 1851.324,
+     "pathHash": 1936747051,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 101.98333333333333,
+     "deaths": 6,
+     "maxImpact": 3318.034,
+     "pathHash": 2341544694,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 105.44166666666666,
+     "deaths": 2,
+     "maxImpact": 3102.824,
+     "pathHash": 1833106508,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 103.71666666666667,
+     "deaths": 5,
+     "maxImpact": 3470.983,
+     "pathHash": 569410615,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 1014238739,
+   "ticks": 13147,
+   "deathsByKind": {
+    "flat": 16,
+    "roller": 22,
+    "kicker": 7,
+    "slope": 2
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 86.84166666666667,
+     "deaths": 5,
+     "maxImpact": 4041.122,
+     "pathHash": 1926719859,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 87.75,
+     "deaths": 7,
+     "maxImpact": 3584.803,
+     "pathHash": 3276860694,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 93.66666666666667,
+     "deaths": 5,
+     "maxImpact": 3913.139,
+     "pathHash": 2086393451,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 109.55833333333334,
+     "deaths": 4,
+     "maxImpact": 2040.346,
+     "pathHash": 1570928574,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 88.8,
+     "deaths": 2,
+     "maxImpact": 3940.539,
+     "pathHash": 1974287375,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 105.03333333333333,
+     "deaths": 0,
+     "maxImpact": 1710.617,
+     "pathHash": 736106974,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 94.675,
+     "deaths": 4,
+     "maxImpact": 2446.924,
+     "pathHash": 2036656743,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 100.025,
+     "deaths": 8,
+     "maxImpact": 4640.517,
+     "pathHash": 3899618031,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 92.24166666666666,
+     "deaths": 2,
+     "maxImpact": 1682.755,
+     "pathHash": 3185802134,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 92.075,
+     "deaths": 2,
+     "maxImpact": 2536.372,
+     "pathHash": 2075711791,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 94.46666666666667,
+     "deaths": 4,
+     "maxImpact": 2883.023,
+     "pathHash": 215757777,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 103.10833333333333,
+     "deaths": 4,
+     "maxImpact": 3226.973,
+     "pathHash": 3134231257,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 3668674500,
+   "ticks": 14050,
+   "deathsByKind": {
+    "flat": 19,
+    "slope": 13,
+    "roller": 28
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 104.275,
+     "deaths": 9,
+     "maxImpact": 3395.294,
+     "pathHash": 930368253,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 101.60833333333333,
+     "deaths": 7,
+     "maxImpact": 2379.058,
+     "pathHash": 1653535365,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 108.475,
+     "deaths": 6,
+     "maxImpact": 2968.617,
+     "pathHash": 1514811670,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 107.275,
+     "deaths": 3,
+     "maxImpact": 1519.594,
+     "pathHash": 2291010422,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 96.96666666666667,
+     "deaths": 4,
+     "maxImpact": 2720.297,
+     "pathHash": 1208222268,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 105.69166666666666,
+     "deaths": 1,
+     "maxImpact": 3912.493,
+     "pathHash": 1174668028,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 106.49166666666666,
+     "deaths": 3,
+     "maxImpact": 2825.574,
+     "pathHash": 3563592305,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 117.08333333333333,
+     "deaths": 10,
+     "maxImpact": 4099.63,
+     "pathHash": 2895884824,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 86.2,
+     "deaths": 3,
+     "maxImpact": 2099.081,
+     "pathHash": 1932088012,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 104.99166666666666,
+     "deaths": 8,
+     "maxImpact": 2596.85,
+     "pathHash": 1663100040,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 107.91666666666667,
+     "deaths": 2,
+     "maxImpact": 2571.426,
+     "pathHash": 3377068168,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 102.65,
+     "deaths": 4,
+     "maxImpact": 3415.697,
+     "pathHash": 2017607562,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 2028142965,
+   "ticks": 11826,
+   "deathsByKind": {
+    "roller": 11,
+    "slope": 7,
+    "flat": 24,
+    "kicker": 7,
+    "runway": 1
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 85.15,
+     "deaths": 6,
+     "maxImpact": 3236.058,
+     "pathHash": 4169959429,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 89.85,
+     "deaths": 4,
+     "maxImpact": 3005.69,
+     "pathHash": 3603016941,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 92.46666666666667,
+     "deaths": 3,
+     "maxImpact": 2189.76,
+     "pathHash": 231549999,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 95.53333333333333,
+     "deaths": 4,
+     "maxImpact": 2074.607,
+     "pathHash": 1087922924,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 96.6,
+     "deaths": 8,
+     "maxImpact": 4025.729,
+     "pathHash": 816315660,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 81.94166666666666,
+     "deaths": 0,
+     "maxImpact": 2422.524,
+     "pathHash": 3243851718,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 95.10833333333333,
+     "deaths": 5,
+     "maxImpact": 2960.239,
+     "pathHash": 3442361037,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 92.7,
+     "deaths": 5,
+     "maxImpact": 3424.857,
+     "pathHash": 528356532,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 95.73333333333333,
+     "deaths": 3,
+     "maxImpact": 1820.322,
+     "pathHash": 3140692607,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 98.55,
+     "deaths": 7,
+     "maxImpact": 2877.813,
+     "pathHash": 1719516146,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 91.825,
+     "deaths": 2,
+     "maxImpact": 2338.769,
+     "pathHash": 3984705990,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 88.375,
+     "deaths": 3,
+     "maxImpact": 3115.194,
+     "pathHash": 3712480576,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 387611430,
+   "ticks": 10600,
+   "deathsByKind": {
+    "roller": 11,
+    "flat": 17,
+    "kicker": 1,
+    "slope": 2
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 81.925,
+     "deaths": 2,
+     "maxImpact": 2709.771,
+     "pathHash": 327398168,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 86.8,
+     "deaths": 4,
+     "maxImpact": 4670.685,
+     "pathHash": 3870520700,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 80.79166666666667,
+     "deaths": 4,
+     "maxImpact": 2789.207,
+     "pathHash": 2311882978,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 82.35,
+     "deaths": 1,
+     "maxImpact": 1824.057,
+     "pathHash": 1844302747,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 82.275,
+     "deaths": 3,
+     "maxImpact": 4145.983,
+     "pathHash": 2027670045,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 76.3,
+     "deaths": 0,
+     "maxImpact": 2153.434,
+     "pathHash": 3033679375,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 86.2,
+     "deaths": 1,
+     "maxImpact": 2332.599,
+     "pathHash": 572125448,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 87.21666666666667,
+     "deaths": 2,
+     "maxImpact": 2194.554,
+     "pathHash": 231858411,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 88.33333333333333,
+     "deaths": 2,
+     "maxImpact": 2009.389,
+     "pathHash": 523509092,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 79.69166666666666,
+     "deaths": 4,
+     "maxImpact": 4132.795,
+     "pathHash": 2844539441,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 84.78333333333333,
+     "deaths": 1,
+     "maxImpact": 1574.99,
+     "pathHash": 533716591,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 83.7,
+     "deaths": 7,
+     "maxImpact": 3917.681,
+     "pathHash": 531703817,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 3042047191,
+   "ticks": 14014,
+   "deathsByKind": {
+    "roller": 23,
+    "flat": 40,
+    "slope": 10,
+    "kicker": 3
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 99.09166666666667,
+     "deaths": 11,
+     "maxImpact": 3105.806,
+     "pathHash": 1958452958,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 95.6,
+     "deaths": 7,
+     "maxImpact": 4600.067,
+     "pathHash": 3694257500,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 97.475,
+     "deaths": 6,
+     "maxImpact": 2806.003,
+     "pathHash": 879794355,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 109.43333333333334,
+     "deaths": 1,
+     "maxImpact": 1064.762,
+     "pathHash": 2334903511,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 105.18333333333334,
+     "deaths": 12,
+     "maxImpact": 3469.321,
+     "pathHash": 3723841412,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 80.68333333333334,
+     "deaths": 0,
+     "maxImpact": 2013.14,
+     "pathHash": 2685938670,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 100.99166666666666,
+     "deaths": 4,
+     "maxImpact": 1583.416,
+     "pathHash": 344653024,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 111.00833333333334,
+     "deaths": 9,
+     "maxImpact": 4064.904,
+     "pathHash": 1579760686,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 114.70833333333333,
+     "deaths": 3,
+     "maxImpact": 1026.816,
+     "pathHash": 236900042,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 107.96666666666667,
+     "deaths": 12,
+     "maxImpact": 4116.211,
+     "pathHash": 2835394317,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 116.78333333333333,
+     "deaths": 6,
+     "maxImpact": 2525.828,
+     "pathHash": 675636367,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 97.875,
+     "deaths": 5,
+     "maxImpact": 6189.99,
+     "pathHash": 3802978469,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 1401515656,
+   "ticks": 20387,
+   "deathsByKind": {
+    "flat": 16,
+    "slope": 17,
+    "roller": 14,
+    "kicker": 8,
+    "gap": 1
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 107.85833333333333,
+     "deaths": 5,
+     "maxImpact": 4155.013,
+     "pathHash": 2695513121,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 140.99166666666667,
+     "deaths": 4,
+     "maxImpact": 2757.216,
+     "pathHash": 721595904,
+     "stuck": true,
+     "stuckX": 19063,
+     "stuckKind": "kicker"
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 134.425,
+     "deaths": 8,
+     "maxImpact": 2845.548,
+     "pathHash": 789200927,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 164.95,
+     "deaths": 4,
+     "maxImpact": 2045.259,
+     "pathHash": 2403301455,
+     "stuck": true,
+     "stuckX": 59445,
+     "stuckKind": "kicker"
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 169.89166666666668,
+     "deaths": 6,
+     "maxImpact": 3287.891,
+     "pathHash": 1339782243,
+     "stuck": true,
+     "stuckX": 59358,
+     "stuckKind": "kicker"
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 114.59166666666667,
+     "deaths": 0,
+     "maxImpact": 2332.477,
+     "pathHash": 1215545750,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 147.80833333333334,
+     "deaths": 2,
+     "maxImpact": 1891.432,
+     "pathHash": 4030756556,
+     "stuck": true,
+     "stuckX": 18946,
+     "stuckKind": "kicker"
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 105.81666666666666,
+     "deaths": 6,
+     "maxImpact": 3210.306,
+     "pathHash": 3715379062,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 126.03333333333333,
+     "deaths": 2,
+     "maxImpact": 1852.264,
+     "pathHash": 655265030,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 109.18333333333334,
+     "deaths": 7,
+     "maxImpact": 4164.332,
+     "pathHash": 2392922099,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 131.25833333333333,
+     "deaths": 2,
+     "maxImpact": 3115.954,
+     "pathHash": 2885265772,
+     "stuck": true,
+     "stuckX": 19157,
+     "stuckKind": "kicker"
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 130.175,
+     "deaths": 10,
+     "maxImpact": 4705.312,
+     "pathHash": 1494542573,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 4055951417,
+   "ticks": 12439,
+   "deathsByKind": {
+    "roller": 25,
+    "gap": 5,
+    "kicker": 4,
+    "flat": 11,
+    "slope": 4
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 102.175,
+     "deaths": 7,
+     "maxImpact": 3465.238,
+     "pathHash": 2649002568,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 101.59166666666667,
+     "deaths": 1,
+     "maxImpact": 1869.853,
+     "pathHash": 1145236090,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 101.13333333333334,
+     "deaths": 3,
+     "maxImpact": 2460.209,
+     "pathHash": 4175332800,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 92.3,
+     "deaths": 1,
+     "maxImpact": 1352.826,
+     "pathHash": 3926958016,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 101.48333333333333,
+     "deaths": 7,
+     "maxImpact": 3026.337,
+     "pathHash": 2677475229,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 79.85833333333333,
+     "deaths": 1,
+     "maxImpact": 3365.498,
+     "pathHash": 704845179,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 103.65833333333333,
+     "deaths": 6,
+     "maxImpact": 2057.93,
+     "pathHash": 3525868135,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 99.34166666666667,
+     "deaths": 7,
+     "maxImpact": 3402.248,
+     "pathHash": 3870063839,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 101.29166666666667,
+     "deaths": 2,
+     "maxImpact": 1957.513,
+     "pathHash": 4046339956,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 99.84166666666667,
+     "deaths": 3,
+     "maxImpact": 3318.611,
+     "pathHash": 1628782516,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 99.59166666666667,
+     "deaths": 5,
+     "maxImpact": 2437.73,
+     "pathHash": 156357472,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 97.08333333333333,
+     "deaths": 6,
+     "maxImpact": 4279.741,
+     "pathHash": 2450729144,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 2415419882,
+   "ticks": 11366,
+   "deathsByKind": {
+    "kicker": 7,
+    "flat": 13,
+    "roller": 5,
+    "slope": 7,
+    "gap": 3
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 77.35,
+     "deaths": 5,
+     "maxImpact": 3517.444,
+     "pathHash": 2200090169,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 90.7,
+     "deaths": 7,
+     "maxImpact": 3443.628,
+     "pathHash": 64697998,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 87.89166666666667,
+     "deaths": 3,
+     "maxImpact": 2240.424,
+     "pathHash": 144425572,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 94.71666666666667,
+     "deaths": 2,
+     "maxImpact": 1361.019,
+     "pathHash": 2607949301,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 88.5,
+     "deaths": 5,
+     "maxImpact": 4306.177,
+     "pathHash": 3539821008,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 81.775,
+     "deaths": 0,
+     "maxImpact": 2072.918,
+     "pathHash": 1696800850,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 79.65,
+     "deaths": 1,
+     "maxImpact": 2197.077,
+     "pathHash": 3615407322,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 84.53333333333333,
+     "deaths": 2,
+     "maxImpact": 2022.754,
+     "pathHash": 2460296458,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 93.21666666666667,
+     "deaths": 0,
+     "maxImpact": 1273.837,
+     "pathHash": 250676306,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 80.34166666666667,
+     "deaths": 7,
+     "maxImpact": 3862.543,
+     "pathHash": 493970476,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 83.6,
+     "deaths": 1,
+     "maxImpact": 2663.546,
+     "pathHash": 2851349637,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 80.88333333333334,
+     "deaths": 2,
+     "maxImpact": 5575.304,
+     "pathHash": 3663869986,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 774888347,
+   "ticks": 11278,
+   "deathsByKind": {
+    "flat": 66,
+    "roller": 4,
+    "sw": 2,
+    "kicker": 1
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 86.375,
+     "deaths": 8,
+     "maxImpact": 4733.021,
+     "pathHash": 2327027078,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 86.24166666666666,
+     "deaths": 6,
+     "maxImpact": 3604.055,
+     "pathHash": 1448476452,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 93.10833333333333,
+     "deaths": 8,
+     "maxImpact": 3370.686,
+     "pathHash": 1635895985,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 90.93333333333334,
+     "deaths": 6,
+     "maxImpact": 2903.784,
+     "pathHash": 4275691794,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 89.61666666666666,
+     "deaths": 8,
+     "maxImpact": 5909.369,
+     "pathHash": 3694637080,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 72.05,
+     "deaths": 3,
+     "maxImpact": 2542.511,
+     "pathHash": 2344733498,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 76.60833333333333,
+     "deaths": 4,
+     "maxImpact": 2963.581,
+     "pathHash": 2452122410,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 88.74166666666666,
+     "deaths": 7,
+     "maxImpact": 4819.563,
+     "pathHash": 993714743,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 93.98333333333333,
+     "deaths": 6,
+     "maxImpact": 1662.175,
+     "pathHash": 2128603602,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 83.98333333333333,
+     "deaths": 7,
+     "maxImpact": 4523.214,
+     "pathHash": 3632100609,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 92.35833333333333,
+     "deaths": 6,
+     "maxImpact": 2574.362,
+     "pathHash": 362216253,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 86.14166666666667,
+     "deaths": 4,
+     "maxImpact": 4294.114,
+     "pathHash": 3395082605,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 3429324108,
+   "ticks": 13152,
+   "deathsByKind": {
+    "flat": 26,
+    "roller": 28,
+    "slope": 4
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 101.84166666666667,
+     "deaths": 8,
+     "maxImpact": 5287.224,
+     "pathHash": 1079820698,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 104.25,
+     "deaths": 8,
+     "maxImpact": 4472.799,
+     "pathHash": 2175495992,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 106.125,
+     "deaths": 7,
+     "maxImpact": 3824.992,
+     "pathHash": 124655,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 108.60833333333333,
+     "deaths": 5,
+     "maxImpact": 2242.663,
+     "pathHash": 434773214,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 108.20833333333333,
+     "deaths": 8,
+     "maxImpact": 5121.335,
+     "pathHash": 4272160842,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 81.125,
+     "deaths": 0,
+     "maxImpact": 1962.114,
+     "pathHash": 341449824,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 109.1,
+     "deaths": 2,
+     "maxImpact": 3109.952,
+     "pathHash": 2607682622,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 101.1,
+     "deaths": 7,
+     "maxImpact": 6037.796,
+     "pathHash": 4199757605,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 109.6,
+     "deaths": 3,
+     "maxImpact": 1845.903,
+     "pathHash": 2625881944,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 104.35,
+     "deaths": 3,
+     "maxImpact": 3240.667,
+     "pathHash": 1802467357,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 99.68333333333334,
+     "deaths": 3,
+     "maxImpact": 2476.269,
+     "pathHash": 3700081002,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 94.89166666666667,
+     "deaths": 4,
+     "maxImpact": 3588.338,
+     "pathHash": 3054801351,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  },
+  {
+   "seed": 1788792573,
+   "ticks": 18111,
+   "deathsByKind": {
+    "roller": 37,
+    "slope": 18,
+    "flat": 4,
+    "kicker": 7
+   },
+   "racers": [
+    {
+     "key": "R00",
+     "finished": true,
+     "timeSec": 107.79166666666667,
+     "deaths": 9,
+     "maxImpact": 3702.853,
+     "pathHash": 1219427802,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R01",
+     "finished": true,
+     "timeSec": 115.25833333333334,
+     "deaths": 12,
+     "maxImpact": 6417.24,
+     "pathHash": 1432735379,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R02",
+     "finished": true,
+     "timeSec": 110.96666666666667,
+     "deaths": 4,
+     "maxImpact": 3390.454,
+     "pathHash": 3621980550,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R03",
+     "finished": true,
+     "timeSec": 112.9,
+     "deaths": 4,
+     "maxImpact": 1932.963,
+     "pathHash": 3699779701,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R04",
+     "finished": true,
+     "timeSec": 116.575,
+     "deaths": 8,
+     "maxImpact": 2580.759,
+     "pathHash": 2142663784,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R05",
+     "finished": true,
+     "timeSec": 113.83333333333333,
+     "deaths": 1,
+     "maxImpact": 2555.299,
+     "pathHash": 3298503036,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R06",
+     "finished": true,
+     "timeSec": 112.69166666666666,
+     "deaths": 3,
+     "maxImpact": 3345.358,
+     "pathHash": 1777670535,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R07",
+     "finished": true,
+     "timeSec": 111.88333333333334,
+     "deaths": 2,
+     "maxImpact": 2013.054,
+     "pathHash": 4129797927,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R08",
+     "finished": true,
+     "timeSec": 150.925,
+     "deaths": 4,
+     "maxImpact": 1460.065,
+     "pathHash": 1674877700,
+     "stuck": true,
+     "stuckX": 110960,
+     "stuckKind": "roller"
+    },
+    {
+     "key": "R09",
+     "finished": true,
+     "timeSec": 120.20833333333333,
+     "deaths": 7,
+     "maxImpact": 2837.688,
+     "pathHash": 691330667,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R10",
+     "finished": true,
+     "timeSec": 116.40833333333333,
+     "deaths": 4,
+     "maxImpact": 1770.863,
+     "pathHash": 1607966517,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    },
+    {
+     "key": "R11",
+     "finished": true,
+     "timeSec": 112.25833333333334,
+     "deaths": 8,
+     "maxImpact": 3590.009,
+     "pathHash": 3862821280,
+     "stuck": false,
+     "stuckX": null,
+     "stuckKind": null
+    }
+   ]
+  }
+ ]
+}

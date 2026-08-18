@@ -132,7 +132,7 @@ function save(state, opts) {
       track: window.FF.currentModeName ? window.FF.currentModeName() : null,
       tick: state.tick,
       race: {
-        mode: state.race.mode, laps: state.race.laps,
+        mode: state.race.mode, laps: state.race.laps, seed: state.race.seed,
         lapIndex: state.race.lapIndex, lapLengthPx: state.race.lapLengthPx,
         lapStartTick: state.race.lapStartTick, bestLapTicks: state.race.bestLapTicks,
         splits: (state.race.splits || []).slice(-8),
@@ -287,6 +287,9 @@ function restore(state, rebuild) {
   if (state.prevMelon && state.melon) Object.assign(state.prevMelon, state.melon);
   state.tick = snap.tick;
   state.raceStartX = snap.startX;
+  state.spine = window.FF.trackSpace.metricSpine(snap.startX,
+    snap.race && snap.race.lapLengthPx ? snap.race.lapLengthPx : null,
+    state.terrain);
   state.raceStartTick = snap.startTick;
   Object.assign(state.race, snap.race);
   if (FF.debris && FF.debris.reset) FF.debris.reset();

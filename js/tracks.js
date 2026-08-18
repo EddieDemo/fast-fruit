@@ -33,69 +33,74 @@ const TRACKS = {
 };
 
 function buildLapTemplate(seed, L, D) {
+  // V2 (2026-08-17): the lap builder SPEAKS THE SHARED VOCABULARY —
+  // terrain.js's recipe, chunk speaker, and cursor — instead of the
+  // stale duplicate generator it once was (v1 shapes, own weights, no
+  // dialects: the fork meant the whole v2 rework never reached actual
+  // races until this port). What remains local here is the LAP LAW:
+  // drift correction against the ideal line, and the closing zone
+  // that forces exact (L, D) so periods tile bit-perfectly.
+  const Laws = window.FF.terrainLaws;
   const rng = window.FF.mulberry32(seed);
   const rr = (lo, hi) => lo + rng() * (hi - lo);
+  const rec = Laws.trackRecipe(seed);        // same dialect as endless
+  const cur = Laws.makeCursor(0, 0);
 
-  const pts = [{ x: 0, y: 0 }];
-  let x = 0, y = 0;
-  const push = () => pts.push({ x, y });
-  const flat = (l) => { x += l; push(); };
-  const slope = (l, dy) => { x += l; y += dy; push(); };
-  const bump = (l, amp, base, segs = 12) => {
-    const x0 = x, y0 = y;
-    for (let i = 1; i <= segs; i++) {
-      const t = i / segs;
-      pts.push({ x: x0 + l * t, y: y0 + base * t + amp * 0.5 * (1 - window.FF.dmath.cos(2 * Math.PI * t)) });
-    }
-    x = x0 + l; y = y0 + base;
-  };
+  cur.chunkKind = 'runway';
+  cur.flat(300); // start straight (pairs with the previous period's apron)
 
-  flat(300); // start straight (pairs with the previous period's ending flat)
-
-  // Chunk sizes are capped (<~1200px) so the reserved closing zone can
-  // never be squeezed into a steep correction.
-  const RESERVE = 3600; // room for the closing correction + the 1300px apron
-  while (x < L - RESERVE) {
-    const drift = y - (x / L) * D; // + = dropped too much, - = not enough
+  // The reserve must cover the LONGEST chunk plus the closing
+  // correction and the 1300px apron. The stage-5 gallery is now the
+  // longest word: leads + mouth span + derived deck A (D 1600 + a
+  // worst-case chute run) + apron + bowl reach + floor margin
+  // ~= 5200 px — 4800 let a legally-started gallery overrun the
+  // closer, whose forced correction then laid a NEGATIVE-length
+  // slope: a backward weld the whole field jammed against (seed
+  // 334513, 110 s at vx 25).
+  const RESERVE = 5600;
+  while (cur.x < L - RESERVE) {
+    const drift = cur.y - (cur.x / L) * D; // + dropped too much, - not enough
     if (drift > 250) {
-      flat(rr(250, 450)); // ease off, let the ideal line catch up
+      // ease off, let the ideal line catch up (the lap's own rest note)
+      cur.chunkKind = 'flat';
+      cur.lastKind = 'flat';
+      cur.flat(rr(250, 450));
     } else if (drift < -250) {
+      // steepen to catch the line
+      cur.chunkKind = 'slope';
+      cur.lastKind = 'slope';
       const len = rr(400, 700);
-      slope(len, len * rr(0.25, 0.34)); // steepen to catch the line
+      cur.slope(len, len * rr(0.25, 0.34));
     } else {
-      const pick = rng();
-      if (pick < 0.34) {
-        const len = rr(350, 750);
-        slope(len, len * rr(0.12, 0.3));
-      } else if (pick < 0.62) {
-        const n = 2 + Math.floor(rng() * 2); // 2-3 bumps, capped length
-        for (let i = 0; i < n; i++) {
-          const len = rr(300, 450);
-          bump(len, (rng() < 0.5 ? -1 : 1) * rr(40, 85), len * rr(0.08, 0.18));
-        }
-      } else if (pick < 0.8) {
-        flat(rr(220, 420));
-      } else {
-        // Kicker jump, same anatomy as endless mode.
-        flat(rr(120, 200));
-        const rise = rr(90, 140);
-        slope(rr(200, 260), -rise);
-        slope(12, rise + rr(140, 240));
-        slope(rr(420, 650), rr(120, 200));
-      }
+      Laws.speakChunk(cur, rng, rec);
     }
   }
 
   // Closing: one gentle correction slope onto the finish straight,
   // then the GRID APRON (1300px flat), FORCING exact (L, D) so tiling
   // is bit-perfect across periods.
-  slope((L - 1300) - x, D - y);
-  x = L - 1300; y = D;
-  pts[pts.length - 1] = { x, y };
-  flat(1300);
-  pts[pts.length - 1] = { x: L, y: D };
+  cur.chunkKind = 'slope';
+  cur.slope((L - 1300) - cur.x, D - cur.y);
+  cur.x = L - 1300; cur.y = D;
+  // The forced-exact overwrites must carry ARC (stage 3): recompute
+  // s from the surviving neighbour, and re-anchor the cursor's own
+  // arc so the apron continues from the corrected point.
+  const fixS = () => {
+    const n = cur.pts.length;
+    const a = cur.pts[n - 2], b = cur.pts[n - 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    b.s = a.s + Math.sqrt(dx * dx + dy * dy);
+    cur.s = b.s;
+  };
+  cur.pts[cur.pts.length - 1] = { x: cur.x, y: cur.y, k: 'slope' };
+  fixS();
+  cur.chunkKind = 'runway';
+  cur.flat(1300);
+  cur.pts[cur.pts.length - 1] = { x: L, y: D, k: 'runway' };
+  fixS();
 
-  return pts;
+  cur.pts.branches = cur.branches; // template carries its side strands
+  return cur.pts;
 }
 
 // ---- Periodic terrain provider ----
@@ -107,10 +112,24 @@ function createTrackProvider(def) {
   const D = def.dropPerLapM * 100;
   const template = buildLapTemplate(def.seed, L, D);
 
+  // THE LAP ARC (stage 3): the template's total arc length — the
+  // spine's lap unit now that progress is metric. Differs from L on
+  // every track (arc runs longer than x on every slope, and a
+  // switchback packs ~3 deck-lengths of arc into one deck of x).
+  const lapArc = template[template.length - 1].s;
+  const tplBranches = template.branches || [];
+
   const provider = {
     def,
     period: { L, D },
+    lapArc,
+    _template: template,  // verification surface: copy-vs-copy
+                          // comparison masks SYMMETRIC field drops
+                          // (mat was dropped at every period alike);
+                          // only copy-vs-template catches the class
+
     pts: [],
+    branches: [],
     _pLo: null,
     _pHi: null,
 
@@ -118,7 +137,11 @@ function createTrackProvider(def) {
       this._pLo = null;
       this._pHi = null;
       this.pts.length = 0;
+      this.branches.length = 0;
     },
+    // The strand list (stage 4): primary, then branches. Track mode
+    // has no world-edge wall.
+    polys() { return [this.pts, ...this.branches]; },
 
     update(loX, hiX) {
       const pLo = Math.floor(loX / L);
@@ -127,11 +150,44 @@ function createTrackProvider(def) {
       this._pLo = pLo;
       this._pHi = pHi;
       this.pts.length = 0;
+      this.branches.length = 0;
       for (let p = pLo; p <= pHi; p++) {
         // Skip each subsequent period's first point: it duplicates the
         // previous period's forced-exact last point.
         for (let i = p === pLo ? 0 : 1; i < template.length; i++) {
-          this.pts.push({ x: template[i].x + p * L, y: template[i].y + p * D });
+          const o = { x: template[i].x + p * L, y: template[i].y + p * D,
+            k: template[i].k,      // the kind survives the tiling
+            s: template[i].s + p * lapArc }; // ...and so does the arc
+          // the material-side override survives too — dropping it
+          // re-created the verify-fold C defect in track mode only
+          // (fold bands extruded to the auto side on every lap)
+          if (template[i].mat !== undefined) o.mat = template[i].mat;
+          this.pts.push(o);
+        }
+        // Branch strands tile whole, one copy per period, same
+        // offsets — the s-anchor law survives tiling because both
+        // the branch's s and its anchor's s shift by p * lapArc.
+        for (const br of tplBranches) {
+          const cp = br.map((q) => {
+            const o = { x: q.x + p * L, y: q.y + p * D, k: q.k };
+            if (q.s !== undefined) o.s = q.s + p * lapArc; // ceilings carry no s
+            if (q.mat !== undefined) o.mat = q.mat; // material override survives
+            return o;
+          });
+          cp.matAbove = br.matAbove;      // strand flags survive tiling
+          // EVERY positional entry field shifts. wallX was omitted
+          // here: period 0 worked (offset zero) and every later lap
+          // had its wall discipline pointing a full lap behind —
+          // dirW flipped (pilot.js reads wallX >= farX) and bots
+          // committed to the gallery jump, then met the bowl
+          // unbraked. Laps LOOKED different because the field's
+          // behavior at the fork was.
+          if (br.entry) cp.entry = { ...br.entry, lipX: br.entry.lipX + p * L,
+            farX: br.entry.farX + p * L,
+            lipY: br.entry.lipY + p * D,
+            wallX: br.entry.wallX === undefined
+              ? undefined : br.entry.wallX + p * L };
+          this.branches.push(cp);
         }
       }
     },
@@ -158,6 +214,19 @@ function trackDefByName(name) {
   const legM = LEG_RE.exec(name || '');
   const leg = legM ? parseInt(legM[1], 10) : 1;
   const base = legM ? name.slice(0, legM.index) : name;
+  // DEV TRACKS: 'Dev <seed>' resolves like a daily but with the seed
+  // written in the name — so a random dev track is still perfectly
+  // reproducible (paste the name, get the track), and resume can
+  // resolve it after a reload. Legs salt exactly as dailies do.
+  const dm = /^Dev (\d+)$/.exec(base || '');
+  if (dm) {
+    const baseSeed = parseInt(dm[1], 10) >>> 0;
+    const seed = leg === 1 ? baseSeed : (baseSeed ^ Math.imul(leg, 0x9E3779B1)) >>> 0;
+    if (window.FF.DEV_RANDOM_TRACKS) {
+      console.log('[FF dev] track "' + name + '" seed ' + seed);
+    }
+    return { seed, lapLengthM: 400, dropPerLapM: 70, laps: 3, leg };
+  }
   const m = DAILY_RE.exec(base || '');
   if (m) {
     const dateSeed = parseInt(m[1] + m[2] + m[3], 10);
@@ -188,7 +257,19 @@ function dailyCupTracks(d) {
 }
 
 // Today's daily name, from the local date: the seed IS the date.
+// DEV_RANDOM_TRACKS (console: FF.DEV_RANDOM_TRACKS = true): every
+// call mints a FRESH 'Dev <seed>' name instead — so each PLAY CUP or
+// PRACTICE press is a new random track, for generator testing. The
+// seed lives in the name, so anything that resolves the name later
+// (resume, retry, ghosts within the session) gets the same terrain;
+// the randomness is in the CHOICE, never in the track. Session-only:
+// reload and you're back on dailies. Not sim code, so Date/random
+// here breaks no law — the seed drives the same deterministic
+// generator as ever.
 function dailyTrackName(d) {
+  if (window.FF.DEV_RANDOM_TRACKS) {
+    return 'Dev ' + (((Date.now() & 0xffffffff) ^ ((Math.random() * 0x10000) | 0) * 65536) >>> 0);
+  }
   const day = d || new Date();
   const p = (n) => String(n).padStart(2, '0');
   return `Daily ${day.getFullYear()}-${p(day.getMonth() + 1)}-${p(day.getDate())}`;

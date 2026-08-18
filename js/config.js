@@ -56,7 +56,15 @@ const DEFAULTS = Object.freeze({
   // before locking, per house law.
 
   // --- Surface interaction ---
-  friction: 0.95,          // Coulomb μ at contact
+  friction: 0.95,          // Coulomb μ at contact (fruit on ground)
+  // THE TWO-COEFFICIENT FRICTION LAW (ruled by Eddie, 2026-08-17):
+  // rind on rind is nothing like rind on dirt. Driven bodies in
+  // sustained mutual contact spin-lock like meshed gears (measured:
+  // raw 1.00, torque 1.00, grounded, omega 0) and then ARCH across
+  // hopper outlets — every mound in the serpentine record. A slick
+  // fruit-fruit coefficient dissolves the gear-lock everywhere: one
+  // uniform law derived from what melons are, no per-situation fudge.
+  rindFriction: 0.15,
   rollingResistance: 0.025, // contact losses; also damps contact bounce at speed
   restitution: 0.18,       // NEUTRAL bounciness (flare stick centred)
   ringLog: 1,              // DEBUG BUILD: ring-vs-reality logger ON —
@@ -313,4 +321,15 @@ function melonInertia() {
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
 Object.assign(window.FF, { BUILD, DEFAULTS, CONFIG, SCHEMA, PRESETS, applyPreset, getActivePreset, resetConfig, melonInertia });
+
+// ---- Dev defaults (Eddie, 2026-08-17, stage 3 review period) ----
+// RANDOM TRACKS ON: every PLAY CUP / PRACTICE press mints a fresh
+// 'Dev <seed>' track instead of the daily — for walking the v4
+// vocabulary (switchbacks included). COLOURED CHUNKS ON: the slab
+// tint pass paints each word's faces (kicker warm, gap toward red,
+// sw toward blue...). Both are the same console flags as ever, just
+// defaulted on here; flip either to false in the console (or delete
+// these lines) to restore daily-only, plain-slab behaviour.
+window.FF.DEV_RANDOM_TRACKS = true;
+window.FF.DEV_TERRAIN_COLORS = true;
 })();

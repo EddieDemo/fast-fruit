@@ -45,6 +45,7 @@ function cloneWorld(state) {
   const clone = {
     tick: state.tick,
     terrain: state.terrain,          // read-only during a step
+    spine: state.spine,              // read-only: surface + progress queries
     period: state.period,
     raceStartX: state.raceStartX,
     raceStartTick: state.raceStartTick,
@@ -146,7 +147,7 @@ function pump(budget) {
     job.steps++; n++;
     for (const m of bodies) {
       if (done.has(m)) continue;
-      if ((m.x - clone.raceStartX) >= target) {
+      if ((m.x - clone.raceStartX) >= target) {   // clone: pre-spine snapshot, raw by design
         done.set(m, clone.tick);
         job.outstanding--;
       }
@@ -248,7 +249,7 @@ function estimate(state, opts) {
       rec = { timeSec: (m.finishTick - startTick) / hz, dnf: false, estimated: false };
       out.measured++;
     } else {
-      const covered = Math.max(0, m.x - state.raceStartX);
+      const covered = Math.max(0, state.spine.progressOf(m));
       const remaining = Math.max(0, target - covered);
       const longRun = covered / elapsed;                       // px/s over the race
       const recent = m.recentPacePx !== undefined && m.recentPacePx !== null
