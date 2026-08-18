@@ -171,7 +171,16 @@ function createRenderer(canvas) {
     // decal details) keep their colours instead of being eaten.
     const cut = Math.max(12, (n / 2400) | 0);
     const commons = [];
-    for (const [k, c] of hist) if (c >= cut) commons.push(k);
+    // Registered palette members are GENUINE regardless of area —
+    // this is what the Phase 0 registry is FOR. Without it the
+    // resolver ate every small legitimate feature: the 2 px glint
+    // vanished in race view and reappeared only when the pan zoomed
+    // the lit cap past the area cut (measured on device). Blends are
+    // never members, so anti-aliasing still dies.
+    const pal2 = window.FF.palette;
+    for (const [k, c] of hist) {
+      if (c >= cut || (pal2 && pal2.isMemberInt(k))) commons.push(k);
+    }
     // Phase 0.2 telemetry: how many pixels this frame were NOT a
     // dominant colour — the grid-honesty number the roadmap ratchets
     // toward zero as painters convert. Published BEFORE the all-common
@@ -1416,6 +1425,49 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       }
     }
   }
+  // Highlight-priority block vote: a block that is >= 25% lit-cap
+  // tone goes to the LIGHT — the artist's rule that light reads over
+  // mass. Preserves the real lit-region shape instead of a token
+  // stamp. Pure, unit-tested.
+  function pxBlockWinner(tally, hiInt, quarter) {
+    if (hiInt >= 0) {
+      const hc = tally.get(hiInt) || 0;
+      if (hc >= quarter) return hiInt;
+    }
+    let bk = 0, bc2 = -1;
+    for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
+    return bk;
+  }
+  // Morphological close: a transparent pixel with >= 6 of 8 opaque
+  // neighbours is a vote NOTCH, not silhouette — filled with its
+  // neighbours' majority tone. Notches over the black sky read as
+  // black holes IN the melon (measured on device). Strict threshold:
+  // the silhouette never grows. Pure, unit-tested.
+  function pxClose(idx, w, h) {
+    const src = idx.slice();
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const p = y * w + x;
+        if (src[p] !== 255) continue;
+        const tally = new Map();
+        let op = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nk = src[(y + dy) * w + x + dx];
+            if (nk === 255) continue;
+            op++;
+            tally.set(nk, (tally.get(nk) || 0) + 1);
+          }
+        }
+        if (op >= 6) {
+          let bk = 255, bc2 = -1;
+          for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
+          idx[p] = bk;
+        }
+      }
+    }
+  }
   function pxHighlightGuarantee(idx, w, h, hiIdx, cx, cy) {
     for (let i = 0; i < idx.length; i++) if (idx[i] === hiIdx) return false;
     let best = -1, bd = Infinity;
@@ -1432,7 +1484,8 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (idx[best + 1] !== undefined && idx[best + 1] !== 255) idx[best + 1] = hiIdx;
     return true;
   }
-  window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee };
+  window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee,
+    blockWinner: pxBlockWinner, close: pxClose };
   // Dev-lane capture (Eddie, 2026-08-18): the actual 320 buffer as a
   // PNG data URL — ground truth for visual iteration, because PIL
   // reconstructions passed proofs while the real device regressed.
@@ -1477,7 +1530,34 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         return ci;
       };
       const idx = new Uint8Array(spr * spr).fill(255);
+      // PRE-PASS (v3, Eddie 2026-08-18): find the TRUE rendered
+      // highlight tone — the lightest tone actually present in this
+      // frame's source with any real presence. v2 asked
+      // slotColor(color,'A3'), but `color` is the display colour, not
+      // the seeded anchor the painter derives the body from, so the
+      // guess missed and the fallback stamped an alien tone. The
+      // source render itself is the ground truth; ask IT.
       const srcHist = new Map();       // tone -> {c, sx, sy} for centroid
+      for (let sy2 = 0; sy2 < big; sy2++) {
+        const row = sy2 * big * 4;
+        for (let sx2 = 0; sx2 < big; sx2++) {
+          const i4 = row + sx2 * 4;
+          if (sd[i4 + 3] < 128) continue;
+          const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
+          let hrec = srcHist.get(kk);
+          if (!hrec) { hrec = { c: 0, sx: 0, sy: 0 }; srcHist.set(kk, hrec); }
+          hrec.c++; hrec.sx += sx2 / SS; hrec.sy += sy2 / SS;
+        }
+      }
+      let hiInt = -1, hiL = -1, hiRec = null;
+      if (sh) {
+        for (const [kk, rec] of srcHist) {
+          if (rec.c < 4) continue;               // noise floor only
+          const L = sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255);
+          if (L > hiL) { hiL = L; hiInt = kk; hiRec = rec; }
+        }
+      }
+      const quarter = (SS * SS) * 0.25;
       for (let y = 0; y < spr; y++) {
         for (let x = 0; x < spr; x++) {
           const tally = new Map();
@@ -1490,51 +1570,24 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
               opaque++;
               const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
               tally.set(kk, (tally.get(kk) || 0) + 1);
-              let hrec = srcHist.get(kk);
-              if (!hrec) { hrec = { c: 0, sx: 0, sy: 0 }; srcHist.set(kk, hrec); }
-              hrec.c++; hrec.sx += x; hrec.sy += y;
             }
           }
           if (opaque >= half) {
-            let bk = 0, bc2 = -1;
-            for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
-            idx[y * spr + x] = cOf(bk);
+            // Highlight-priority vote: the real lit-region SHAPE
+            // survives at race radius instead of dying to the mass.
+            idx[y * spr + x] = cOf(pxBlockWinner(tally, hiInt, quarter));
           }
         }
       }
-      // Guarantee 1 REVERTED (Eddie, 2026-08-18): eating the outer
-      // body ring into a rim the art never had (inkMode 'none') read
-      // as a new outline AND as shrinkage (~12% of an 18 px melon).
-      // If a rim ever returns it must grow OUTWARD, and it is a
-      // design ruling, not an engineering default. The pure fn stays
-      // exported for that day.
-      // Guarantee 2, v2 — THE SEMANTIC GLINT (Eddie, 2026-08-18): v1
-      // protected "the lightest tone with significant area", which on
-      // a pale-patterned or white-wrapped melon is the DECAL, not the
-      // lit cap — the guarantee saluted the wrong pixel while the
-      // real highlight (highlightTau 0.98 = 1-3 sprite px at this
-      // radius) died to the vote's area gates. The shading system
-      // NAMES the highlight — the A3 slot — so ask it: find the A3
-      // region's centroid in the source render and stamp the glint
-      // there. A pixel artist doesn't shade a lit cap at 18 px; they
-      // PLACE two near-white pixels on the sun side, every sprite.
-      // Fallback (A3 absent at this rotation): place along the sun
-      // vector the shading system exports. Reserve lever if the
-      // glint reads small on device: ease highlightTau in px mode.
-      if (sh) {
-        const hiHex = sh.slotColor(color, 'A3');
-        const hiInt = hiHex ? parseInt(hiHex.slice(1), 16) : -1;
-        if (hiInt >= 0) {
-          const rec = srcHist.get(hiInt);
-          if (rec && rec.c > 0) {
-            pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
-              rec.sx / rec.c, rec.sy / rec.c);
-          } else {
-            const sv = sh.sun();
-            pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
-              spr / 2 + sv.x * spr * 0.3, spr / 2 + sv.y * spr * 0.3);
-          }
-        }
+      // Vote notches (transparent holes over the black sky read as
+      // black pixels IN the body — measured on device): closed.
+      pxClose(idx, spr, spr);
+      // Rim REVERTED (Eddie): no rim; the fn stays exported.
+      // Last resort only: if the whole lit region still lost every
+      // block, stamp 2 px at its true centroid.
+      if (hiInt >= 0 && hiRec) {
+        pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
+          hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
       }
       // Resolve indices -> RGBA (identity resolve until Phase 5).
       const fc = document.createElement('canvas');
@@ -1577,9 +1630,17 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         ctx.save();
         ctx.imageSmoothingEnabled = false;
         ctx.translate(Math.round(sx), Math.round(sy));
-        // Squash rides the blit with the exact vector transform:
-        // transient impact frames may resample, rest frames are 1:1.
-        if (squash && squash.squash > 0.003) {
+        // Squash rides the blit with the exact vector transform —
+        // but only past 8% in pixel mode: a rolling melon carries
+        // CONSTANT micro-squash, and every micro-squash frame went
+        // through the rotated nearest-resample, pulling transparent
+        // texels into the body (persistent black flecks over the
+        // black sky, measured on device). Sub-8% deformation is
+        // < 2 px of amplitude on an 18 px sprite — invisible — so
+        // those frames blit 1:1. Big splats still deform (2-3 frame
+        // transients); the canonical-axis bake (R2) remains the full
+        // cure if they offend.
+        if (squash && squash.squash > 0.08) {
           ctx.rotate(squash.squashAngle + Math.PI / 2);
           ctx.scale(1 + squash.squash, 1 - squash.squash);
           ctx.rotate(-(squash.squashAngle + Math.PI / 2));
