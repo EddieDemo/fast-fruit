@@ -657,6 +657,42 @@ window.FF._grant = (id) => {
   }
   return ok;
 };
+
+// GRANT-ALL, mobile-reachable (Eddie, 2026-08-18): the console door
+// above is useless on a phone, and pixel-legibility testing needs the
+// whole catalogue wearable. A dev-lane button (behind the five-tap
+// gate like every dev tool) walks the catalogue through the SAME
+// sanctioned grant door — validated, idempotent, duplicates
+// impossible — so this is a convenience over _grant, not a second
+// granting mechanism. Withheld/retired items are not in ALL, so the
+// flag roadmap's holds are respected automatically.
+(function () {
+  if (typeof document === 'undefined' || !window.FF.devtools) return;
+  const gbtn = document.createElement('button');
+  gbtn.id = 'ff-grant-all-btn';
+  gbtn.textContent = '\ud83c\udf81 all decals';
+  gbtn.title = 'Grant every catalogue decal (dev)';
+  gbtn.style.cssText = 'position:fixed;left:10px;top:190px;z-index:9;'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);display:none;';
+  document.body.appendChild(gbtn);
+  gbtn.addEventListener('click', () => {
+    const D = window.FF.decals, M = window.FF.melon;
+    if (!D || !M) return;
+    let got = 0;
+    for (const item of D.ALL) if (M.grantDecal(item.id)) got++;
+    if (window.FF.editor && window.FF.editor.refreshTray) {
+      window.FF.editor.refreshTray();
+    }
+    gbtn.textContent = '\u2713 ' + (got ? got + ' granted' : 'all owned');
+    setTimeout(() => { gbtn.textContent = '\ud83c\udf81 all decals'; }, 1600);
+  });
+  window.FF.devtools.register({
+    show: () => { gbtn.style.display = ''; },
+    hide: () => { gbtn.style.display = 'none'; },
+  });
+})();
 window.FF._dress = (...ids) => {
   const M = window.FF.melon, D = window.FF.decals;
   const spec = M.active();
@@ -1340,25 +1376,45 @@ function buildPause() {
     else if (flow.state === 'pause') flow.go('race');
   });
 
-  // The pixelation toggle (aesthetic test, Eddie 2026-08-18): flips
-  // FF.PIXELATE, which the renderer reads per frame — the world
-  // layer drops to 380px nearest-neighbour; menus, HUD, and the
-  // stick glass stay native. Persisted so an A/B verdict survives
-  // reloads. localStorage is try/caught: file:// contexts can deny.
-  try { window.FF.PIXELATE = localStorage.getItem('ff-pixelate') === '1'; }
-  catch (e) { window.FF.PIXELATE = false; }
+  // The pixelation cycle (aesthetic test, Eddie 2026-08-18): taps
+  // step through vector and the historical resolution tiers, in
+  // Eddie's ruled order — 320 (arcade-literal: Out Run / System 16),
+  // 427 (240-row class), 512 (Neo Geo / SNES-hires), 480, 640 (VGA).
+  // The pill SAYS the current mode. The renderer reads FF.PIXELATE +
+  // FF.PIXELATE_W per frame; menus, HUD, and stick glass stay
+  // native. Persisted so a verdict survives reloads; localStorage is
+  // try/caught: file:// contexts can deny.
+  const PIX_MODES = [null, 320, 427, 512, 480, 640];
+  const pixLabel = (m) => (m === null ? 'VECTOR' : String(m));
+  let pixIdx = 0;
+  try {
+    const saved = localStorage.getItem('ff-pixelate-mode');
+    const i = PIX_MODES.indexOf(saved === 'null' || saved === null ? null : (saved | 0));
+    if (saved !== null && i >= 0) pixIdx = i;
+    else if (localStorage.getItem('ff-pixelate') === '1') pixIdx = PIX_MODES.indexOf(640);
+  } catch (e) { /* stay at vector */ }
+  const pixApply = () => {
+    const m = PIX_MODES[pixIdx];
+    window.FF.PIXELATE = m !== null;
+    window.FF.PIXELATE_W = m || 0;
+    if (elPixBtn) {
+      elPixBtn.classList.toggle('ff-on', m !== null);
+      elPixBtn.firstChild.textContent = pixLabel(m);
+    }
+  };
   elPixBtn = el('button', null, '');
   elPixBtn.id = 'ff-pix-btn';
-  elPixBtn.appendChild(el('span', 'ff-pause-pill', 'PX'));
-  elPixBtn.setAttribute('aria-label', 'Toggle pixelation');
+  elPixBtn.appendChild(el('span', 'ff-pause-pill', pixLabel(PIX_MODES[pixIdx])));
+  elPixBtn.setAttribute('aria-label', 'Cycle pixelation mode');
   elPixBtn.hidden = true;
-  elPixBtn.classList.toggle('ff-on', !!window.FF.PIXELATE);
   document.body.appendChild(elPixBtn);
+  pixApply();
   elPixBtn.addEventListener('click', () => {
-    window.FF.PIXELATE = !window.FF.PIXELATE;
-    elPixBtn.classList.toggle('ff-on', !!window.FF.PIXELATE);
-    try { localStorage.setItem('ff-pixelate', window.FF.PIXELATE ? '1' : '0'); }
-    catch (e) { /* file:// may deny persistence; the toggle still works */ }
+    pixIdx = (pixIdx + 1) % PIX_MODES.length;
+    pixApply();
+    try {
+      localStorage.setItem('ff-pixelate-mode', String(PIX_MODES[pixIdx]));
+    } catch (e) { /* file:// may deny persistence; the cycle still works */ }
   });
   // Escape/P toggle for desktop; ignored while the studio has focus.
   window.addEventListener('keydown', (e) => {
