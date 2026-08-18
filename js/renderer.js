@@ -1454,9 +1454,6 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // area, tracked with its centroid during the vote.
     bakeLodR = rPx;                    // Phase 2.1: painters simplify
     const sh = window.FF.shading;
-    const lstarOfInt = (kk) => sh
-      ? sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255)
-      : ((kk >> 16) & 255);
     const frames = [];
     for (let k = 0; k < SPRITE_ANGLES; k++) {
       btx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1506,16 +1503,33 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       // If a rim ever returns it must grow OUTWARD, and it is a
       // design ruling, not an engineering default. The pure fn stays
       // exported for that day.
-      // Guarantee 2: the lightest significant source tone survives.
-      let hiTone = -1, hiL = -1, hiRec = null;
-      for (const [kk, rec] of srcHist) {
-        if (rec.c < SS * SS * 2) continue;         // needs real area
-        const L = lstarOfInt(kk);
-        if (L > hiL) { hiL = L; hiTone = kk; hiRec = rec; }
-      }
-      if (hiTone >= 0 && hiRec) {
-        pxHighlightGuarantee(idx, spr, spr, cOf(hiTone),
-          hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
+      // Guarantee 2, v2 — THE SEMANTIC GLINT (Eddie, 2026-08-18): v1
+      // protected "the lightest tone with significant area", which on
+      // a pale-patterned or white-wrapped melon is the DECAL, not the
+      // lit cap — the guarantee saluted the wrong pixel while the
+      // real highlight (highlightTau 0.98 = 1-3 sprite px at this
+      // radius) died to the vote's area gates. The shading system
+      // NAMES the highlight — the A3 slot — so ask it: find the A3
+      // region's centroid in the source render and stamp the glint
+      // there. A pixel artist doesn't shade a lit cap at 18 px; they
+      // PLACE two near-white pixels on the sun side, every sprite.
+      // Fallback (A3 absent at this rotation): place along the sun
+      // vector the shading system exports. Reserve lever if the
+      // glint reads small on device: ease highlightTau in px mode.
+      if (sh) {
+        const hiHex = sh.slotColor(color, 'A3');
+        const hiInt = hiHex ? parseInt(hiHex.slice(1), 16) : -1;
+        if (hiInt >= 0) {
+          const rec = srcHist.get(hiInt);
+          if (rec && rec.c > 0) {
+            pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
+              rec.sx / rec.c, rec.sy / rec.c);
+          } else {
+            const sv = sh.sun();
+            pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
+              spr / 2 + sv.x * spr * 0.3, spr / 2 + sv.y * spr * 0.3);
+          }
+        }
       }
       // Resolve indices -> RGBA (identity resolve until Phase 5).
       const fc = document.createElement('canvas');
