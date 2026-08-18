@@ -142,10 +142,21 @@ function createRenderer(canvas) {
     const commons = [];
     for (const [k, c] of hist) if (c >= cut) commons.push(k);
     if (!commons.length || commons.length === hist.size) return;
-    const snap = new Map();
-    for (const k of commons) snap.set(k, k);
-    const nearest = (k) => {
-      const hit = snap.get(k);
+    // LOCAL RESOLVE (v2): an AA blend is a mixture of its own
+    // neighbours, so each stray snaps to the nearest genuine colour
+    // among its 5x5 neighbourhood — never to a genuine colour from
+    // across the screen. v1 snapped globally, and a white-on-dark
+    // blend (grey) would land on the grid's genuine grey, stranding
+    // grey blocks on melon rims and highlight borders. Local resolve
+    // reconstructs the edge an aliased rasterizer would have drawn.
+    const commonSet = new Set(commons);
+    const keys = new Uint32Array(n);
+    for (let i = 0; i < n; i++) {
+      keys[i] = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
+    }
+    const globalCache = new Map();
+    const globalNearest = (k) => {
+      const hit = globalCache.get(k);
       if (hit !== undefined) return hit;
       const r = k >> 16, g = (k >> 8) & 255, b = k & 255;
       let best = commons[0], bd = Infinity;
@@ -154,15 +165,30 @@ function createRenderer(canvas) {
         const dist = dr * dr + dg * dg + db * db;
         if (dist < bd) { bd = dist; best = c; }
       }
-      snap.set(k, best);
+      globalCache.set(k, best);
       return best;
     };
     for (let i = 0; i < n; i++) {
-      const k = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
-      const t = nearest(k);
-      if (t !== k) {
-        d[i * 4] = t >> 16; d[i * 4 + 1] = (t >> 8) & 255; d[i * 4 + 2] = t & 255;
+      const k = keys[i];
+      if (commonSet.has(k)) continue;
+      const x = i % w, y = (i / w) | 0;
+      const r = k >> 16, g = (k >> 8) & 255, b = k & 255;
+      let best = -1, bd = Infinity;
+      for (let dy = -2; dy <= 2; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const nk = keys[yy * w + xx];           // pre-pass values:
+          if (!commonSet.has(nk)) continue;       // strays never vote
+          const dr = r - (nk >> 16), dg = g - ((nk >> 8) & 255), db = b - (nk & 255);
+          const dist = dr * dr + dg * dg + db * db;
+          if (dist < bd) { bd = dist; best = nk; }
+        }
       }
+      const t = best >= 0 ? best : globalNearest(k);
+      d[i * 4] = t >> 16; d[i * 4 + 1] = (t >> 8) & 255; d[i * 4 + 2] = t & 255;
     }
     c2d.putImageData(img, 0, 0);
   }
