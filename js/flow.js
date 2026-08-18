@@ -672,10 +672,16 @@ window.FF._grant = (id) => {
   gbtn.id = 'ff-grant-all-btn';
   gbtn.textContent = '\ud83c\udf81 all decals';
   gbtn.title = 'Grant every catalogue decal (dev)';
-  gbtn.style.cssText = 'position:fixed;left:10px;top:190px;z-index:9;'
+  // LANE GEOMETRY, not hardcoded pixels: slot 4 of the dev stack
+  // (tune, cockpit, studio, grant-all). A hardcoded top:190px put it
+  // under the HUD on a phone — invisible, which reads exactly like a
+  // button that was never added.
+  gbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 4);left:var(--lane-l);'
     + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
     + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
-    + 'font-family:var(--mono,ui-monospace,monospace);display:none;';
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
   document.body.appendChild(gbtn);
   gbtn.addEventListener('click', () => {
     const D = window.FF.decals, M = window.FF.melon;
@@ -1384,7 +1390,8 @@ function buildPause() {
   // FF.PIXELATE_W per frame; menus, HUD, and stick glass stay
   // native. Persisted so a verdict survives reloads; localStorage is
   // try/caught: file:// contexts can deny.
-  const PIX_MODES = [null, 320, 427, 512, 480, 640];
+  const PIX_MODES = [null, 320];   // LOCKED at 320 (Eddie ruling);
+                                   // FF.PIXELATE_W stays a dev tunable
   const pixLabel = (m) => (m === null ? 'VECTOR' : String(m));
   let pixIdx = 0;
   try {

@@ -34,6 +34,35 @@ const COLORS = {
   marker: 'rgba(255,255,255,0.35)',
 };
 
+// PIXEL 320 Phase 0.1: the world's static tones register into the
+// semantic palette at load, so grid-honesty telemetry and the suite
+// know every colour the renderer legitimately emits. Values are the
+// SAME literals — zero visual change; this is plumbing.
+if (window.FF && window.FF.palette) {
+  window.FF.palette.register('world', [COLORS.sky, COLORS.grid,
+    COLORS.terrainGrid, COLORS.ground, COLORS.rind, COLORS.marker]);
+}
+
+// PIXEL 320 Phase 1.1: in pixel mode, alpha-composited hairlines are
+// replaced by SOLID pre-composited tones (the same visual colour the
+// alpha produced over its background, computed once) — alpha blending
+// mints new colours per overlap, the exact stray class the honesty
+// budget exists to eliminate. The +0.5 hairline convention also
+// drops in pixel mode: it is a native-res crispness trick that is
+// ANTI-crisp on the integer pixel grid.
+const PX_GRID = {
+  base: '#0f0f0f',                       // 0.06 white over black sky
+  tier: ['#333333', '#292929', '#1f1f1f'], // 0.20/0.16/0.12 over sky
+  tBase: '#464646',                      // terrain grid over ground
+  tTier: ['#525252', '#4d4d4d', '#484848'],
+  marker: '#595959',                     // 0.35 white over black
+  tierW: [2, 2, 1],                      // integer widths at 320
+};
+if (window.FF && window.FF.palette) {
+  window.FF.palette.register('gridpx', [PX_GRID.base, ...PX_GRID.tier,
+    PX_GRID.tBase, ...PX_GRID.tTier, PX_GRID.marker]);
+}
+
 const GRID_SPACING = 100; // world px between grid lines
 // ---- Grid hierarchy: 1 / 50 / 100 / 200 m ----
 // (the 25m tier retired per Eddie, 2026-08-10 — one fewer band of
@@ -85,6 +114,8 @@ const BOT_PALETTE = [
   '#90c710', '#6bb31a', '#56c516', '#37a01c', '#1bc01b', '#24a93f',
   '#17ce54', '#25965a', '#20b378', '#22a07e', '#608e24',
 ];
+if (window.FF && window.FF.palette) window.FF.palette.register('bots', BOT_PALETTE); // Phase 0.1
+
 
 // Reused per-frame list of interpolated body poses (no per-frame GC).
 const drawList = [];
@@ -141,6 +172,17 @@ function createRenderer(canvas) {
     const cut = Math.max(12, (n / 2400) | 0);
     const commons = [];
     for (const [k, c] of hist) if (c >= cut) commons.push(k);
+    // Phase 0.2 telemetry: how many pixels this frame were NOT a
+    // dominant colour — the grid-honesty number the roadmap ratchets
+    // toward zero as painters convert. Published BEFORE the all-common
+    // early return: a perfectly honest frame reports strays 0, not
+    // silence. Read as FF.PX_STRAYS.
+    if (typeof window !== 'undefined') {
+      let covered = 0;
+      for (const k of commons) covered += hist.get(k) || 0;
+      window.FF.PX_STRAYS = { frame: n, distinct: hist.size,
+        commons: commons.length, strays: n - covered };
+    }
     if (!commons.length || commons.length === hist.size) return;
     // LOCAL RESOLVE (v2): an AA blend is a mixture of its own
     // neighbours, so each stray snaps to the nearest genuine colour
@@ -232,7 +274,8 @@ function createRenderer(canvas) {
       // 640 — the VGA tier, the truer Out Run / Super Hang-On read;
       // 380 is the Game-Boy-adjacent chunk. Sprites key on screen
       // radius, so switching width just triggers fresh bakes.
-      const pw = (window.FF.PIXELATE_W | 0) || 640;
+      const pw = (window.FF.PIXELATE_W | 0) || 320;  // LOCKED (Eddie): the
+                                    // OutRun-board width
       const ph = Math.max(1, Math.round(pw * height / Math.max(1, width)));
       if (pxCanvas.width !== pw) pxCanvas.width = pw;
       if (pxCanvas.height !== ph) pxCanvas.height = ph;
@@ -375,17 +418,23 @@ function createRenderer(canvas) {
     // equals collider, by construction rather than by discipline.
     // The wall strand is physics-only and never draws.
     const slabWorld = window.FF.slab.worldFor(state.terrain);
+    // PIXEL 320 Phase 1.2: vertex snap — in pixel mode every terrain
+    // vertex lands on the integer grid, so the rasterizer (and the
+    // vote) never adjudicates a half-pixel edge. World geometry is
+    // untouched; this is the screen mapping only.
+    const tsx = pxMode ? ((v) => Math.round(toScreenX(v))) : toScreenX;
+    const tsy = pxMode ? ((v) => Math.round(toScreenY(v))) : toScreenY;
     const traceSlabPath = () => {
       ctx.beginPath();
       for (const sl of slabWorld.slabs) {
         if (sl.isWall) continue;
         const t = sl.top, bo = sl.bottom;
-        ctx.moveTo(toScreenX(t[0].x), toScreenY(t[0].y));
+        ctx.moveTo(tsx(t[0].x), tsy(t[0].y));
         for (let i = 1; i < t.length; i++) {
-          ctx.lineTo(toScreenX(t[i].x), toScreenY(t[i].y));
+          ctx.lineTo(tsx(t[i].x), tsy(t[i].y));
         }
         for (let i = bo.length - 1; i >= 0; i--) {
-          ctx.lineTo(toScreenX(bo[i].x), toScreenY(bo[i].y));
+          ctx.lineTo(tsx(bo[i].x), tsy(bo[i].y));
         }
         ctx.closePath();
       }
@@ -393,6 +442,40 @@ function createRenderer(canvas) {
     traceSlabPath();
     ctx.fillStyle = COLORS.ground;
     ctx.fill();
+
+    // PIXEL 320 Phase 1.3: banded ground. Three tones from ONE law:
+    // the surface band and the underside band are bandColor() solves
+    // of the ground grey (+8 / -8 L*), so they register into the
+    // palette automatically and will follow Phase 5's light columns
+    // for free. Bands ride the slab polylines as integer strokes —
+    // the lit top and the shadowed underside that carry most of the
+    // period ground read. (Bayer dither is deferred to the sky bands
+    // of Phase 4, where gradients actually live.)
+    if (pxMode && window.FF.shading) {
+      const hi = window.FF.shading.bandColor(COLORS.ground, 8);
+      const lo = window.FF.shading.bandColor(COLORS.ground, -8);
+      ctx.save();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = hi;
+      ctx.beginPath();
+      for (const sl of slabWorld.slabs) {
+        if (sl.isWall) continue;
+        const t = sl.top;
+        ctx.moveTo(tsx(t[0].x), tsy(t[0].y) + 1);
+        for (let i = 1; i < t.length; i++) ctx.lineTo(tsx(t[i].x), tsy(t[i].y) + 1);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = lo;
+      ctx.beginPath();
+      for (const sl of slabWorld.slabs) {
+        if (sl.isWall) continue;
+        const bo = sl.bottom;
+        ctx.moveTo(tsx(bo[0].x), tsy(bo[0].y) - 1);
+        for (let i = 1; i < bo.length; i++) ctx.lineTo(tsx(bo[i].x), tsy(bo[i].y) - 1);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // DEBUG VOCABULARY COLOURING (FF.DEV_TERRAIN_COLORS = true):
     // repaint each segment's slab column in its chunk-kind tint —
@@ -462,10 +545,18 @@ function createRenderer(canvas) {
         const spk = state.spine.surfaceAt(k * lapA);
         if (!spk) continue;
         const wx = spk.x, wy = spk.y;
-        const sx = toScreenX(wx), sy = toScreenY(wy);
+        const sx = tsx(wx), sy = tsy(wy);
         // Post and flag are world objects: they scale with the lens.
-        ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 4 * zoom, 150 * zoom);
-        ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 26 * zoom, 14 * zoom);
+        // Pixel mode: integer geometry, 1px-minimum post.
+        if (pxMode) {
+          const pw2 = Math.max(1, Math.round(4 * zoom)), phh = Math.round(150 * zoom);
+          ctx.fillRect(sx - Math.round(2 * zoom), sy - phh, pw2, phh);
+          ctx.fillRect(sx - Math.round(2 * zoom), sy - phh,
+            Math.max(2, Math.round(26 * zoom)), Math.max(1, Math.round(14 * zoom)));
+        } else {
+          ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 4 * zoom, 150 * zoom);
+          ctx.fillRect(sx - 2 * zoom, sy - 150 * zoom, 26 * zoom, 14 * zoom);
+        }
       }
     }
 
@@ -1192,6 +1283,8 @@ function createRenderer(canvas) {
     3: [224, 160, 106],   // bronze
     0: [207, 232, 207],   // the rest: bone
   };
+if (window.FF && window.FF.palette) window.FF.palette.register('places', []); // Phase 0.1
+
   const PLACE_YOU = [57, 255, 95];
   const PLACE_SUF = [127, 163, 131];
 
@@ -1265,6 +1358,12 @@ function createRenderer(canvas) {
   // escaping). Stepped 32-angle rotation is a period artifact, kept
   // deliberately.
   let pxMode = false;                  // set by render() per frame
+  // Phase 2.1: during a sprite bake this holds the TARGET pixel
+  // radius, so pattern painters can simplify below legibility (a
+  // 16 px melon carries 3 bold stripes, not 6 fine ones). null
+  // outside bakes = full detail.
+  let bakeLodR = null;
+  const lodSimple = () => bakeLodR !== null && bakeLodR < 12;
   const SPRITE_ANGLES = 64;  // ruled up from 32: halves the settle-
                              // snap; past 64 adjacent frames bake
                              // near-identical pixels
@@ -1279,6 +1378,47 @@ function createRenderer(canvas) {
     }
     return sig;
   }
+  // Phase 2.2 — BAKE GUARANTEES, pure functions over index sprites so
+  // verify-px-honesty can unit-test them without a canvas. Both encode
+  // artist judgment the vote lacks:
+  //  * the silhouette never breaks: any body pixel touching
+  //    transparency (or the sprite border) becomes the rim tone — the
+  //    first rule of readable pixel art at small radius;
+  //  * the highlight never vanishes: if the vector render carried a
+  //    significant lightest tone that the vote erased, it is stamped
+  //    back (2 px at its source centroid) — the glint is the melon's
+  //    life at 16 px.
+  function pxRimGuarantee(idx, w, h, rimIdx) {
+    const src = idx.slice();
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x;
+        if (src[p] === 255) continue;
+        const edge = x === 0 || x === w - 1 || y === 0 || y === h - 1
+          || src[p - 1] === 255 || src[p + 1] === 255
+          || src[p - w] === 255 || src[p + w] === 255;
+        if (edge) idx[p] = rimIdx;
+      }
+    }
+  }
+  function pxHighlightGuarantee(idx, w, h, hiIdx, cx, cy) {
+    for (let i = 0; i < idx.length; i++) if (idx[i] === hiIdx) return false;
+    let best = -1, bd = Infinity;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const p = y * w + x;
+        if (idx[p] === 255) continue;
+        const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        if (d < bd) { bd = d; best = p; }
+      }
+    }
+    if (best < 0) return false;
+    idx[best] = hiIdx;
+    if (idx[best + 1] !== undefined && idx[best + 1] !== 255) idx[best + 1] = hiIdx;
+    return true;
+  }
+  window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee };
+
   function bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals) {
     const SS = 8, pad = 2;
     const spr = 2 * (rPx + pad);       // even square, body + pad
@@ -1288,6 +1428,20 @@ function createRenderer(canvas) {
     const btx = bc.getContext('2d');
     const zoomBake = (rPx * SS) / a;
     const half = (SS * SS) * 0.45;     // opacity vote threshold
+    // Phase 2.3 — INDEXED SPRITES: each frame is a Uint8 map of
+    // palette indices into a per-frame colour list, resolved to RGBA
+    // once now (identity), and re-resolvable against Phase 5's light
+    // columns later with zero re-bake. Guarantees run ON the index
+    // map. Rim tone derives from the law (registered via the Phase 0
+    // hook); the highlight is the lightest tone with real source
+    // area, tracked with its centroid during the vote.
+    bakeLodR = rPx;                    // Phase 2.1: painters simplify
+    const sh = window.FF.shading;
+    const rimHex = sh ? sh.bandColor(color, -22) : '#101010';
+    const rimInt = parseInt(rimHex.slice(1), 16);
+    const lstarOfInt = (kk) => sh
+      ? sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255)
+      : ((kk >> 16) & 255);
     const frames = [];
     for (let k = 0; k < SPRITE_ANGLES; k++) {
       btx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1295,13 +1449,18 @@ function createRenderer(canvas) {
       drawMelonVector(btx, big / 2, big / 2, k * 2 * Math.PI / SPRITE_ANGLES,
         null, color, zoomBake, seedKey, a, b, fruit, decals);
       let src;
-      try { src = btx.getImageData(0, 0, big, big); } catch (e) { return null; }
+      try { src = btx.getImageData(0, 0, big, big); }
+      catch (e) { bakeLodR = null; return null; }
       const sd = src.data;
-      const fc = document.createElement('canvas');
-      fc.width = spr; fc.height = spr;
-      const ftx = fc.getContext('2d');
-      const out = ftx.createImageData(spr, spr);
-      const od = out.data;
+      const colors = [];
+      const colorIdx = new Map();
+      const cOf = (kk) => {
+        let ci = colorIdx.get(kk);
+        if (ci === undefined) { ci = colors.length; colors.push(kk); colorIdx.set(kk, ci); }
+        return ci;
+      };
+      const idx = new Uint8Array(spr * spr).fill(255);
+      const srcHist = new Map();       // tone -> {c, sx, sy} for centroid
       for (let y = 0; y < spr; y++) {
         for (let x = 0; x < spr; x++) {
           const tally = new Map();
@@ -1314,20 +1473,49 @@ function createRenderer(canvas) {
               opaque++;
               const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
               tally.set(kk, (tally.get(kk) || 0) + 1);
+              let hrec = srcHist.get(kk);
+              if (!hrec) { hrec = { c: 0, sx: 0, sy: 0 }; srcHist.set(kk, hrec); }
+              hrec.c++; hrec.sx += x; hrec.sy += y;
             }
           }
-          const o4 = (y * spr + x) * 4;
           if (opaque >= half) {
             let bk = 0, bc2 = -1;
             for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
-            od[o4] = bk >> 16; od[o4 + 1] = (bk >> 8) & 255;
-            od[o4 + 2] = bk & 255; od[o4 + 3] = 255;
+            idx[y * spr + x] = cOf(bk);
           }
         }
       }
+      // Guarantee 1: unbroken silhouette in the rim tone.
+      pxRimGuarantee(idx, spr, spr, cOf(rimInt));
+      // Guarantee 2: the lightest significant source tone survives.
+      let hiTone = -1, hiL = -1, hiRec = null;
+      for (const [kk, rec] of srcHist) {
+        if (rec.c < SS * SS * 2) continue;         // needs real area
+        const L = lstarOfInt(kk);
+        if (L > hiL) { hiL = L; hiTone = kk; hiRec = rec; }
+      }
+      if (hiTone >= 0 && hiRec) {
+        pxHighlightGuarantee(idx, spr, spr, cOf(hiTone),
+          hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
+      }
+      // Resolve indices -> RGBA (identity resolve until Phase 5).
+      const fc = document.createElement('canvas');
+      fc.width = spr; fc.height = spr;
+      const ftx = fc.getContext('2d');
+      const out = ftx.createImageData(spr, spr);
+      const od = out.data;
+      for (let p = 0; p < idx.length; p++) {
+        const ci = idx[p];
+        if (ci === 255) continue;
+        const kk = colors[ci];
+        const o4 = p * 4;
+        od[o4] = kk >> 16; od[o4 + 1] = (kk >> 8) & 255;
+        od[o4 + 2] = kk & 255; od[o4 + 3] = 255;
+      }
       ftx.putImageData(out, 0, 0);
-      frames.push(fc);
+      frames.push({ canvas: fc, idx, colors });
     }
+    bakeLodR = null;
     return { frames, spr };
   }
   function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals) {
@@ -1358,7 +1546,7 @@ function createRenderer(canvas) {
           ctx.scale(1 + squash.squash, 1 - squash.squash);
           ctx.rotate(-(squash.squashAngle + Math.PI / 2));
         }
-        ctx.drawImage(e.frames[k], -e.spr / 2, -e.spr / 2);
+        ctx.drawImage(e.frames[k].canvas, -e.spr / 2, -e.spr / 2);
         ctx.restore();
         return;
       }
@@ -2243,7 +2431,8 @@ function createRenderer(canvas) {
   function patternRaster(key, fruit, a, b, scale) {
     const species = fruit || 'watermelon';
     const rs = Math.max(1, Math.min(RSCALE_MAX, scale || RSCALE));
-    const ck = key + '|' + species + '|' + (a | 0) + '|' + rs.toFixed(2);
+    const ck = key + '|' + species + '|' + (a | 0) + '|' + rs.toFixed(2)
+      + (lodSimple() ? '|L1' : '');   // Phase 2.1: LOD keys its own raster
     let rst = rasterCache.get(ck);
     if (rst !== undefined) {
       // TOUCH: delete + re-insert moves this key to the young end of
@@ -2308,12 +2497,14 @@ function createRenderer(canvas) {
     for (let i = 0; i < key.length; i++) { hsh ^= key.charCodeAt(i); hsh = Math.imul(hsh, 16777619); }
     const rng = window.FF.mulberry32(hsh >>> 0);
     const nz = makeNoise2((hsh ^ 0x51CE) >>> 0);
-    const nStripes = 5 + (rng() * 2 | 0);
+    let nStripes = 5 + (rng() * 2 | 0);
+    if (lodSimple()) nStripes = 3;   // Phase 2.1: 3 bold stripes at 16 px
     const centers = [];
     for (let i = 0; i < nStripes; i++) {
       centers.push((i + 0.5) / nStripes * Math.PI + (rng() - 0.5) * 0.22);
     }
-    const halfW = (0.58 + rng() * 0.14) * (Math.PI / nStripes) / 2; // stripe half-width in longitude
+    let halfW = (0.58 + rng() * 0.14) * (Math.PI / nStripes) / 2; // stripe half-width in longitude
+    if (lodSimple()) halfW *= 1.35;  // Phase 2.1: bolder at small radius
     // Per-seed variety lives in the warp and field frequencies; the
     // level-set threshold stays FIXED (coverage is sensitive to it,
     // and every melon should sit in the same visual weight band).
@@ -2566,7 +2757,8 @@ function createRenderer(canvas) {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.56)';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 0.8; ctx.stroke(paths.veins.fine);
+    if (!lodSimple()) { ctx.lineWidth = 0.8; ctx.stroke(paths.veins.fine); }
+    // Phase 2.1: fine veins are sub-pixel at 16 px — mush, not detail.
     ctx.lineWidth = 1.4; ctx.stroke(paths.veins.main);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.fill(paths.pores);
@@ -2724,8 +2916,10 @@ function createRenderer(canvas) {
   function drawNet(ctx, a, b, key) {
     const paths = netPaths(key, a, b);
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
-    ctx.fill(paths.mottle);
+    if (!lodSimple()) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+      ctx.fill(paths.mottle);   // Phase 2.1: mottle is noise at 16 px
+    }
     ctx.fillStyle = 'rgba(255, 255, 255, 0.31)';
     ctx.fill(paths.sutures);
     // Toward white, not cream: the ridges must survive the lit cap
@@ -2759,23 +2953,24 @@ function createRenderer(canvas) {
     const spacing = TERRAIN_GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
 
-    ctx.strokeStyle = COLORS.terrainGrid;
+    ctx.strokeStyle = pxMode ? PX_GRID.tBase : COLORS.terrainGrid;
     ctx.lineWidth = 1;
     ctx.beginPath();
+    const half = pxMode ? 0 : 0.5;
     for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
       if (tierOf(wx / 100) >= 0) continue;
-      const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
+      const sx = Math.round((wx - cam.x) * zoom + w / 2) + half;
       ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
     }
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
-      const y = Math.round(sy) + 0.5;
+      const y = Math.round(sy) + half;
       ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
 
     for (let t = TIER_M.length - 1; t >= 0; t--) {
-      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t] * 0.6})`;
-      ctx.lineWidth = TIER_WIDTH[t];
+      ctx.strokeStyle = pxMode ? PX_GRID.tTier[t] : `rgba(255,255,255,${TIER_ALPHA[t] * 0.6})`;
+      ctx.lineWidth = pxMode ? PX_GRID.tierW[t] : TIER_WIDTH[t];
       ctx.beginPath();
       for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
         if (tierOf(wx / 100) !== t) continue;
@@ -2795,30 +2990,31 @@ function createRenderer(canvas) {
     const spacing = GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
 
-    ctx.strokeStyle = `rgba(255,255,255,${BASE_ALPHA})`;
+    ctx.strokeStyle = pxMode ? PX_GRID.base : `rgba(255,255,255,${BASE_ALPHA})`;
     ctx.lineWidth = 1;
     ctx.beginPath();
+    const half = pxMode ? 0 : 0.5;
     for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
       if (tierOf(wx / 100) >= 0) continue; // drawn by a tier pass
-      const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
+      const sx = Math.round((wx - camX) * zoom + w / 2) + half;
       ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
     }
     // Horizontal (elevation) lines: uniform hairlines. The tier
     // hierarchy is DISTANCE-ONLY by design — depth milestones tested
     // as noise, so the vertical axis stays a plain ruler.
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
-      const y = Math.round(sy) + 0.5;
+      const y = Math.round(sy) + half;
       ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
 
     for (let t = TIER_M.length - 1; t >= 0; t--) {
-      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t]})`;
-      ctx.lineWidth = TIER_WIDTH[t];
+      ctx.strokeStyle = pxMode ? PX_GRID.tier[t] : `rgba(255,255,255,${TIER_ALPHA[t]})`;
+      ctx.lineWidth = pxMode ? PX_GRID.tierW[t] : TIER_WIDTH[t];
       ctx.beginPath();
       for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
         if (tierOf(wx / 100) !== t) continue;
-        const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
+        const sx = Math.round((wx - camX) * zoom + w / 2) + half;
         ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
       }
       ctx.stroke();
@@ -2828,7 +3024,7 @@ function createRenderer(canvas) {
   function drawMarkers(ctx, state, camX, w, toScreenX, toScreenY, zoom) {
     const SPACING = 200;
     const span = (w / 2) / zoom;
-    ctx.fillStyle = COLORS.marker;
+    ctx.fillStyle = pxMode ? PX_GRID.marker : COLORS.marker;
     ctx.textAlign = 'center';
     // In TRACK mode the numbers are LAP POSITION, not odometer: they
     // wrap every lap length, so the start line reads 0 on every lap

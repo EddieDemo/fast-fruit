@@ -176,6 +176,36 @@ const SCHEMA = [
 ];
 
 // ---- Derived sun (recomputed on read; cheap) ----
+// PIXEL 320 Phase 0.1: band softness above zero is a gradient — the
+// forbidden move in pixel mode. Pinned to hard cel edges whenever the
+// pixelated renderer is active; the studio slider still works in
+// vector mode. Exported as _effSoft for verify-px-honesty.
+function effSoft(v) {
+  return (typeof window !== 'undefined' && window.FF && window.FF.PIXELATE) ? 0 : v;
+}
+
+// PIXEL 320 Phase 0.5 — THE LAW SPEAKS PALETTE (R4 ruled: shared
+// pigments acceptable, variety preserved via a generous menu). In
+// pixel mode the law's outputs land on finite lattices; in vector
+// mode nothing changes. Two mechanisms:
+//  * seeded anchors quantize their h/s/l draws to a lattice inside
+//    the species band (6 x 3 x 4 nodes = up to 72 pigments per band
+//    — collisions possible, variety generous). The seed still cannot
+//    lie: same draw, shorter menu.
+//  * ramp solves step their L* target to 4-unit rungs (and offset
+//    hue/sat to coarse grids), so band tones land on a finite ladder
+//    instead of a continuum.
+// Solver caches key on the mode: toggling mid-session must never
+// serve the other mode's colour.
+function isPxMode() {
+  return typeof window !== 'undefined' && window.FF && !!window.FF.PIXELATE;
+}
+function qLattice(v, lo, hi, nodes) {
+  if (hi <= lo || nodes <= 1) return lo;
+  const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  return lo + Math.round(t * (nodes - 1)) / (nodes - 1) * (hi - lo);
+}
+
 function sun() {
   // Spherical -> unit vector. The screen-plane component shrinks by
   // cos(elevation) as the light lifts toward the viewer, so the total
@@ -229,12 +259,14 @@ function rgbHex(rgb) {
 const bandCache = new Map();
 function bandColor(hex, dL) {
   if (!dL) return hex;
-  const ck = hex + '|' + dL;
+  const pxq = isPxMode();
+  const ck = hex + '|' + dL + (pxq ? '|px' : '');
   let c = bandCache.get(ck);
   if (c) return c;
   const [r0, g0, b0] = hexRgb(hex);
   const Lb = lstarOf(r0, g0, b0);
-  const Lt = Math.max(6, Math.min(92, Lb + dL));
+  let Lt = Math.max(6, Math.min(92, Lb + dL));
+  if (pxq) Lt = Math.round(Lt / 4) * 4;   // Phase 0.5: 4-L* rungs
   const deficit = Math.abs((Lb + dL) - Lt);
   let [h, s, l] = rgbToHsl(r0, g0, b0);
   if (dL > 0) {
@@ -249,6 +281,7 @@ function bandColor(hex, dL) {
   }
   c = rgbHex(hslToRgb(h, s, (lo + hi) / 2));
   bandCache.set(ck, c);
+  if (window.FF.palette) window.FF.palette.registerTone('law', c); // Phase 0.1
   return c;
 }
 
@@ -256,7 +289,9 @@ function bandColor(hex, dL) {
 // CIE L* so steps stay perceptually even across hues. Cached.
 const offsetCache = new Map();
 function offsetColor(hex, dL, dH, dS) {
-  const ck = hex + '|' + dL.toFixed(1) + '|' + dH.toFixed(1) + '|' + dS.toFixed(1);
+  const pxq = isPxMode();
+  const ck = hex + '|' + dL.toFixed(1) + '|' + dH.toFixed(1) + '|' + dS.toFixed(1)
+    + (pxq ? '|px' : '');
   let c = offsetCache.get(ck);
   if (c) return c;
   const [r0, g0, b0] = hexRgb(hex);
@@ -264,7 +299,12 @@ function offsetColor(hex, dL, dH, dS) {
   let [h, sat] = rgbToHsl(r0, g0, b0);
   h = ((h + dH) % 360 + 360) % 360;
   sat = Math.max(0, Math.min(1, sat + dS / 100));
-  const Lt = Math.max(4, Math.min(96, Lb + dL));
+  if (pxq) {                               // Phase 0.5: coarse grids
+    h = Math.round(h / 10) * 10 % 360;
+    sat = Math.round(sat * 20) / 20;
+  }
+  let Lt = Math.max(4, Math.min(96, Lb + dL));
+  if (pxq) Lt = Math.round(Lt / 4) * 4;
   let lo = 0.02, hi = 0.98;
   for (let i = 0; i < 18; i++) {
     const mid = (lo + hi) / 2;
@@ -274,6 +314,7 @@ function offsetColor(hex, dL, dH, dS) {
   c = rgbHex(hslToRgb(h, sat, (lo + hi) / 2));
   if (offsetCache.size > 2000) offsetCache.clear();
   offsetCache.set(ck, c);
+  if (window.FF.palette) window.FF.palette.registerTone('law', c); // Phase 0.1
   return c;
 }
 
@@ -407,11 +448,18 @@ function seededBandColor(band, key, seed) {
   let h = 2166136261;
   for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
   const rng = window.FF.mulberry32(((seed >>> 0) ^ (h >>> 0)) >>> 0);
-  const hue = band.h[0] + rng() * (band.h[1] - band.h[0]);
-  const sat = band.s[0] + rng() * (band.s[1] - band.s[0]);
-  const lig = band.l[0] + rng() * (band.l[1] - band.l[0]);
+  let hue = band.h[0] + rng() * (band.h[1] - band.h[0]);
+  let sat = band.s[0] + rng() * (band.s[1] - band.s[0]);
+  let lig = band.l[0] + rng() * (band.l[1] - band.l[0]);
+  if (isPxMode()) {                        // Phase 0.5 anchor lattice
+    hue = qLattice(hue, band.h[0], band.h[1], 6);
+    sat = qLattice(sat, band.s[0], band.s[1], 3);
+    lig = qLattice(lig, band.l[0], band.l[1], 4);
+  }
   const [r, g, b] = hslToRgb(hue, sat, lig);
-  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+  const hex = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+  if (window.FF.palette) window.FF.palette.registerTone('anchors', hex); // Phase 0.1
+  return hex;
 }
 
 function anchorColor(species, seed) {
@@ -487,11 +535,11 @@ function bands() {
   // highlight. Base isn't a band — it's the body fill.
   const out = [];
   if (P.shadowOn) {
-    out.push({ key: 'shadow', tau: P.shadowTau, soft: P.shadowSoft, inv: true,
+    out.push({ key: 'shadow', tau: P.shadowTau, soft: effSoft(P.shadowSoft), inv: true,
       fillSlot: P.shadowFillSlot, patSlot: P.shadowPatSlot });
   }
   if (P.highlightOn) {
-    out.push({ key: 'highlight', tau: P.highlightTau, soft: P.highlightSoft, inv: false,
+    out.push({ key: 'highlight', tau: P.highlightTau, soft: effSoft(P.highlightSoft), inv: false,
       fillSlot: P.highlightFillSlot, patSlot: P.highlightPatSlot });
   }
   return out;
@@ -815,6 +863,7 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc,
+  _effSoft: effSoft, _qLattice: qLattice, _seededBandColor: seededBandColor,
 };
 
 })();
