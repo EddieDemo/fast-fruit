@@ -2972,6 +2972,35 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // in device pixels per world pixel — the menu knows its CSS size and
   // devicePixelRatio, and nothing else can work it out for it.
   window.FF.drawMelonStandalone = function (ctx2, angle, a, b, color, seedKey, fruit, scale, decals, decalPreview) {
+    // PIXEL 320 (Eddie, 2026-08-18): menu and finish melons render
+    // through the SAME bake pipeline as the race. The melon keeps its
+    // displayed footprint; its pixel CHUNK matches the 320 world — it
+    // gets the pixels it would occupy on a 320-wide screen (scale is
+    // the caller's device px per world px, so the fraction of the
+    // real device width converts directly), nearest-upscaled to the
+    // display size. Same sprite cache, same 64 angles, same
+    // guarantees — the portrait IS the racing melon. decalPreview
+    // (the editor's live hover) stays vector: preview churn would
+    // thrash bakes, and an editing surface earns native fidelity.
+    if (window.FF.PIXELATE && !decalPreview && typeof document !== 'undefined') {
+      const devW = ((typeof window !== 'undefined' && window.innerWidth) || 1600)
+        * ((typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+      const rPx = Math.max(5, Math.round((a * (scale || 1)) * 320 / Math.max(1, devW)));
+      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
+      if (e) {
+        const TAU = Math.PI * 2;
+        const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
+          + SPRITE_ANGLES) % SPRITE_ANGLES;
+        const dispScale = (a * (scale || 1)) / rPx;
+        const half = (e.spr / 2) * dispScale;
+        ctx2.save();
+        ctx2.imageSmoothingEnabled = false;
+        ctx2.drawImage(e.frames[k].canvas, -half, -half,
+          e.spr * dispScale, e.spr * dispScale);
+        ctx2.restore();
+        return;
+      }
+    }
     shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit, scale, decals, decalPreview);
   };
 
