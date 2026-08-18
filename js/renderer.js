@@ -710,7 +710,12 @@ function createRenderer(canvas) {
       // rig solves it), so the footprint stretches on away-slopes,
       // narrows with pose, hugs the local tangent, and is CLIPPED to
       // the terrain fill — it can never bleed past a cliff edge.
-      if (RIG.P.castShadow) {
+      if (RIG.P.castShadow && !pxMode) {
+        // px mode (Eddie ruling, 2026-08-18): NO body shadows. Both
+        // passes are alpha multiplication — the forbidden move — and
+        // the contact pass painted translucent black OVER the baked
+        // sprite's underside, minting the stray black/olive pixels
+        // measured on device. Vector mode keeps its shadows.
         const wyG0 = surfY(state, dxw, dyw);
         if (wyG0 !== null) {
           const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / 100);
@@ -774,7 +779,7 @@ function createRenderer(canvas) {
       }
       drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals);
       // ---- Contact shadow: the body darkens near its ground touch ----
-      if (RIG.P.contactShadow) {
+      if (RIG.P.contactShadow && !pxMode) {
         const wyG = surfY(state, dxw, dyw);
         if (wyG !== null) {
           const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);

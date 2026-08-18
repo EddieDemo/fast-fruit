@@ -149,6 +149,13 @@ function createTrackProvider(def) {
       if (pLo === this._pLo && pHi === this._pHi) return;
       this._pLo = pLo;
       this._pHi = pHi;
+      // REV (2026-08-18): every rebuild replaces the branch ARRAYS,
+      // so any spread captured from polys() goes stale. Consumers
+      // watch this counter and recapture. Without it, state.terrain
+      // kept the race-start snapshot forever: laps 2+ lost every
+      // branch strand — gallery decks, aprons, bowls — invisible AND
+      // non-colliding.
+      this.rev = (this.rev || 0) + 1;
       this.pts.length = 0;
       this.branches.length = 0;
       for (let p = pLo; p <= pHi; p++) {

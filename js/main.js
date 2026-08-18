@@ -38,6 +38,8 @@ function createEndlessProvider(seed) {
     // (stage 1 moved the sentinel out of the point list; it is
     // physics-only — slab.js collides it, the renderer skips it).
     polys() { return [gen.pts, gen.wall, ...gen.branches]; },
+    // Endless branches only ever append; the count IS the revision.
+    get rev() { return gen.branches.length; },
     reset() { gen.reset(); },
     update(loX, hiX) { gen.ensure(hiX); gen.prune(loX); },
   };
@@ -77,6 +79,7 @@ function respawnRace(opts) {
   // first-poly-wins rule makes the PRIMARY strand canonical for
   // overlapped spine intervals — then the wall, then branches.
   state.terrain = provider.polys ? provider.polys() : [provider.pts];
+  lastProviderRev = provider.rev !== undefined ? provider.rev : -1;
   state.period = provider.period;
   // THE SPINE IS BUILT BEFORE THE GRID (stage 2): grid placement now
   // asks the spine for the surface, so the spine must exist before
@@ -503,6 +506,8 @@ const MAX_FRAME_DT = 0.1; // clamp huge gaps (tab switch) — avoid spiral of de
 let accumulator = 0;
 let last = performance.now();
 
+let lastProviderRev = -1;
+
 function frame(now) {
   let dtFrame = (now - last) / 1000;
   last = now;
@@ -515,6 +520,19 @@ function frame(now) {
     if (b.melon.x > hiX) hiX = b.melon.x;
   }
   provider.update(loX - KEEP_BEHIND, hiX + GEN_AHEAD);
+  // TERRAIN RECAPTURE (2026-08-18): polys() returns a SPREAD — the
+  // live pts reference plus whatever branch arrays exist right now.
+  // Rebuilds replace those arrays, so the captured spread must be
+  // refreshed when the provider says so, and the spine (built FROM
+  // the capture) with it. Changes land outside body reach by the
+  // KEEP_BEHIND / GEN_AHEAD margins, so the swap is physically
+  // inert for every live body.
+  if (provider.rev !== undefined && provider.rev !== lastProviderRev) {
+    lastProviderRev = provider.rev;
+    state.terrain = provider.polys ? provider.polys() : [provider.pts];
+    state.spine = window.FF.trackSpace.metricSpine(SPAWN.x,
+      provider.lapArc || null, state.terrain);
+  }
 
   const stepDt = 1 / CONFIG.physicsHz;
   accumulator += dtFrame;
