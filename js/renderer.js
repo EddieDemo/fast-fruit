@@ -3057,12 +3057,21 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         const TAU = Math.PI * 2;
         const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
           + SPRITE_ANGLES) % SPRITE_ANGLES;
-        const dispScale = (a * (scale || 1)) / rPx;
-        const half = (e.spr / 2) * dispScale;
+        // THE FRAME IS WORLD UNITS, NOT DISPLAY PIXELS. Every caller
+        // (editor portrait, studio pin, finish rows) has ALREADY
+        // applied translate(centre) + scale(fit) before calling — the
+        // vector painter draws in world coordinates inside that
+        // transform. Sizing the blit in display px therefore
+        // multiplied by `fit` a second time and drew a hugely
+        // magnified corner (measured on device, 2026-08-18).
+        // The sprite's rPx maps to the body's semi-major `a`, so one
+        // sprite pixel is a/rPx WORLD px.
+        const worldPerPx = a / rPx;
+        const halfW = (e.spr / 2) * worldPerPx;
         ctx2.save();
         ctx2.imageSmoothingEnabled = false;
-        ctx2.drawImage(e.frames[k].canvas, -half, -half,
-          e.spr * dispScale, e.spr * dispScale);
+        ctx2.drawImage(e.frames[k].canvas, -halfW, -halfW,
+          e.spr * worldPerPx, e.spr * worldPerPx);
         ctx2.restore();
         return;
       }
