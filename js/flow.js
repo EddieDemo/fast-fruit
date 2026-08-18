@@ -698,6 +698,43 @@ window.FF._grant = (id) => {
     show: () => { gbtn.style.display = ''; },
     hide: () => { gbtn.style.display = 'none'; },
   });
+
+  // PIXEL CAPTURE (Eddie, 2026-08-18): saves the ACTUAL low-res
+  // buffer as a PNG — ground truth for pixel-look iteration. Lane
+  // slot 5, same gate. On tap: downloads (or opens, where mobile
+  // blocks downloads) the current frame's 320 buffer; disabled
+  // feedback when pixel mode is off.
+  const cbtn = document.createElement('button');
+  cbtn.id = 'ff-px-capture-btn';
+  cbtn.textContent = '\ud83d\udcf7 px capture';
+  cbtn.title = 'Save the live 320 buffer as PNG (dev)';
+  cbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 5);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  document.body.appendChild(cbtn);
+  cbtn.addEventListener('click', () => {
+    const url = window.FF._pxCapture && window.FF._pxCapture();
+    if (!url) {
+      cbtn.textContent = '\u2014 pixel mode off';
+      setTimeout(() => { cbtn.textContent = '\ud83d\udcf7 px capture'; }, 1400);
+      return;
+    }
+    const a2 = document.createElement('a');
+    a2.href = url;
+    a2.download = 'ff-px-' + Date.now() + '.png';
+    document.body.appendChild(a2);
+    a2.click();
+    a2.remove();
+    cbtn.textContent = '\u2713 saved';
+    setTimeout(() => { cbtn.textContent = '\ud83d\udcf7 px capture'; }, 1400);
+  });
+  window.FF.devtools.register({
+    show: () => { cbtn.style.display = ''; },
+    hide: () => { cbtn.style.display = 'none'; },
+  });
 })();
 window.FF._dress = (...ids) => {
   const M = window.FF.melon, D = window.FF.decals;

@@ -443,39 +443,12 @@ function createRenderer(canvas) {
     ctx.fillStyle = COLORS.ground;
     ctx.fill();
 
-    // PIXEL 320 Phase 1.3: banded ground. Three tones from ONE law:
-    // the surface band and the underside band are bandColor() solves
-    // of the ground grey (+8 / -8 L*), so they register into the
-    // palette automatically and will follow Phase 5's light columns
-    // for free. Bands ride the slab polylines as integer strokes —
-    // the lit top and the shadowed underside that carry most of the
-    // period ground read. (Bayer dither is deferred to the sky bands
-    // of Phase 4, where gradients actually live.)
-    if (pxMode && window.FF.shading) {
-      const hi = window.FF.shading.bandColor(COLORS.ground, 8);
-      const lo = window.FF.shading.bandColor(COLORS.ground, -8);
-      ctx.save();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = hi;
-      ctx.beginPath();
-      for (const sl of slabWorld.slabs) {
-        if (sl.isWall) continue;
-        const t = sl.top;
-        ctx.moveTo(tsx(t[0].x), tsy(t[0].y) + 1);
-        for (let i = 1; i < t.length; i++) ctx.lineTo(tsx(t[i].x), tsy(t[i].y) + 1);
-      }
-      ctx.stroke();
-      ctx.strokeStyle = lo;
-      ctx.beginPath();
-      for (const sl of slabWorld.slabs) {
-        if (sl.isWall) continue;
-        const bo = sl.bottom;
-        ctx.moveTo(tsx(bo[0].x), tsy(bo[0].y) - 1);
-        for (let i = 1; i < bo.length; i++) ctx.lineTo(tsx(bo[i].x), tsy(bo[i].y) - 1);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
+    // Phase 1.3 banding REVERTED (Eddie, 2026-08-18): at +/-8 L* the
+    // bands were the visual signature of anti-aliasing along every
+    // terrain silhouette — a 1-2 px intermediate tone is edge
+    // smoothing, whatever the intent. If banding returns it must be
+    // contrasty enough to read as paint, and that is Eddie's eye's
+    // call against real device captures.
 
     // DEBUG VOCABULARY COLOURING (FF.DEV_TERRAIN_COLORS = true):
     // repaint each segment's slab column in its chunk-kind tint —
@@ -701,18 +674,34 @@ function createRenderer(canvas) {
         const wy = surfY(state, dxw, dyw);
         if (wy !== null) {
           const baseY = toScreenY(wy) + 34 + Math.round(150 * zoom);
+          const nmCol = d.isPlayer ? '#00ff00' : nameColor(d.name); // sacred green lives HERE now
+          if (pxMode && window.FF.pxfont) {
+            // Phase 3.1: canvas text is mush at 320 — the bitmap
+            // font is the ONLY in-world text. Names register as
+            // legitimate tones so the honesty budget stays truthful.
+            const PF = window.FF.pxfont;
+            if (window.FF.palette) window.FF.palette.registerTone('names', nmCol);
+            PF.draw(ctx, d.name, sx - PF.measure(d.name, 1) / 2,
+              baseY - 5, 1, nmCol);
+            if (d.pilot && nameplateHasRoom(d, sx)) {
+              const sub = d.isPlayer ? '#6dac75' : '#5d7060'; // pre-composited
+              PF.draw(ctx, d.pilot, sx - PF.measure(d.pilot, 1) / 2,
+                baseY + 3, 1, sub);
+            }
+          } else {
           ctx.font = '700 14px "Geist Mono", ui-monospace, monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'alphabetic';
           // Bots wear seeded BRIGHT name colors (the melons are all
           // green now, so the names carry the color identity instead);
           // the player's name keeps their sacred green.
-          ctx.fillStyle = d.isPlayer ? '#00ff00' : nameColor(d.name); // sacred green lives HERE now
+          ctx.fillStyle = nmCol;
           ctx.fillText(d.name, sx, baseY);
           if (d.pilot && nameplateHasRoom(d, sx)) {
             ctx.font = '400 10px "Geist Mono", ui-monospace, monospace';
             ctx.fillStyle = d.isPlayer ? 'rgba(140,220,150,0.78)' : 'rgba(150,180,155,0.62)';
             ctx.fillText(d.pilot, sx, baseY + 13);
+          }
           }
         }
       }
@@ -1325,6 +1314,22 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // that presence for the field behind them.
     const numAlpha = loud ? 0.62 : 0.42;
     const sufAlpha = loud ? 0.45 : 0.30;
+    if (pxMode && window.FF.pxfont) {
+      // Phase 3.1: the ordinal in the bitmap font — numeral scale 2
+      // for the podium/player, 1 for the field; alphas become solid
+      // pre-composited tones (over the black sky these labels live
+      // against). The shoulder convention survives at pixel scale.
+      const PF = window.FF.pxfont;
+      const scN = loud ? 2 : 1;
+      const solid = (rgb, al) => '#' + [0, 1, 2].map((i) =>
+        Math.round(rgb[i] * al).toString(16).padStart(2, '0')).join('');
+      const wNum2 = PF.measure(num, scN), wSuf2 = PF.measure(suf, 1);
+      const x1 = Math.round(sx - (wNum2 + 1 + wSuf2) / 2);
+      const y1 = Math.round(sy - 100 * zoom) - 3 * scN;
+      PF.draw(ctx, num, x1, y1, scN, solid(c, numAlpha));
+      PF.draw(ctx, suf, x1 + wNum2 + 1, y1 - 2, 1, solid(s, sufAlpha));
+      return;
+    }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.font = fNum;
@@ -1363,7 +1368,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // 16 px melon carries 3 bold stripes, not 6 fine ones). null
   // outside bakes = full detail.
   let bakeLodR = null;
-  const lodSimple = () => bakeLodR !== null && bakeLodR < 12;
+  // Ruling pending real captures (Eddie, 2026-08-18): the simplified
+  // pattern tier is OFF by default — at 320 every melon fell under
+  // the 12 px cutoff, so LOD silently restyled the whole cast. Tune
+  // with FF.PX_LOD_R (e.g. 12) against dev-lane captures.
+  const lodSimple = () => bakeLodR !== null
+    && bakeLodR < ((window.FF.PX_LOD_R | 0) || 0);
   const SPRITE_ANGLES = 64;  // ruled up from 32: halves the settle-
                              // snap; past 64 adjacent frames bake
                              // near-identical pixels
@@ -1418,6 +1428,13 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     return true;
   }
   window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee };
+  // Dev-lane capture (Eddie, 2026-08-18): the actual 320 buffer as a
+  // PNG data URL — ground truth for visual iteration, because PIL
+  // reconstructions passed proofs while the real device regressed.
+  window.FF._pxCapture = () => {
+    try { return pxCanvas ? pxCanvas.toDataURL('image/png') : null; }
+    catch (e) { return null; }
+  };
 
   function bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals) {
     const SS = 8, pad = 2;
@@ -1437,8 +1454,6 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // area, tracked with its centroid during the vote.
     bakeLodR = rPx;                    // Phase 2.1: painters simplify
     const sh = window.FF.shading;
-    const rimHex = sh ? sh.bandColor(color, -22) : '#101010';
-    const rimInt = parseInt(rimHex.slice(1), 16);
     const lstarOfInt = (kk) => sh
       ? sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255)
       : ((kk >> 16) & 255);
@@ -1485,8 +1500,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
           }
         }
       }
-      // Guarantee 1: unbroken silhouette in the rim tone.
-      pxRimGuarantee(idx, spr, spr, cOf(rimInt));
+      // Guarantee 1 REVERTED (Eddie, 2026-08-18): eating the outer
+      // body ring into a rim the art never had (inkMode 'none') read
+      // as a new outline AND as shrinkage (~12% of an 18 px melon).
+      // If a rim ever returns it must grow OUTWARD, and it is a
+      // design ruling, not an engineering default. The pure fn stays
+      // exported for that day.
       // Guarantee 2: the lightest significant source tone survives.
       let hiTone = -1, hiL = -1, hiRec = null;
       for (const [kk, rec] of srcHist) {
@@ -3057,8 +3076,15 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
           const wx = a.x + (b.x - a.x) * t2, wy = a.y + (b.y - a.y) * t2;
           const m = labelM(sv);
           const t = tierOf(m);
-          ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
-          ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
+          const mtxt = t >= 0 && m !== 0 ? `${m}M` : `${m}`;
+          if (pxMode && window.FF.pxfont) {
+            const PF = window.FF.pxfont;
+            PF.draw(ctx, mtxt, Math.round(toScreenX(wx)) - PF.measure(mtxt, 1) / 2,
+              Math.round(toScreenY(wy)) + 8, 1, PX_GRID.marker);
+          } else {
+            ctx.font = `${t >= 0 ? TIER_FONT[t] : BASE_FONT}px ui-monospace, monospace`;
+            ctx.fillText(t >= 0 && m !== 0 ? `${m}m` : `${m}`, toScreenX(wx), toScreenY(wy) + 16);
+          }
         }
       }
     }

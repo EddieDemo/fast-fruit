@@ -102,6 +102,49 @@ function draw(ctx, state, cam, width, toScreenX, toScreenY, zoom) {
     const sx = toScreenX(bx);
     const sy = toScreenY(by);
 
+    // PIXEL 320 Phase 3.2: the board redraws as INTEGER screen-space
+    // geometry with bitmap-font copy — no zoom transform (fillRects
+    // under a fractional scale land between pixels), no alpha border
+    // (pre-composited solid), no canvas text (mush at 320).
+    if (window.FF.PIXELATE && window.FF.pxfont) {
+      const PF = window.FF.pxfont;
+      const px2 = Math.round(sx), py2 = Math.round(sy);
+      const bw = Math.max(24, Math.round(BOARD_W * zoom));
+      const bh = Math.max(12, Math.round(BOARD_H * zoom));
+      const ph2 = Math.max(6, Math.round(POST_H * zoom));
+      const bx0 = px2 - (bw >> 1), by0 = py2 - ph2 - bh;
+      ctx.fillStyle = '#2a2a2a';
+      ctx.fillRect(bx0 + 3, py2 - ph2, 1, ph2);
+      ctx.fillRect(bx0 + bw - 4, py2 - ph2, 1, ph2);
+      ctx.fillStyle = ad.bg || '#101010';
+      ctx.fillRect(bx0, by0, bw, bh);
+      ctx.fillStyle = '#636363';           // 0.35 white over the panel
+      ctx.fillRect(bx0, by0, bw, 1);
+      ctx.fillRect(bx0, by0 + bh - 1, bw, 1);
+      ctx.fillRect(bx0, by0, 1, bh);
+      ctx.fillRect(bx0 + bw - 1, by0, 1, bh);
+      const fgpx = ad.fg || '#e8f2df';
+      if (window.FF.palette) {
+        window.FF.palette.register('boards', [ad.bg || '#101010', fgpx,
+          '#636363', '#8e9a88', '#2a2a2a']);
+      }
+      if (ad.text) {
+        const t = String(ad.text);
+        const fit = Math.max(1, Math.floor((bw - 4) / 4));
+        const shown = t.length > fit ? t.slice(0, fit) : t;
+        PF.draw(ctx, shown, px2 - PF.measure(shown, 1) / 2,
+          by0 + (ad.sub ? 3 : ((bh - 5) >> 1)), 1, fgpx);
+      }
+      if (ad.sub) {
+        const t2 = String(ad.sub);
+        const fit2 = Math.max(1, Math.floor((bw - 4) / 4));
+        const shown2 = t2.length > fit2 ? t2.slice(0, fit2) : t2;
+        PF.draw(ctx, shown2, px2 - PF.measure(shown2, 1) / 2,
+          by0 + bh - 8, 1, '#8e9a88');     // pre-composited dim copy
+      }
+      continue;
+    }
+
     ctx.save();
     ctx.translate(sx, sy);
     ctx.scale(zoom, zoom);
