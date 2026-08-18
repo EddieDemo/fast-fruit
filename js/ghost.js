@@ -167,6 +167,14 @@ function framePos(frames, elapsed) {
 
 // ---- Rendering (called by renderer inside the world pass) ----
 function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
+  // GHOST PAINTER REMOVED (Eddie, 2026-08-18): ghosts drew through
+  // this module's own vector path, so a ghost read soft amid baked
+  // sprite bodies — an inconsistency the pixel direction cannot
+  // carry, and the ghost is due a rethink anyway. RECORDING IS
+  // UNTOUCHED: everything upstream still captures and stores ghost
+  // data, so re-adding is a display change, not a re-implementation.
+  return;
+  /* eslint-disable no-unreachable */
   if (state.race.mode !== 'track' || state.players.length > 1) return;
   const elapsed = state.tick - state.raceStartTick;
   const period = state.period;
@@ -191,6 +199,7 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
     drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, f.x, f.y, f.angle,
       'BEST', state.spine.progressOf(f), period, '#9fdf9f');
   }
+  /* eslint-enable no-unreachable */
 }
 
 function drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, wx, wy, angle, label, dist, period, color, melonSeed, surfYAt) {

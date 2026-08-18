@@ -30,6 +30,14 @@
 (function () {
 'use strict';
 
+// PIXEL 320 STICKER LAW (Eddie, 2026-08-18): stickers no longer
+// resize. At 320 a sticker gets ~5-8 px across, so a scale gesture
+// runs between "a few pixels" and "noise". Stickers are therefore
+// BORN at one authored size (decals.js STICKER_S, applied in
+// place()) and the pinch gesture only rotates.
+// clampScale keeps its BOUNDS job untouched: routing it through the
+// fixed size shrank WRAPS from full coverage to sticker size —
+// caught by verify-wraps, which is exactly what it is for.
 const S_MIN = 0.06;   // below this a sticker can't be grabbed back
 const S_MAX = 2.6;    // full coverage: sized so the LETTERBOXED flag
                       // art (2:3, half-height 0.62) still wraps the
@@ -79,7 +87,8 @@ function handlePose(baseRot, baseS, grabVec, nowVec) {
   const a1 = Math.atan2(nowVec.y, nowVec.x);
   const d0 = Math.hypot(grabVec.x, grabVec.y) || 1e-6;
   const d1 = Math.hypot(nowVec.x, nowVec.y);
-  return { rot: baseRot + (a1 - a0), s: clampScale(baseS * (d1 / d0)) };
+  // Rotation only: the pinch's distance ratio is ignored (sticker law).
+  return { rot: baseRot + (a1 - a0), s: clampScale(baseS) };
 }
 
 // Last touched on top: return the array with index i moved to front.

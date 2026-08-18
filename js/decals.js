@@ -742,6 +742,10 @@ const WRAP_BLEED = 0.25;
 // binary. s = 2.0 covers the face; the mesh resolution law already
 // handles the size.
 const WRAP_POSE = { u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 };
+// The one sticker size (PIXEL 320). Chosen so a size-1 art box lands
+// ~6 px across at race scale — the floor for a readable icon — and
+// multiplied by each item's own `size` so visual weight matches.
+const STICKER_S = 0.30;
 
 // The flag's ink at a point INSIDE the rect — the letterbox lives in
 // the callers (the sticker letterboxes, the wrap clamps).
@@ -986,34 +990,18 @@ const SETS = {
   },
   flags: {
     label: 'FLAGS',
-    // The set that will grow the most, so the rarest per item in the
-    // long run. ISO 3166-1 alpha-2 ids.
-    items: [
-      { id: 'flag-fr', label: 'France', art: 'flag', flag: 'fr', size: 2 },
-      { id: 'flag-ie', label: 'Ireland', art: 'flag', flag: 'ie', size: 2 },
-      { id: 'flag-it', label: 'Italy', art: 'flag', flag: 'it', size: 2 },
-      { id: 'flag-de', label: 'Germany', art: 'flag', flag: 'de', size: 2 },
-      { id: 'flag-pl', label: 'Poland', art: 'flag', flag: 'pl', size: 2 },
-      { id: 'flag-jp', label: 'Japan', art: 'flag', flag: 'jp', size: 2 },
-      { id: 'flag-vn', label: 'Vietnam', art: 'flag', flag: 'vn', size: 2 },
-      { id: 'flag-bd', label: 'Bangladesh', art: 'flag', flag: 'bd', size: 2 },
-      { id: 'flag-cn', label: 'China', art: 'flag', flag: 'cn', size: 2 },
-      { id: 'flag-id', label: 'Indonesia', art: 'flag', flag: 'id', size: 2 },
-      { id: 'flag-nl', label: 'Netherlands', art: 'flag', flag: 'nl', size: 2 },
-      { id: 'flag-ng', label: 'Nigeria', art: 'flag', flag: 'ng', size: 2 },
-      { id: 'flag-hu', label: 'Hungary', art: 'flag', flag: 'hu', size: 2 },
-      { id: 'flag-at', label: 'Austria', art: 'flag', flag: 'at', size: 2 },
-      { id: 'flag-be', label: 'Belgium', art: 'flag', flag: 'be', size: 2 },
-      { id: 'flag-ro', label: 'Romania', art: 'flag', flag: 'ro', size: 2 },
-      { id: 'flag-ci', label: "C\u00f4te d'Ivoire", art: 'flag', flag: 'ci', size: 2 },
-      { id: 'flag-gh', label: 'Ghana', art: 'flag', flag: 'gh', size: 2 },
-      { id: 'flag-sn', label: 'Senegal', art: 'flag', flag: 'sn', size: 2 },
-      { id: 'flag-cm', label: 'Cameroon', art: 'flag', flag: 'cm', size: 2 },
-      { id: 'flag-es', label: 'Spain', art: 'flag', flag: 'es', size: 2 },
-      { id: 'flag-co', label: 'Colombia', art: 'flag', flag: 'co', size: 2 },
-      { id: 'flag-th', label: 'Thailand', art: 'flag', flag: 'th', size: 2 },
-      { id: 'flag-us', label: 'USA', art: 'flag', flag: 'us', size: 2 },
-    ],
+    // EMPTY BY RULING (Eddie, 2026-08-18, the PIXEL 320 cut). At 320
+    // a sticker occupies ~5-8 px across: not a small canvas, a
+    // DIFFERENT MEDIUM. Flags carry their identity in fine geometry
+    // (cantons, stars, emblems, text) that cannot survive at that
+    // size, so the sticker-flag set is retired wholesale — the WRAPS
+    // set carries national identity instead, where field-and-band
+    // geometry reads across a 12-body field.
+    // Catalogue/registry split (2026-08-16 lesson): the flag ART
+    // stays in the registry, so saves carrying flag ids keep them
+    // harmlessly, orientation checks still work, and the day a flag
+    // earns a hand-authored 6 px icon it returns by re-listing.
+    items: [],
   },
   wraps: {
     label: 'WRAPS',
@@ -1022,6 +1010,17 @@ const SETS = {
     // everything else, rarity from the arithmetic as always. wrap:
     // true is the behaviour flag the editor and place() read — fixed
     // pose, binary apply, pinned to the bottom of the pile.
+    // WRAP ELIGIBILITY LAW (Eddie, 2026-08-18): a wrap ships only if
+    // its identity is FIELD-AND-BAND geometry — stripes, crosses,
+    // triband, a large centred disc. Anything whose identity needs a
+    // canton, stars, an emblem or text does NOT ship, because at 320
+    // it resolves to a coloured rectangle that lies about which
+    // country it is. Retired on this law: wrap-cn (stars in a
+    // canton), wrap-us (canton + 50 stars). Their art stays in the
+    // registry per the catalogue/registry split.
+    // The set is no longer flags-only: pirate, egg and friends land
+    // here, authored AS ~18 px silhouette-changing colour blocking —
+    // which is what actually reads across a field.
     items: [
       { id: 'wrap-fr', label: 'France', art: 'flagwrap', flag: 'fr', wrap: true },
       { id: 'wrap-ie', label: 'Ireland', art: 'flagwrap', flag: 'ie', wrap: true },
@@ -1031,7 +1030,6 @@ const SETS = {
       { id: 'wrap-jp', label: 'Japan', art: 'flagwrap', flag: 'jp', wrap: true },
       { id: 'wrap-vn', label: 'Vietnam', art: 'flagwrap', flag: 'vn', wrap: true },
       { id: 'wrap-bd', label: 'Bangladesh', art: 'flagwrap', flag: 'bd', wrap: true },
-      { id: 'wrap-cn', label: 'China', art: 'flagwrap', flag: 'cn', wrap: true },
       { id: 'wrap-id', label: 'Indonesia', art: 'flagwrap', flag: 'id', wrap: true },
       { id: 'wrap-nl', label: 'Netherlands', art: 'flagwrap', flag: 'nl', wrap: true },
       { id: 'wrap-ng', label: 'Nigeria', art: 'flagwrap', flag: 'ng', wrap: true },
@@ -1046,7 +1044,6 @@ const SETS = {
       { id: 'wrap-es', label: 'Spain', art: 'flagwrap', flag: 'es', wrap: true },
       { id: 'wrap-co', label: 'Colombia', art: 'flagwrap', flag: 'co', wrap: true },
       { id: 'wrap-th', label: 'Thailand', art: 'flagwrap', flag: 'th', wrap: true },
-      { id: 'wrap-us', label: 'USA', art: 'flagwrap', flag: 'us', wrap: true },
     ],
   },
   numbers: {
@@ -1124,7 +1121,13 @@ function place(spec, itemId, index) {
     id: itemId,
     u, v,
     rot: (rng() - 0.5) * 0.7,
-    s: (0.24 + rng() * 0.12) * ((item && item.size) || 1),
+    // PIXEL 320 (Eddie, 2026-08-18): ONE authored sticker size. The
+    // seeded 0.24-0.36 spread rendered 3-8 px at 320 — the small end
+    // could not carry an identity at all, and a size the player
+    // cannot judge is not variety, it is a lottery. item.size still
+    // applies: art boxes differ (a googly eye fills its box, a heart
+    // does not), so the multiplier equalises VISUAL weight.
+    s: STICKER_S * ((item && item.size) || 1),
   };
 }
 

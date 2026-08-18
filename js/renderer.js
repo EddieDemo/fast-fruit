@@ -52,11 +52,14 @@ if (window.FF && window.FF.palette) {
 // ANTI-crisp on the integer pixel grid.
 const PX_GRID = {
   base: '#0f0f0f',                       // 0.06 white over black sky
-  tier: ['#333333', '#292929', '#1f1f1f'], // 0.20/0.16/0.12 over sky
+  tier: ['#4a4a4a', '#333333', '#242424'], // majors brighter: tone IS
+                                          // the hierarchy now
   tBase: '#464646',                      // terrain grid over ground
-  tTier: ['#525252', '#4d4d4d', '#484848'],
+  tTier: ['#6b6b6b', '#5c5c5c', '#4f4f4f'],
   marker: '#595959',                     // 0.35 white over black
-  tierW: [2, 2, 1],                      // integer widths at 320
+  // tierW RETIRED: every pixel-mode line is 1 px and the hierarchy is
+  // carried by TONE alone, so the tier tones above are spread wider
+  // than their alpha-composited originals to keep majors reading.
 };
 if (window.FF && window.FF.palette) {
   window.FF.palette.register('gridpx', [PX_GRID.base, ...PX_GRID.tier,
@@ -96,9 +99,22 @@ function tierOf(m) {
 // ORIGINAL floors (10m/16m) — a mid-size desktop window binds
 // exactly as it always did (the tightened-floors-for-all version
 // measurably zoomed windowed desktops too).
-const COMPACT_H_PX = 500;
-const MIN_H_M_COMPACT = 7.5, MIN_W_M_COMPACT = 14.5;
-const MIN_H_M_FULL = 10, MIN_W_M_FULL = 16;
+// RETIRED 2026-08-18 by the width-parity ruling: the compact/full box
+// floors and the native-1:1 cap. They made visible width drift from
+// 14.5 m to 19.2 m across devices, and the compact SWITCH — testing a
+// height that the pixel buffer shadows — silently gave desktop the
+// phone floors in pixel mode. Superseded by VIEW_W_M + VIEW_H_MIN_M
+// above. Kept commented, not deleted: the exact numbers are the
+// history of how the lens was tuned.
+//   const COMPACT_H_PX = 500;
+//   const MIN_H_M_COMPACT = 7.5, MIN_W_M_COMPACT = 14.5;
+//   const MIN_H_M_FULL = 10, MIN_W_M_FULL = 16;
+// The ONE visible-width figure, in metres — mobile landscape's, now
+// standard on every device and in both render modes (Eddie ruling,
+// 2026-08-18). Changing this changes the game's whole sense of pace,
+// so it is a ruling, not a tuning knob.
+const VIEW_W_M = 16.2;
+const VIEW_H_MIN_M = 7.5;   // escape hatch only: see the zoom law
 const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
 
 // Bot palette: each melon its own bright shade (player stays pure green).
@@ -145,6 +161,7 @@ function createRenderer(canvas) {
                        // when FF.PIXELATE is on; every helper receives
                        // ctx as a parameter, so the swap is total
   let pxCanvas = null; // lazy: the low-res world layer
+  const pxAltCache = new Map();  // fill tone -> its checker partner
 
   // ---- THE AA-KILLER (pixelation mode) ----
   // Canvas 2D anti-aliases every shape INTO the low-res buffer and
@@ -275,6 +292,11 @@ function createRenderer(canvas) {
     // UI-glass sticks. Menus and HUD are DOM — untouched by design.
     const px = !!window.FF.PIXELATE && typeof document !== 'undefined';
     pxMode = px;                       // sprite melons follow the mode
+    // Time-slice: at most BAKE_PER_FRAME new sprite frames per
+    // rendered frame. Anything else paints vector this tick and
+    // bakes on a later one, so a wrap change can never freeze the
+    // game the way the eager 64-frame bake did.
+    bakeBudget = BAKE_PER_FRAME;
     const realW = width, realH = height, realDpr = dpr;
     if (px) {
       if (!pxCanvas) pxCanvas = document.createElement('canvas');
@@ -300,14 +322,37 @@ function createRenderer(canvas) {
     // feel; a fixed 16x10 "ranked view" stays in reserve for serious
     // leaderboards. World coordinates and physics are untouched —
     // this is purely the camera's lens.
-    // Guarantee-style zoom: small screens bind on a floor and zoom in;
-    // large screens cap at native 1:1. Typical phone (844x390): zoom
-    // 0.52 -> 16.2m x 7.5m view, melons +33% vs the original mobile.
-    // Desktop 1080p: zoom 1 -> 19.2m x 10.8m, exactly the original.
-    const compact = height < COMPACT_H_PX;
-    const mh = compact ? MIN_H_M_COMPACT : MIN_H_M_FULL;
-    const mw = compact ? MIN_W_M_COMPACT : MIN_W_M_FULL;
-    let zoom = Math.min(1, height / (mh * 100), width / (mw * 100));
+    // WIDTH PARITY (Eddie, 2026-08-18). The old law was a BOX floor
+    // plus a native-1:1 cap, so visible width drifted between 16.0 m
+    // (width binding) and 19.2 m (cap binding) depending on the
+    // window — and mobile landscape sat at 16.2 m. One figure now
+    // holds everywhere: VIEW_W_M, adopted from mobile landscape
+    // because that is the feel the game has actually been raced at.
+    //
+    // Two REGRESSIONS are fixed with it, both mine, both from the
+    // pixelation swap shadowing width/height with the 320 buffer:
+    //  * the compact switch tested the SHADOWED height (~180 px), so
+    //    it fired on every device in pixel mode — desktop silently
+    //    ran the 14.5 m phone floors. That is the "less than 16 m in
+    //    pixel mode" measured on device.
+    //  * the 1:1 cap is a RESOLUTION-DEPENDENT statement ("never
+    //    magnify past native"), meaningless once we deliberately
+    //    render at 320, where zoom is ~0.22 and the cap can never
+    //    bind. It retires: pinning the width supersedes it.
+    // Both decisions now read the REAL viewport, never the buffer.
+    // realH/realW are the PRE-SWAP viewport dimensions, captured
+    // above before the pixel buffer shadows them — exactly the "real
+    // viewport" this decision needs, in both modes.
+    // The vertical ESCAPE HATCH — one value, deliberately NOT the old
+    // compact/full split. A 10 m floor still binds at 16:9 (16.2 m
+    // wide gives 9.1 m tall there), which would re-break parity on
+    // exactly the desktops this ruling is about. VIEW_H_MIN_M is set
+    // to mobile landscape's own vertical, so it engages only ABOVE
+    // ~2.16:1 — a shape no ordinary window has — and every normal
+    // window, phone or desktop, is framed by width alone.
+    let zoom = width / (VIEW_W_M * 100);
+    const vHatch = height / (VIEW_H_MIN_M * 100);
+    if (vHatch < zoom) zoom = vHatch;
 
     // ---- Camera: forward-biased on x, centered on y ----
     // Target puts the melon at MELON_SCREEN_FRAC of screen width;
@@ -368,16 +413,56 @@ function createRenderer(canvas) {
     // you fly the way you left — and flips only on landing, as a
     // smoothed pan.
     //
+    // PREDICTIVE BIAS (Eddie, 2026-08-18). Reading the direction UNDER
+    // the melon made the camera lag through serpentine reversals: the
+    // bias only began swinging once the reversal had already happened,
+    // it passes through ZERO on the way (lookahead vanishing exactly
+    // when it is needed most), and a second reversal arriving before
+    // the first settled left the camera permanently behind. It was
+    // also late by construction near turnarounds, because the read
+    // only happened while grounded and a turnaround is where you are
+    // briefly airborne.
+    //
+    // The cure is what a good chase camera does: LOOK WHERE THE TRACK
+    // GOES, not where the melon is. s increases with travel on every
+    // strand — including reversed decks, whose points are s-ordered
+    // leftward — so the tangent's x-sign at (s + lead) IS the travel
+    // direction there. Sampling ahead means the camera starts turning
+    // BEFORE the melon does, and it works airborne, because arc
+    // progress does not care whether you are touching the ground.
     {
       let fwdT = cam.fwd === undefined ? 1 : (cam.fwd < 0 ? -1 : 1);
-      if (state.melon && state.melon.grounded
-          && state.spine && state.spine.projectPoint) {
-        const pr = state.spine.projectPoint(ix, iy);
+      const sp = state.spine;
+      let read = false;
+      if (state.melon && sp && sp.progressOf && sp.surfaceAt) {
+        const s0 = sp.progressOf(state.melon);
+        if (s0 !== null && s0 !== undefined && isFinite(s0)) {
+          // Lead scales with speed: dawdling needs no anticipation,
+          // full flight needs about a second of it. Clamped so the
+          // camera never reads so far ahead that it turns for a
+          // reversal the melon may never reach.
+          const spd = Math.hypot(state.melon.vx || 0, state.melon.vy || 0);
+          const lead = Math.max(260, Math.min(1100, spd * 0.85));
+          const ahead = sp.surfaceAt(s0 + lead);
+          if (ahead) { fwdT = ahead.tx < 0 ? -1 : 1; read = true; }
+        }
+      }
+      // Fallbacks, in order: the ground under the melon (the old law,
+      // still right when the lookahead runs off the end of a strand),
+      // then hold the last direction.
+      if (!read && state.melon && state.melon.grounded
+          && sp && sp.projectPoint) {
+        const pr = sp.projectPoint(ix, iy);
         if (pr) fwdT = pr.dirX;
       }
       if (cam.fwd === undefined || !cam.initialized) cam.fwd = fwdT;
       else {
-        const fk = Math.min(1, CONFIG.cameraLerp * dtFrame);
+        // Crossing the dead zone fast, settling slow: |fwd| below the
+        // floor means lookahead has collapsed, so the swing is pushed
+        // through at triple rate. Ordinary settling keeps the dreamy
+        // feel cameraLerp was tuned for.
+        const swinging = (fwdT > 0) !== (cam.fwd > 0) || Math.abs(cam.fwd) < 0.45;
+        const fk = Math.min(1, CONFIG.cameraLerp * (swinging ? 3 : 1) * dtFrame);
         cam.fwd += (fwdT - cam.fwd) * fk;
       }
     }
@@ -448,9 +533,128 @@ function createRenderer(canvas) {
         ctx.closePath();
       }
     };
-    traceSlabPath();
-    ctx.fillStyle = COLORS.ground;
-    ctx.fill();
+    // PIXEL 320 COLUMN FILL (Eddie, 2026-08-18). Vertex snapping was
+    // not enough: canvas still rasterizes the DIAGONAL between two
+    // snapped vertices, minting a blend per column. Those blends
+    // share one value along a constant-slope edge, so thousands of
+    // them appear — clearing the resolver's area cut, being promoted
+    // to "genuine", and surviving as visible anti-aliasing on every
+    // angled edge (measured on device). Frequency was always a proxy
+    // for legitimacy; a long diagonal is where the proxy breaks.
+    //
+    // The cure is to not make the mess: walk the slab's top edge one
+    // SCREEN COLUMN at a time, and fill each column as a rect from
+    // its integer surface row to the slab bottom. The stair steps
+    // become AUTHORED — exactly one pixel wide, no intermediate tone
+    // anywhere, stable frame to frame — which is how sprite-era games
+    // drew ground, and it retires the corrective pass for the largest
+    // surface in the game.
+    // THE SHARED COLUMN TABLE (Eddie, 2026-08-18). One authority for
+    // "where is the ground in this column", written by the fill and
+    // read by the terrain grid. Two passes that each decide it
+    // separately WILL disagree: the grid was clipped by ctx.clip()
+    // against the path traceSlabPath builds, and the pixel branch
+    // never calls it — so the clip ran against a STALE path and grid
+    // lines escaped above the surface (measured on device). Sharing
+    // the table makes the escape impossible by construction, the same
+    // way the column fill makes blends impossible.
+    // Sentinel: height + 2 means "no ground in this column".
+    // v2 (Eddie, 2026-08-18): the terrain grid is drawn INSIDE the
+    // column pass, within each span's [yTop, yBot]. v1 kept a
+    // top-only table and ran the grid as its own pass, so verticals
+    // fell to the bottom of the screen — the old clip bounded BOTH
+    // edges and the table only replaced one. A second (bottom) table
+    // would not fix it either: under a fold a column has two spans,
+    // and min-top with max-bottom paints the void between the decks.
+    // Drawing per span is the only form that is right for folds, and
+    // it makes the grid literally part of the ground it belongs to.
+    let pxGridDone = false;
+    if (pxMode) {
+      // THE GROUND CHECKER (Eddie, 2026-08-18) replaces the terrain
+      // grid: 1 m cells, WORLD-ANCHORED so the pattern scrolls with
+      // the ground instead of sliding over it, alternating between
+      // each segment's fill and a derived partner tone. The partner
+      // is bandColor(fill, +6 L*) — the same law that shades
+      // everything else, so it registers into the palette
+      // automatically and will follow Phase 5's light columns for
+      // free, and every tinted section gets its own pair without a
+      // table of hand-picked colours.
+      // Lines are gone entirely, which is the deeper win: a 1 px
+      // feature must survive the pixel grid, and a filled cell has
+      // nothing to survive.
+      const gStep = TERRAIN_GRID_SPACING;      // 100 world px = 1 m
+      const altOf = (hex) => {
+        let a2 = pxAltCache.get(hex);
+        if (a2 === undefined) {
+          a2 = (window.FF.shading ? window.FF.shading.bandColor(hex, 6) : hex);
+          pxAltCache.set(hex, a2);
+        }
+        return a2;
+      };
+      pxGridDone = true;
+      var pxGStep = gStep, pxAltOf = altOf;   // used by the fill loop
+    }
+    if (pxMode) {
+      ctx.fillStyle = COLORS.ground;
+      // The dev vocabulary tint is the segment's FILL COLOUR here,
+      // not a second coat: the shipped tint pass repaints slab
+      // columns AFTER the fill, which now covers the inline grid
+      // (measured — the grid vanished on coloured sections). One
+      // colour decision per span, then the grid on top of it.
+      const TINT_PX = window.FF.DEV_TERRAIN_COLORS ? {
+        slope: '#3a3a3a', roller: '#37413a', flat: '#454545',
+        kicker: '#463c34', gap: '#46343c', sw: '#343c46',
+      } : null;
+      for (const sl of slabWorld.slabs) {
+        if (sl.isWall) continue;
+        const t = sl.top, bo = sl.bottom;
+        for (let i = 1; i < t.length; i++) {
+          const segFill = (TINT_PX && TINT_PX[t[i].k]) || COLORS.ground;
+          const ax = toScreenX(t[i - 1].x), ay = toScreenY(t[i - 1].y);
+          const bx = toScreenX(t[i].x), by = toScreenY(t[i].y);
+          let x0 = Math.round(Math.min(ax, bx)), x1 = Math.round(Math.max(ax, bx));
+          if (x1 < -2 || x0 > width + 2) continue;      // off-screen span
+          x0 = Math.max(x0, -1); x1 = Math.min(x1, width + 1);
+          const span = bx - ax;
+          for (let x = x0; x <= x1; x++) {
+            // Surface row for THIS column, sampled at its centre.
+            const u = span === 0 ? 0 : Math.max(0, Math.min(1, (x + 0.5 - ax) / span));
+            const yTop = Math.round(ay + (by - ay) * u);
+            // Slab bottom under the same column: the underside is
+            // parallel per segment, so its own interpolation keeps
+            // thin slabs honest instead of assuming a fixed depth.
+            const j = Math.min(bo.length - 1, i);
+            const cy0 = toScreenY(bo[j - 1] ? bo[j - 1].y : bo[j].y);
+            const cy1 = toScreenY(bo[j].y);
+            const yBot = Math.round(cy0 + (cy1 - cy0) * u);
+            const hgt = Math.max(1, yBot - yTop);
+            // CHECKER FILL: walk this span in world-cell bands. One
+            // fillRect per band, not per pixel — a column crosses
+            // only a few cells — and the cell indices come from WORLD
+            // coordinates, so the pattern belongs to the ground.
+            const wxCell = Math.floor((((x + 0.5) - cxs) / zoom + camX) / pxGStep);
+            let y = yTop;
+            const yEndAll = yTop + hgt;
+            while (y < yEndAll) {
+              const wy = (y - cys) / zoom + camY;
+              const cyCell = Math.floor(wy / pxGStep);
+              const nextW = (cyCell + 1) * pxGStep;
+              let yNext = Math.ceil((nextW - camY) * zoom + cys);
+              if (yNext <= y) yNext = y + 1;   // never stall
+              const yEnd = Math.min(yEndAll, yNext);
+              const light = ((wxCell + cyCell) & 1) === 0;
+              ctx.fillStyle = light ? segFill : pxAltOf(segFill);
+              ctx.fillRect(x, y, 1, yEnd - y);
+              y = yEnd;
+            }
+          }
+        }
+      }
+    } else {
+      traceSlabPath();
+      ctx.fillStyle = COLORS.ground;
+      ctx.fill();
+    }
 
     // Phase 1.3 banding REVERTED (Eddie, 2026-08-18): at +/-8 L* the
     // bands were the visual signature of anti-aliasing along every
@@ -467,7 +671,7 @@ function createRenderer(canvas) {
     // right, so a chunk's first point belongs to its predecessor).
     // The column's bottom edge is the SLAB bottom now, not the
     // screen (spec §4).
-    if (window.FF.DEV_TERRAIN_COLORS) {
+    if (window.FF.DEV_TERRAIN_COLORS && !pxMode) {
       const TINT = {
         slope: '#3a3a3a',        // the base grey: the default word
         roller: '#37413a',       // toward green: the rhythm section
@@ -506,10 +710,17 @@ function createRenderer(canvas) {
     // to the same origin so every terrain line coincides with every
     // other background line — the two grids read as one system at two
     // densities, and the density change itself marks the surface.
-    ctx.save();
-    ctx.clip();
-    drawTerrainGrid(ctx, cam, width, height, groundScreenY, zoom);
-    ctx.restore();
+    if (pxMode) {
+      // Nothing here: the terrain grid was drawn inside the column
+      // pass, span by span, so it cannot escape the ground in either
+      // direction and folds are handled by construction.
+      void pxGridDone;
+    } else {
+      ctx.save();
+      ctx.clip();
+      drawTerrainGrid(ctx, cam, width, height, groundScreenY, zoom);
+      ctx.restore();
+    }
 
     // Distance markers every 200 world px — motion & speed reference.
     drawMarkers(ctx, state, cam.x, width, toScreenX, toScreenY, zoom);
@@ -1494,160 +1705,206 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     catch (e) { return null; }
   };
 
-  function bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals) {
-    const SS = 8, pad = 2;
-    const spr = 2 * (rPx + pad);       // even square, body + pad
-    const big = spr * SS;
-    const bc = document.createElement('canvas');
-    bc.width = big; bc.height = big;
-    const btx = bc.getContext('2d');
-    const zoomBake = (rPx * SS) / a;
-    const half = (SS * SS) * 0.45;     // opacity vote threshold
-    // Phase 2.3 — INDEXED SPRITES: each frame is a Uint8 map of
-    // palette indices into a per-frame colour list, resolved to RGBA
-    // once now (identity), and re-resolvable against Phase 5's light
-    // columns later with zero re-bake. Guarantees run ON the index
-    // map. Rim tone derives from the law (registered via the Phase 0
-    // hook); the highlight is the lightest tone with real source
-    // area, tracked with its centroid during the vote.
-    bakeLodR = rPx;                    // Phase 2.1: painters simplify
-    const sh = window.FF.shading;
-    const frames = [];
-    for (let k = 0; k < SPRITE_ANGLES; k++) {
-      btx.setTransform(1, 0, 0, 1, 0, 0);
-      btx.clearRect(0, 0, big, big);
-      drawMelonVector(btx, big / 2, big / 2, k * 2 * Math.PI / SPRITE_ANGLES,
-        null, color, zoomBake, seedKey, a, b, fruit, decals);
-      let src;
-      try { src = btx.getImageData(0, 0, big, big); }
-      catch (e) { bakeLodR = null; return null; }
-      const sd = src.data;
-      const colors = [];
-      const colorIdx = new Map();
-      const cOf = (kk) => {
-        let ci = colorIdx.get(kk);
-        if (ci === undefined) { ci = colors.length; colors.push(kk); colorIdx.set(kk, ci); }
-        return ci;
-      };
-      const idx = new Uint8Array(spr * spr).fill(255);
-      // PRE-PASS (v3, Eddie 2026-08-18): find the TRUE rendered
-      // highlight tone — the lightest tone actually present in this
-      // frame's source with any real presence. v2 asked
-      // slotColor(color,'A3'), but `color` is the display colour, not
-      // the seeded anchor the painter derives the body from, so the
-      // guess missed and the fallback stamped an alien tone. The
-      // source render itself is the ground truth; ask IT.
-      const srcHist = new Map();       // tone -> {c, sx, sy} for centroid
-      for (let sy2 = 0; sy2 < big; sy2++) {
-        const row = sy2 * big * 4;
-        for (let sx2 = 0; sx2 < big; sx2++) {
-          const i4 = row + sx2 * 4;
-          if (sd[i4 + 3] < 128) continue;
-          const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
-          let hrec = srcHist.get(kk);
-          if (!hrec) { hrec = { c: 0, sx: 0, sy: 0 }; srcHist.set(kk, hrec); }
-          hrec.c++; hrec.sx += sx2 / SS; hrec.sy += sy2 / SS;
-        }
-      }
-      let hiInt = -1, hiL = -1, hiRec = null;
-      if (sh) {
-        for (const [kk, rec] of srcHist) {
-          if (rec.c < 4) continue;               // noise floor only
-          const L = sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255);
-          if (L > hiL) { hiL = L; hiInt = kk; hiRec = rec; }
-        }
-      }
-      const quarter = (SS * SS) * 0.25;
-      for (let y = 0; y < spr; y++) {
-        for (let x = 0; x < spr; x++) {
-          const tally = new Map();
-          let opaque = 0;
-          for (let sy2 = 0; sy2 < SS; sy2++) {
-            const row = ((y * SS + sy2) * big + x * SS) * 4;
-            for (let sx2 = 0; sx2 < SS; sx2++) {
-              const i4 = row + sx2 * 4;
-              if (sd[i4 + 3] < 128) continue;
-              opaque++;
-              const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
-              tally.set(kk, (tally.get(kk) || 0) + 1);
-            }
-          }
-          if (opaque >= half) {
-            // Highlight-priority vote: the real lit-region SHAPE
-            // survives at race radius instead of dying to the mass.
-            idx[y * spr + x] = cOf(pxBlockWinner(tally, hiInt, quarter));
-          }
-        }
-      }
-      // Vote notches (transparent holes over the black sky read as
-      // black pixels IN the body — measured on device): closed.
-      pxClose(idx, spr, spr);
-      // Rim REVERTED (Eddie): no rim; the fn stays exported.
-      // Last resort only: if the whole lit region still lost every
-      // block, stamp 2 px at its true centroid.
-      if (hiInt >= 0 && hiRec) {
-        pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
-          hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
-      }
-      // Resolve indices -> RGBA (identity resolve until Phase 5).
-      const fc = document.createElement('canvas');
-      fc.width = spr; fc.height = spr;
-      const ftx = fc.getContext('2d');
-      const out = ftx.createImageData(spr, spr);
-      const od = out.data;
-      for (let p = 0; p < idx.length; p++) {
-        const ci = idx[p];
-        if (ci === 255) continue;
-        const kk = colors[ci];
-        const o4 = p * 4;
-        od[o4] = kk >> 16; od[o4 + 1] = (kk >> 8) & 255;
-        od[o4 + 2] = kk & 255; od[o4 + 3] = 255;
-      }
-      ftx.putImageData(out, 0, 0);
-      frames.push({ canvas: fc, idx, colors });
-    }
-    bakeLodR = null;
-    return { frames, spr };
-  }
-  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals) {
+  // ---- THE FRAME CACHE (rebuilt 2026-08-18, Eddie's ruling) ----
+  // v1 baked all 64 rotations EAGERLY at 8x supersample the moment a
+  // variant first appeared: ~29M pixel reads and 64 getImageData
+  // calls, synchronously, on the main thread — the multi-second
+  // freeze measured when applying a wrap. Three structural fixes:
+  //
+  //  1. ON DEMAND, PER FRAME. A melon shows ONE pose at a time; a
+  //     portrait shows one forever. Frames bake when first needed.
+  //  2. SS 8 -> 4. The vote samples a DOMINANT colour; 16 samples
+  //     per block decide it as reliably as 64 at these radii, at a
+  //     quarter of the cost.
+  //  3. TIME-SLICED. A per-rendered-frame bake budget; anything not
+  //     yet baked paints VECTOR this frame and bakes on a later one.
+  //     Nothing ever blocks, and the fallback is invisible because
+  //     it is the same artwork the bake is derived from.
+  //
+  // SQUASH IS NOW BAKED (R2 ruled): the deformation is applied INSIDE
+  // the bake by the vector painter, so a splat frame is authored
+  // pixels, not a runtime affine on a sprite. The parameter space is
+  // rotation x squash-axis x squash-magnitude — thousands of
+  // combinations in principle, which is exactly why it is lazy: a
+  // race visits a few dozen (impacts cluster hard around ground
+  // normals), and each is baked once, forever.
+  const SQ_AXES = 32;                  // squash axis quantization
+  const SQ_MAGS = 4;                   // magnitude levels above the gate
+  const SQ_GATE = 0.08;                // below this: undeformed frame
+  const SQ_MAX = 0.42;                 // top of the magnitude ladder
+  const SS = 4, PAD = 2;
+  let bakeBudget = 0;                  // refilled each rendered frame
+  const BAKE_PER_FRAME = 3;
+
+  function variantEntry(color, seedKey, a, b, rPx, fruit, decals) {
     const key = color + '|' + seedKey + '|' + (fruit || '') + '|'
       + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals);
-    if (melonSprites.has(key)) return melonSprites.get(key);
-    const e = bakeMelonSprites(color, seedKey, a, b, rPx, fruit, decals);
-    melonSprites.set(key, e);          // null caches too: no re-fail
+    let e = melonSprites.get(key);
+    if (e !== undefined) return e;
+    if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
+    const spr = 2 * (rPx + PAD);
+    e = { spr, rPx, a, b, color, seedKey, fruit, decals, frames: new Map(),
+      big: null, btx: null };
+    melonSprites.set(key, e);
     return e;
   }
+
+  // frameKey packs (rotation, axis, magnitude) into one integer.
+  const frameKey = (rot, ax, mag) => (rot * (SQ_AXES + 1) + ax) * (SQ_MAGS + 1) + mag;
+
+  function bakeFrame(e, rot, ax, mag) {
+    const spr = e.spr, big = spr * SS;
+    if (!e.big) {
+      e.big = document.createElement('canvas');
+      e.big.width = big; e.big.height = big;
+      e.btx = e.big.getContext('2d');
+    }
+    const btx = e.btx;
+    const zoomBake = (e.rPx * SS) / e.a;
+    const half = (SS * SS) * 0.45;
+    const quarter = (SS * SS) * 0.25;
+    bakeLodR = e.rPx;                  // Phase 2.1: painters simplify
+    const sh = window.FF.shading;
+    btx.setTransform(1, 0, 0, 1, 0, 0);
+    btx.clearRect(0, 0, big, big);
+    // The squash the painter applies — quantized, and applied HERE so
+    // the deformation is voted into pixels like everything else.
+    const sq = mag > 0
+      ? { squash: SQ_GATE + (SQ_MAX - SQ_GATE) * (mag / SQ_MAGS),
+        squashAngle: (ax / SQ_AXES) * Math.PI * 2 }
+      : null;
+    drawMelonVector(btx, big / 2, big / 2, rot * 2 * Math.PI / SPRITE_ANGLES,
+      sq, e.color, zoomBake, e.seedKey, e.a, e.b, e.fruit, e.decals);
+    let src;
+    try { src = btx.getImageData(0, 0, big, big); }
+    catch (err) { bakeLodR = null; return null; }
+    const sd = src.data;
+    const colors = [];
+    const colorIdx = new Map();
+    const cOf = (kk) => {
+      let ci = colorIdx.get(kk);
+      if (ci === undefined) { ci = colors.length; colors.push(kk); colorIdx.set(kk, ci); }
+      return ci;
+    };
+    const idx = new Uint8Array(spr * spr).fill(255);
+    // Pre-pass: the TRUE rendered highlight tone + its centroid.
+    const srcHist = new Map();
+    for (let sy2 = 0; sy2 < big; sy2++) {
+      const row = sy2 * big * 4;
+      for (let sx2 = 0; sx2 < big; sx2++) {
+        const i4 = row + sx2 * 4;
+        if (sd[i4 + 3] < 128) continue;
+        const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
+        let hrec = srcHist.get(kk);
+        if (!hrec) { hrec = { c: 0, sx: 0, sy: 0 }; srcHist.set(kk, hrec); }
+        hrec.c++; hrec.sx += sx2 / SS; hrec.sy += sy2 / SS;
+      }
+    }
+    let hiInt = -1, hiL = -1, hiRec = null;
+    if (sh) {
+      for (const [kk, rec] of srcHist) {
+        if (rec.c < 4) continue;
+        const L = sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255);
+        if (L > hiL) { hiL = L; hiInt = kk; hiRec = rec; }
+      }
+    }
+    for (let y = 0; y < spr; y++) {
+      for (let x = 0; x < spr; x++) {
+        const tally = new Map();
+        let opaque = 0;
+        for (let sy2 = 0; sy2 < SS; sy2++) {
+          const row = ((y * SS + sy2) * big + x * SS) * 4;
+          for (let sx2 = 0; sx2 < SS; sx2++) {
+            const i4 = row + sx2 * 4;
+            if (sd[i4 + 3] < 128) continue;
+            opaque++;
+            const kk = (sd[i4] << 16) | (sd[i4 + 1] << 8) | sd[i4 + 2];
+            tally.set(kk, (tally.get(kk) || 0) + 1);
+          }
+        }
+        if (opaque >= half) idx[y * spr + x] = cOf(pxBlockWinner(tally, hiInt, quarter));
+      }
+    }
+    pxClose(idx, spr, spr);
+    if (hiInt >= 0 && hiRec) {
+      pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
+        hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
+    }
+    const fc = document.createElement('canvas');
+    fc.width = spr; fc.height = spr;
+    const ftx = fc.getContext('2d');
+    const out = ftx.createImageData(spr, spr);
+    const od = out.data;
+    for (let p = 0; p < idx.length; p++) {
+      const ci = idx[p];
+      if (ci === 255) continue;
+      const kk = colors[ci];
+      const o4 = p * 4;
+      od[o4] = kk >> 16; od[o4 + 1] = (kk >> 8) & 255;
+      od[o4 + 2] = kk & 255; od[o4 + 3] = 255;
+    }
+    ftx.putImageData(out, 0, 0);
+    bakeLodR = null;
+    return { canvas: fc, idx, colors };
+  }
+
+  // The one door: returns a baked frame, or null when the budget is
+  // spent (caller paints vector this frame and tries again next).
+  function melonFrame(e, rot, ax, mag) {
+    if (!e) return null;
+    const fk = frameKey(rot, ax, mag);
+    const hit = e.frames.get(fk);
+    if (hit !== undefined) return hit;
+    if (bakeBudget <= 0) return null;
+    bakeBudget--;
+    const f = bakeFrame(e, rot, ax, mag);
+    e.frames.set(fk, f);
+    return f;
+  }
+
+  // Quantize a live squash into (axis, magnitude). mag 0 = undeformed.
+  function squashSlot(squash) {
+    if (!squash || !(squash.squash > SQ_GATE)) return { ax: 0, mag: 0 };
+    const t = Math.min(1, (squash.squash - SQ_GATE) / (SQ_MAX - SQ_GATE));
+    const mag = Math.max(1, Math.min(SQ_MAGS, Math.round(t * SQ_MAGS)));
+    const TAU = Math.PI * 2;
+    let ang = squash.squashAngle % TAU;
+    if (ang < 0) ang += TAU;
+    const ax = Math.round(ang / TAU * SQ_AXES) % SQ_AXES;
+    return { ax, mag };
+  }
+
+  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals) {
+    return variantEntry(color, seedKey, a, b, rPx, fruit, decals);
+  }
+  // Verification surface for the cache's pure parts.
+  window.FF._pxBake = { squashSlot, frameKey, SS, SQ_AXES, SQ_MAGS,
+    SQ_GATE, SQ_MAX, BAKE_PER_FRAME };
+
   function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
     if (pxMode) {
       const a = bodyA || CONFIG.semiMajor;
       const b = bodyB || CONFIG.semiMinor;
       const rPx = Math.max(3, Math.round(a * zoom));
       const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
+      const slot = squashSlot(squash);
       if (e) {
         const TAU = Math.PI * 2;
         const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
           + SPRITE_ANGLES) % SPRITE_ANGLES;
-        ctx.save();
-        ctx.imageSmoothingEnabled = false;
-        ctx.translate(Math.round(sx), Math.round(sy));
-        // Squash rides the blit with the exact vector transform —
-        // but only past 8% in pixel mode: a rolling melon carries
-        // CONSTANT micro-squash, and every micro-squash frame went
-        // through the rotated nearest-resample, pulling transparent
-        // texels into the body (persistent black flecks over the
-        // black sky, measured on device). Sub-8% deformation is
-        // < 2 px of amplitude on an 18 px sprite — invisible — so
-        // those frames blit 1:1. Big splats still deform (2-3 frame
-        // transients); the canonical-axis bake (R2) remains the full
-        // cure if they offend.
-        if (squash && squash.squash > 0.08) {
-          ctx.rotate(squash.squashAngle + Math.PI / 2);
-          ctx.scale(1 + squash.squash, 1 - squash.squash);
-          ctx.rotate(-(squash.squashAngle + Math.PI / 2));
+        // R2 SHIPPED: the squash is IN the frame. No runtime affine —
+        // a splat is authored pixels at integer position, like every
+        // other frame. A frame not yet baked returns null and the
+        // vector painter covers this tick (time-slicing).
+        const f = melonFrame(e, k, slot.ax, slot.mag);
+        if (f) {
+          ctx.save();
+          ctx.imageSmoothingEnabled = false;
+          ctx.translate(Math.round(sx), Math.round(sy));
+          ctx.drawImage(f.canvas, -e.spr / 2, -e.spr / 2);
+          ctx.restore();
+          return;
         }
-        ctx.drawImage(e.frames[k].canvas, -e.spr / 2, -e.spr / 2);
-        ctx.restore();
-        return;
       }
     }
     drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals);
@@ -2361,7 +2618,14 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const px = img.data;
     // One true-geodesic mesh per worn decal, shot here at bake time.
     const meshes = worn.map(wd =>
-      D.byId(wd.id) ? D.buildStickerMesh(wd.u, wd.v, wd.rot, wd.s * b, a, b, preview) : null);
+      D.byId(wd.id) ? D.buildStickerMesh(wd.u, wd.v, wd.rot, wd.s * b, a, b,
+        preview || pxMode || bakeLodR !== null) : null);
+      // PIXEL 320 decal LOD (Eddie, 2026-08-18): the sticker mesh's
+      // COARSE mode is the pixel tier. The fine mesh spends its
+      // budget on sub-pixel curvature fidelity that the vote
+      // discards anyway, so coarse costs nothing visible at 320 and
+      // bakes faster. (Same switch the editor preview already used;
+      // it is now the truth for every baked frame too.)
     for (let py = 0; py < ph; py++) {
       for (let pxi = 0; pxi < pw; pxi++) {
         const x = (pxi + 0.5) / rs - w / 2, y = (py + 0.5) / rs - h / 2;
@@ -3048,15 +3312,26 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // guarantees — the portrait IS the racing melon. decalPreview
     // (the editor's live hover) stays vector: preview churn would
     // thrash bakes, and an editing surface earns native fidelity.
-    if (window.FF.PIXELATE && !decalPreview && typeof document !== 'undefined') {
+    // decalPreview NO LONGER escapes to vector (Eddie, 2026-08-18):
+    // the editor is where a decal is CHOSEN, so it must show the
+    // pixels the race will actually deliver — a native-fidelity
+    // preview sells a sticker the game cannot render. Bakes are
+    // cached per loadout, so hover churn costs one bake per distinct
+    // arrangement, not one per frame.
+    if (window.FF.PIXELATE && typeof document !== 'undefined') {
       const devW = ((typeof window !== 'undefined' && window.innerWidth) || 1600)
         * ((typeof window !== 'undefined' && window.devicePixelRatio) || 1);
       const rPx = Math.max(5, Math.round((a * (scale || 1)) * 320 / Math.max(1, devW)));
       const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
-      if (e) {
-        const TAU = Math.PI * 2;
-        const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
-          + SPRITE_ANGLES) % SPRITE_ANGLES;
+      const TAU = Math.PI * 2;
+      const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
+        + SPRITE_ANGLES) % SPRITE_ANGLES;
+      // Portraits are STILL: one frame, and it must not miss. The
+      // budget is topped up here so a menu never shows the vector
+      // fallback for a pose it will hold forever.
+      if (bakeBudget <= 0) bakeBudget = 1;
+      const f = melonFrame(e, k, 0, 0);
+      if (e && f) {
         // THE FRAME IS WORLD UNITS, NOT DISPLAY PIXELS. Every caller
         // (editor portrait, studio pin, finish rows) has ALREADY
         // applied translate(centre) + scale(fit) before calling — the
@@ -3070,7 +3345,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         const halfW = (e.spr / 2) * worldPerPx;
         ctx2.save();
         ctx2.imageSmoothingEnabled = false;
-        ctx2.drawImage(e.frames[k].canvas, -halfW, -halfW,
+        ctx2.drawImage(f.canvas, -halfW, -halfW,
           e.spr * worldPerPx, e.spr * worldPerPx);
         ctx2.restore();
         return;
@@ -3079,9 +3354,13 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     shadeEllipse(ctx2, angle, a, b, color, seedKey, fruit, scale, decals, decalPreview);
   };
 
-  const TERRAIN_GRID_SPACING = 200; // world px = 2m squares in the ground
+  // 100 world px = 1 m squares (Eddie, 2026-08-18; was 200 = 2 m).
+  // The old comment's claim that the density change marks the surface
+  // no longer holds — the surface is marked by the ground fill itself,
+  // and matching densities read as one continuous system.
+  const TERRAIN_GRID_SPACING = 100;
 
-  function drawTerrainGrid(ctx, cam, w, h, groundY, zoom) {
+  function drawTerrainGrid(ctx, cam, w, h, groundY, zoom, colTop) {
     // Same 1/50/100/200 banding as the background, so emphasis
     // lines read continuously where they cross the ground line.
     const span = (w / 2) / zoom;
@@ -3090,24 +3369,70 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const spacing = TERRAIN_GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
 
-    ctx.strokeStyle = pxMode ? PX_GRID.tBase : COLORS.terrainGrid;
+    // Pixel mode: filled 1 px rects, tone-only hierarchy — the same
+    // law as the background grid, so emphasis still reads
+    // continuously where the two grids meet at the ground line.
+    if (pxMode) {
+      // Every line is clipped by the SHARED column table: a vertical
+      // starts at its own column's surface row, a horizontal is drawn
+      // only across columns whose surface is above it. Without a
+      // table (defensive) nothing is drawn rather than drawing
+      // everywhere — an absent grid is a far smaller lie than one
+      // floating in the sky.
+      if (!colTop) return;
+      const topAt = (x) => (x + 1 >= 0 && x + 1 < colTop.length
+        ? colTop[x + 1] : h + 2);
+      const vline = (x) => {
+        const y0 = topAt(x);
+        if (y0 <= h) ctx.fillRect(x, y0, 1, h - y0);
+      };
+      ctx.fillStyle = PX_GRID.tBase;
+      for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
+        if (tierOf(wx / 100) >= 0) continue;
+        vline(Math.round((wx - cam.x) * zoom + w / 2));
+      }
+      for (let sy = firstY; sy < h + spacing; sy += spacing) {
+        const y = Math.round(sy);
+        // Run-length across the row: contiguous covered columns are
+        // one fillRect, so a horizontal line costs about as much as
+        // it did when it was a single span.
+        let runStart = -1;
+        for (let x = 0; x <= w; x++) {
+          const covered = x < w && topAt(x) <= y;
+          if (covered && runStart < 0) runStart = x;
+          else if (!covered && runStart >= 0) {
+            ctx.fillRect(runStart, y, x - runStart, 1);
+            runStart = -1;
+          }
+        }
+      }
+      for (let t = TIER_M.length - 1; t >= 0; t--) {
+        ctx.fillStyle = PX_GRID.tTier[t];
+        for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
+          if (tierOf(wx / 100) !== t) continue;
+          vline(Math.round((wx - cam.x) * zoom + w / 2));
+        }
+      }
+      return;
+    }
+
+    ctx.strokeStyle = COLORS.terrainGrid;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    const half = pxMode ? 0 : 0.5;
     for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
       if (tierOf(wx / 100) >= 0) continue;
-      const sx = Math.round((wx - cam.x) * zoom + w / 2) + half;
+      const sx = Math.round((wx - cam.x) * zoom + w / 2) + 0.5;
       ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
     }
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
-      const y = Math.round(sy) + half;
+      const y = Math.round(sy) + 0.5;
       ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
 
     for (let t = TIER_M.length - 1; t >= 0; t--) {
-      ctx.strokeStyle = pxMode ? PX_GRID.tTier[t] : `rgba(255,255,255,${TIER_ALPHA[t] * 0.6})`;
-      ctx.lineWidth = pxMode ? PX_GRID.tierW[t] : TIER_WIDTH[t];
+      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t] * 0.6})`;
+      ctx.lineWidth = TIER_WIDTH[t];
       ctx.beginPath();
       for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
         if (tierOf(wx / 100) !== t) continue;
@@ -3127,31 +3452,49 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const spacing = GRID_SPACING * zoom;
     const firstY = ((groundY % spacing) + spacing) % spacing;
 
-    ctx.strokeStyle = pxMode ? PX_GRID.base : `rgba(255,255,255,${BASE_ALPHA})`;
+    // PIXEL 320: grid lines are FILLED RECTS, not strokes (Eddie,
+    // 2026-08-18). A 1 px stroke STRADDLES its path — at integer x it
+    // covers x-0.5 to x+0.5, i.e. half of two adjacent columns, which
+    // anti-aliases into a 2 px smear that the honesty resolver then
+    // hardens into a solid 2 px line (measured on device). Dropping
+    // the +0.5 hairline convention in pixel mode was my error: the
+    // convention exists to centre a stroke IN a column. fillRect with
+    // integer coords needs no convention at all — it covers exactly
+    // the columns asked for, which is the "draw FOR the grid"
+    // principle applied to the game's largest stroke surface.
+    // Hierarchy is TONE-ONLY in pixel mode: every line is 1 px and
+    // majors read brighter, which is how period backgrounds did it.
+    // BACKGROUND GRID RETIRED IN PIXEL MODE (Eddie, 2026-08-18): the
+    // sky is empty. The ground carries the scale reference now — its
+    // checker states both scale AND motion — and an empty sky is
+    // what Phase 4's parallax bands are for. Vector mode keeps its
+    // grid, so the toggle still shows the old world.
+    if (pxMode) return;
+
+    ctx.strokeStyle = `rgba(255,255,255,${BASE_ALPHA})`;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    const half = pxMode ? 0 : 0.5;
     for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
       if (tierOf(wx / 100) >= 0) continue; // drawn by a tier pass
-      const sx = Math.round((wx - camX) * zoom + w / 2) + half;
+      const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
       ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
     }
     // Horizontal (elevation) lines: uniform hairlines. The tier
     // hierarchy is DISTANCE-ONLY by design — depth milestones tested
     // as noise, so the vertical axis stays a plain ruler.
     for (let sy = firstY; sy < h + spacing; sy += spacing) {
-      const y = Math.round(sy) + half;
+      const y = Math.round(sy) + 0.5;
       ctx.moveTo(0, y); ctx.lineTo(w, y);
     }
     ctx.stroke();
 
     for (let t = TIER_M.length - 1; t >= 0; t--) {
-      ctx.strokeStyle = pxMode ? PX_GRID.tier[t] : `rgba(255,255,255,${TIER_ALPHA[t]})`;
-      ctx.lineWidth = pxMode ? PX_GRID.tierW[t] : TIER_WIDTH[t];
+      ctx.strokeStyle = `rgba(255,255,255,${TIER_ALPHA[t]})`;
+      ctx.lineWidth = TIER_WIDTH[t];
       ctx.beginPath();
       for (let wx = firstX; wx < lastX; wx += GRID_SPACING) {
         if (tierOf(wx / 100) !== t) continue;
-        const sx = Math.round((wx - camX) * zoom + w / 2) + half;
+        const sx = Math.round((wx - camX) * zoom + w / 2) + 0.5;
         ctx.moveTo(sx, 0); ctx.lineTo(sx, h);
       }
       ctx.stroke();
