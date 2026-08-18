@@ -227,7 +227,12 @@ function createRenderer(canvas) {
     const realW = width, realH = height, realDpr = dpr;
     if (px) {
       if (!pxCanvas) pxCanvas = document.createElement('canvas');
-      const pw = 380;
+      // Internal width is a dev tunable (console: FF.PIXELATE_W=380)
+      // so chunk tiers can be judged side by side mid-race. Default
+      // 640 — the VGA tier, the truer Out Run / Super Hang-On read;
+      // 380 is the Game-Boy-adjacent chunk. Sprites key on screen
+      // radius, so switching width just triggers fresh bakes.
+      const pw = (window.FF.PIXELATE_W | 0) || 640;
       const ph = Math.max(1, Math.round(pw * height / Math.max(1, width)));
       if (pxCanvas.width !== pw) pxCanvas.width = pw;
       if (pxCanvas.height !== ph) pxCanvas.height = ph;
@@ -1250,16 +1255,19 @@ function createRenderer(canvas) {
   // case for low-res rendering: the same melon re-rasterizes to
   // different pixels every frame (boiling). The retro-correct cure:
   // bake each melon ONCE per (colour, pattern, body, radius, decal
-  // loadout) at 32 quantized rotations, then blit the identical
+  // loadout) at quantized rotations, then blit the identical
   // pixels forever. The bake renders at 8x through the SAME vector
-  // painter, then MAJORITY-VOTE downsamples: each sprite pixel takes
+  // painter (64 quantized rotations), then MAJORITY-VOTE
+  // downsamples: each sprite pixel takes
   // the dominant colour of its 8x8 block, not the average — voting
   // answers "what IS this pixel" where averaging answers "what is
   // the mean near it" (that mean is anti-aliasing, the mush we are
   // escaping). Stepped 32-angle rotation is a period artifact, kept
   // deliberately.
   let pxMode = false;                  // set by render() per frame
-  const SPRITE_ANGLES = 32;
+  const SPRITE_ANGLES = 64;  // ruled up from 32: halves the settle-
+                             // snap; past 64 adjacent frames bake
+                             // near-identical pixels
   const melonSprites = new Map();
   function decalsSig(decals) {
     if (!decals || !decals.length) return '';
