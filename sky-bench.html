@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fast Fruit — sky bench</title>
+<!--
+  SKY BENCH — the authoring tool for js/sky.js specs.
+
+  THE ONE RULE THIS FILE OBEYS: it does not contain a sky painter.
+  Every pixel it shows comes from FF.sky.rows(), the same pure
+  function the renderer blits, loaded from the shipped module below.
+  A bench that re-implements the painter is a proof that approximates
+  the painter — which is exactly how Phase 2's rim guarantee passed
+  its PIL proofs and regressed on the device. The bench may lay out,
+  measure and export; it may not solve.
+
+  It authors DATA, never code: the export is a spec object to paste
+  into the library in js/sky.js. A bad sky is therefore never a code
+  change, and every sky in the game stays diffable and reviewable.
+
+  file:// compatible, zero dependencies, one file, like fm-bench.
+-->
+<style>
+  :root {
+    --bg: #101013; --panel: #191920; --line: #2b2b36;
+    --ink: #e8e8ef; --dim: #8b8b9c; --accent: #7fdd6a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 ui-monospace, "Geist Mono", Menlo, Consolas, monospace;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+  }
+  h1 { font-size: 14px; margin: 0; letter-spacing: .08em; }
+  .dim { color: var(--dim); }
+  main { display: flex; gap: 16px; padding: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+  .card h2 { font-size: 11px; margin: 0 0 10px; letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
+  canvas { image-rendering: pixelated; display: block; background: #000; }
+  label { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  label span:first-child { width: 92px; color: var(--dim); flex: none; }
+  input[type=range] { flex: 1; min-width: 110px; }
+  input[type=number] { width: 62px; }
+  input[type=text], input[type=color] { background: #0d0d12; color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 2px 5px; }
+  input[type=color] { padding: 0; width: 34px; height: 22px; }
+  select, button { background: #0d0d12; color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 2px 6px 2px 0; }
+  td.k { color: var(--dim); }
+  .stoprow { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .stoprow .t { width: 54px; }
+  .warn { color: #ff8f6a; }
+  .good { color: var(--accent); }
+  textarea {
+    width: 100%; height: 220px; background: #0d0d12; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 8px;
+  }
+  .swatches { display: flex; flex-wrap: wrap; gap: 2px; max-width: 340px; }
+  .sw { width: 15px; height: 15px; border: 1px solid #000; }
+  #refwrap { position: relative; }
+  #ref { position: absolute; left: 0; top: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SKY BENCH</h1>
+  <span class="dim">FF.sky.rows() — the shipped solver, not a copy</span>
+  <span class="dim" id="load"></span>
+</header>
+
+<main>
+  <!-- ---------- preview ---------- -->
+  <div class="col">
+    <div class="card">
+      <h2>320 buffer <span class="dim" id="dims"></span></h2>
+      <div id="refwrap">
+        <canvas id="sky" width="320" height="180"></canvas>
+        <canvas id="ref" width="320" height="180"></canvas>
+      </div>
+      <label style="margin-top:8px">
+        <span>zoom</span>
+        <input type="range" id="zoom" min="1" max="6" step="1" value="3" />
+        <span id="zoomv" class="dim"></span>
+      </label>
+      <label>
+        <span>buffer h</span>
+        <input type="range" id="bufh" min="120" max="260" step="1" value="180" />
+        <span id="bufhv" class="dim"></span>
+      </label>
+      <label>
+        <span>reference</span>
+        <input type="file" id="refFile" accept="image/*" />
+      </label>
+      <label>
+        <span>ref opacity</span>
+        <input type="range" id="refOp" min="0" max="100" step="1" value="0" />
+        <span id="refOpv" class="dim"></span>
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>Legibility — the sky must not eat the cast</h2>
+      <div class="dim" style="margin-bottom:6px">
+        collision area against melon anchors + nameplate green
+      </div>
+      <div id="legib"></div>
+      <div class="swatches" id="legibSw" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ---------- spec editor ---------- -->
+  <div class="col">
+    <div class="card">
+      <h2>Spec</h2>
+      <label><span>load</span>
+        <select id="pick"></select>
+        <button id="dup">duplicate</button>
+      </label>
+      <label><span>id</span><input type="text" id="sid" size="18" /></label>
+      <label><span>name</span><input type="text" id="sname" size="24" /></label>
+      <label><span>role</span>
+        <select id="srole">
+          <option>MORNING</option><option>NOON</option><option>GOLDEN</option>
+          <option>DUSK</option><option>NIGHT</option>
+        </select>
+      </label>
+      <label><span>sun °</span>
+        <input type="range" id="ssun" min="200" max="340" step="4" />
+        <span id="ssunv" class="dim"></span>
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>Band policy</h2>
+      <label><span>preset</span><select id="spolicy"></select></label>
+      <label><span>band px</span>
+        <input type="range" id="pband" min="1" max="8" step="1" />
+        <span id="pbandv" class="dim"></span></label>
+      <label><span>L rung</span>
+        <input type="range" id="pquant" min="1" max="16" step="1" />
+        <span id="pquantv" class="dim"></span></label>
+      <label><span>hue rung °</span>
+        <input type="range" id="pquantH" min="0" max="30" step="1" />
+        <span id="pquantHv" class="dim"></span></label>
+      <label><span>chroma rung</span>
+        <input type="range" id="pquantS" min="0" max="20" step="1" />
+        <span id="pquantSv" class="dim"></span></label>
+      <label><span>dither</span>
+        <input type="range" id="pdither" min="0" max="4" step="1" />
+        <span id="pditherv" class="dim"></span></label>
+      <label><span>cut</span><input type="checkbox" id="psnap" /></label>
+    </div>
+
+    <div class="card">
+      <h2>Shape <span class="dim">field + burst</span></h2>
+      <div class="dim" style="margin-bottom:6px">
+        The references hold a flat field for most of the sky and spend
+        the whole journey in the bottom quarter. These two move the
+        STOPS — they are an authoring affordance, not a second model.
+      </div>
+      <label><span>field ends</span>
+        <input type="range" id="fend" min="0" max="95" step="1" />
+        <span id="fendv" class="dim"></span></label>
+      <label><span>burst bias</span>
+        <input type="range" id="fbias" min="50" max="250" step="5" />
+        <span id="fbiasv" class="dim"></span></label>
+      <label><span>floor</span>
+        <input type="range" id="ffloor" min="20" max="100" step="1" />
+        <span id="ffloorv" class="dim"></span></label>
+      <div class="dim">
+        Where the ramp bottoms out. ~50% leaves the lower half for the
+        parallax land layers; 100% is the above-the-clouds sky.
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- stops + measures + export ---------- -->
+  <div class="col">
+    <div class="card">
+      <h2>Stops <span class="dim">hue is UNWRAPPED — write the path you mean</span></h2>
+      <div id="stops"></div>
+      <button id="addStop">+ stop</button>
+    </div>
+
+    <div class="card">
+      <h2>Measures</h2>
+      <table id="measures"></table>
+      <div class="swatches" id="palette" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Derived light column</h2>
+      <div class="dim" style="margin-bottom:6px">
+        What this sky does to melons, terrain and signage. Relative to
+        the reference sky, so the reference derives to the identity.
+      </div>
+      <table id="column"></table>
+      <canvas id="lit" width="260" height="46" style="margin-top:8px"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Export <span class="dim">paste into js/sky.js</span></h2>
+      <textarea id="out" readonly></textarea>
+      <button id="copy" style="margin-top:6px">copy</button>
+    </div>
+  </div>
+</main>
+
+<!-- THE SHIPPED MODULES. Order matters exactly as in index.html:
+     sky.js solves its library's stops at definition time through
+     shading's own converters. -->
+<script src="js/dmath.js"></script>
+<script src="js/config.js"></script>
+<script src="js/fruits.js"></script>
+<script src="js/palette.js"></script>
+<script src="js/shading.js"></script>
+<script src="js/sky.js"></script>
+
+<script>
+(function () {
+'use strict';
+var FF = window.FF, SKY = FF.sky, SH = FF.shading;
+document.getElementById('load').textContent =
+  SKY ? (SKY.SPEC_IDS.length + ' specs loaded') : 'FF.sky MISSING';
+if (!SKY) return;
+
+// ---- working spec (a deep copy; the library is never mutated) ----
+var spec = null;
+function load(id) {
+  var s = SKY.get(id);
+  spec = JSON.parse(JSON.stringify(s));
+  delete spec.column;          // the bench always shows the DERIVED column
+  spec.stops.forEach(function (st) { if (st.curve === undefined) delete st.curve; });
+  syncControls();
+  redraw();
+}
+
+// ---- helpers -------------------------------------------------------
+var $ = function (id) { return document.getElementById(id); };
+function hexOf(st) { return SKY.hslToHex(st.h, st.s, st.l); }
+function setFromHex(st, hex) {
+  var c = SKY.hexToHsl(hex);
+  // The hue KEEPS its winding: an author who has dialled a descending
+  // path through green does not want a colour-picker tweak to silently
+  // re-wrap it the short way round.
+  var turns = Math.round((st.h - c.h) / 360);
+  st.h = c.h + turns * 360; st.s = c.s; st.l = c.l;
+}
+
+// ---- the preview: rows in, pixels out. No solving here. ----
+function redraw() {
+  var H = +$('bufh').value, Z = +$('zoom').value;
+  var hz = SKY.floorRow(H, spec);
+  var cv = $('sky'), rf = $('ref');
+  cv.width = 320; cv.height = H;
+  rf.width = 320; rf.height = H;
+  cv.style.width = rf.style.width = (320 * Z) + 'px';
+  cv.style.height = rf.style.height = (H * Z) + 'px';
+  var g = cv.getContext('2d');
+  // rowsUncached: the bench edits ONE spec object in place, and the
+  // shipped rows() cache is keyed on that object's identity — the
+  // right key for the game (where a spec never changes) and the
+  // wrong one here (where it changes on every slider move).
+  var rows = SKY.rowsUncached(H, spec);
+  for (var i = 0; i < rows.length; i++) {
+    g.fillStyle = rows[i].hex;
+    g.fillRect(0, rows[i].y, 320, rows[i].h);
+  }
+  // horizon marker, outside the sky's own pixels
+  g.fillStyle = 'rgba(255,255,255,0.25)';
+  g.fillRect(0, hz, 320, 1);
+  $('dims').textContent = '320x' + H + '  floor ' + hz
+    + ' (' + Math.round(SKY.floorOf(spec) * 100) + '%)';
+  $('zoomv').textContent = Z + 'x';
+  $('bufhv').textContent = H;
+  drawRef();
+  measure(rows);
+  column();
+  exportSpec();
+}
+
+// ---- reference overlay ---------------------------------------------
+var refImg = null;
+function drawRef() {
+  var rf = $('ref'), g = rf.getContext('2d');
+  g.clearRect(0, 0, rf.width, rf.height);
+  var op = +$('refOp').value / 100;
+  $('refOpv').textContent = Math.round(op * 100) + '%';
+  if (!refImg || op <= 0) return;
+  g.globalAlpha = op;
+  g.drawImage(refImg, 0, 0, rf.width, rf.height);
+  g.globalAlpha = 1;
+}
+$('refFile').addEventListener('change', function (e) {
+  var f = e.target.files && e.target.files[0];
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () {
+    var im = new Image();
+    im.onload = function () { refImg = im; if (+$('refOp').value === 0) $('refOp').value = 50; drawRef(); };
+    im.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+});
+
+// ---- measures: the period disciplines, made countable ---------------
+function measure(rows) {
+  var H2 = +$('bufh').value;
+  var tones = SKY.toneCount(spec, H2);
+  var bs = SKY.bandStats(spec, H2);
+  var budget = spec.budget === undefined ? 24 : spec.budget;
+  var bandPx = spec.bandPx === undefined ? 4 : spec.bandPx;
+  var t = $('measures');
+  t.innerHTML =
+    row('tones', tones + ' / ' + budget, tones > budget ? 'warn' : 'good') +
+    row('burst band', bs.burstMax + ' / ' + bandPx + ' px',
+      bs.burstMax > bandPx ? 'warn' : 'good') +
+    row('burst mean', bs.burstMean.toFixed(1) + ' px', '') +
+    row('field share', (bs.fieldShare * 100).toFixed(0) + '%',
+      bs.fieldShare >= 0.35 ? 'good' : 'warn') +
+    row('field', bs.field + ' px', '') +
+    row('rows', rows.length, '') +
+    row('stops', spec.stops.length, '');
+  var seen = [], set = {};
+  rows.forEach(function (r) { if (!set[r.hex]) { set[r.hex] = 1; seen.push(r.hex); } });
+  $('palette').innerHTML = seen.map(function (h) {
+    return '<div class="sw" title="' + h + '" style="background:' + h + '"></div>';
+  }).join('');
+  legibility(rows);
+}
+function row(k, v, cls) {
+  return '<tr><td class="k">' + k + '</td><td class="' + (cls || '') + '">' + v + '</td></tr>';
+}
+
+// ---- legibility: an 18 px melon has to read against this -----------
+// The gameplay read is a melon airborne against the sky, with a green
+// nameplate over it. A sky that can be any colour can be a colour that
+// eats the cast, so this is measured while you tune rather than
+// discovered on the device.
+var MARKS = (function () {
+  var out = [], names = Object.keys(FF.FRUITS || {});
+  for (var i = 0; i < names.length; i++) {
+    for (var s = 0; s < 5; s++) {
+      var a = SH.anchorColor(names[i], [1, 7, 99, 4242, 88888][s]);
+      out.push(a); out.push(SH.bandColor(a, 18));
+    }
+  }
+  out.push('#00ff00');           // the sacred nameplate green
+  return out;
+})();
+function rgb(h) {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+function dist(a, b) {
+  var x = rgb(a), y = rgb(b), rm = (x[0] + y[0]) / 2;
+  var dr = x[0] - y[0], dg = x[1] - y[1], db = x[2] - y[2];
+  return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+}
+function legibility(rows) {
+  var hz = SKY.floorRow(+$('bufh').value, spec);
+  var tot = 0, coll = 0, worst = 1e9, worstPair = null, bad = [];
+  rows.forEach(function (r) {
+    if (r.y >= hz) return;
+    tot += r.h;
+    var m = 1e9, mk = null;
+    for (var i = 0; i < MARKS.length; i++) {
+      var d = dist(r.hex, MARKS[i]);
+      if (d < m) { m = d; mk = MARKS[i]; }
+    }
+    if (m < 40) { coll += r.h; if (bad.length < 40) bad.push([r.hex, mk]); }
+    if (m < worst) { worst = m; worstPair = [r.hex, mk]; }
+  });
+  var pct = tot ? 100 * coll / tot : 0;
+  $('legib').innerHTML =
+    row('collision area', pct.toFixed(1) + '% / 25%', pct > 25 ? 'warn' : 'good') +
+    row('closest pair', worstPair ? (worstPair[0] + ' vs ' + worstPair[1]) : '—', '');
+  $('legibSw').innerHTML = bad.map(function (p) {
+    return '<div class="sw" title="' + p[0] + ' vs ' + p[1] + '" style="background:'
+      + p[0] + ';border-color:' + p[1] + ';border-width:3px"></div>';
+  }).join('');
+}
+
+// ---- the derived light column --------------------------------------
+function column() {
+  var ref = SKY.ambient(SKY.get('noon'));
+  var col = SKY.columnFor(spec, ref);
+  var amb = SKY.ambient(spec);
+  $('column').innerHTML =
+    row('mL (value)', col.mL.toFixed(3), '') +
+    row('mS (chroma)', col.mS.toFixed(3), '') +
+    row('lift', col.lift.toFixed(3), '') +
+    row('tint', (col.tint || '—') + '  k=' + col.tintK.toFixed(3), '') +
+    row('field', amb.field, '') +
+    row('horizon', amb.horizon, '');
+  // A strip of world tones as this sky would light them.
+  var probes = ['#3a3a3a', '#454545', SH.anchorColor('watermelon', 7),
+    SH.anchorColor('cantaloupe', 99), SH.anchorColor('honeydew', 1),
+    SH.anchorColor('eightBall', 42), '#00ff00'];
+  var cv = $('lit'), g = cv.getContext('2d');
+  var w = cv.width / probes.length;
+  for (var i = 0; i < probes.length; i++) {
+    g.fillStyle = probes[i];
+    g.fillRect(i * w, 0, w, 22);
+    g.fillStyle = applyCol(probes[i], col);
+    g.fillRect(i * w, 22, w, 24);
+  }
+}
+// The bench does not own the column maths either: it asks palette to
+// apply the derived column by installing it on a scratch sky.
+function applyCol(hex, col) {
+  var saveId = FF.palette.getSky();
+  var tmpId = '__bench__';
+  SKY.SPECS[tmpId] = { id: tmpId, stops: spec.stops, role: spec.role,
+    sun: spec.sun, budget: 999, column: col };
+  FF.palette.setSky(tmpId);
+  var out = FF.palette.lit(hex);
+  FF.palette.setSky(saveId);
+  delete SKY.SPECS[tmpId];
+  return out;
+}
+
+// ---- export ---------------------------------------------------------
+function exportSpec() {
+  var lines = [];
+  lines.push('define({');
+  lines.push("  id: '" + spec.id + "', name: '" + (spec.name || spec.id) + "', role: '" + spec.role + "',");
+  var pol = ["policy: '" + (spec.policy || 'FINE') + "'"];
+  ['band', 'quant', 'quantH', 'quantS', 'dither'].forEach(function (k) {
+    if (spec[k] !== undefined) pol.push(k + ': ' + spec[k]);
+  });
+  if (spec.snap) pol.push('snap: true');
+  pol.push('sun: ' + spec.sun);
+  pol.push('budget: ' + (spec.budget === undefined ? 24 : spec.budget));
+  pol.push('bandPx: ' + (spec.bandPx === undefined ? 4 : spec.bandPx));
+  pol.push('floor: ' + round2(SKY.floorOf(spec)));
+  lines.push('  ' + pol.join(', ') + ',');
+  lines.push('  stops: [');
+  spec.stops.forEach(function (st) {
+    var hex = hexOf(st);
+    var opts = [];
+    var natural = SKY.hexToHsl(hex).h;
+    if (Math.abs(natural - st.h) > 0.5) opts.push('h: ' + round2(st.h));
+    if (st.curve !== undefined && st.curve !== 1) opts.push('curve: ' + round2(st.curve));
+    lines.push('    ' + (st.px === undefined
+      ? "stop(" + round2(st.t) + ", '" + hex + "'"
+      : "stopPx(" + st.px + ", '" + hex + "'")
+      + (opts.length ? ', { ' + opts.join(', ') + ' }' : '') + '),');
+  });
+  lines.push('  ],');
+  lines.push('});');
+  $('out').value = lines.join('\n');
+}
+function round2(v) { return Math.round(v * 100) / 100; }
+$('copy').addEventListener('click', function () {
+  $('out').select();
+  try { document.execCommand('copy'); } catch (e) {}
+});
+
+// ---- stop editor -----------------------------------------------------
+function renderStops() {
+  var host = $('stops');
+  host.innerHTML = '';
+  spec.stops.forEach(function (st, i) {
+    var d = document.createElement('div');
+    d.className = 'stoprow';
+    d.innerHTML =
+      (st.px === undefined
+        ? '<input class="t" type="number" step="0.01" min="0" max="1" value="' + round2(st.t) + '">'
+        : '<input class="t" type="number" step="1" min="0" max="120" value="' + st.px + '"><span class="dim">px</span>') +
+      '<input type="color" value="' + hexOf(st) + '">' +
+      '<input type="text" size="7" value="' + hexOf(st) + '">' +
+      '<span class="dim">h</span><input type="number" step="1" style="width:58px" value="' + Math.round(st.h) + '">' +
+      '<span class="dim">curve</span><input type="number" step="0.1" style="width:52px" value="'
+        + (st.curve === undefined ? 1 : st.curve) + '">' +
+      '<button>x</button>';
+    var el = d.querySelectorAll('input, button');
+    el[0].addEventListener('input', function () {
+      if (st.px === undefined) st.t = clamp01(+this.value);
+      else st.px = Math.max(0, +this.value);
+      redraw();
+    });
+    el[1].addEventListener('input', function () { setFromHex(st, this.value); el[2].value = this.value; el[3].value = Math.round(st.h); redraw(); });
+    el[2].addEventListener('change', function () {
+      if (/^#[0-9a-fA-F]{6}$/.test(this.value)) { setFromHex(st, this.value); el[1].value = this.value; el[3].value = Math.round(st.h); redraw(); }
+    });
+    el[3].addEventListener('input', function () { st.h = +this.value; redraw(); });
+    el[4].addEventListener('input', function () {
+      var v = +this.value; if (v === 1) delete st.curve; else st.curve = v; redraw();
+    });
+    el[5].addEventListener('click', function () {
+      if (spec.stops.length <= 2) return;
+      spec.stops.splice(i, 1); renderStops(); redraw();
+    });
+    host.appendChild(d);
+  });
+}
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+$('addStop').addEventListener('click', function () {
+  var last = spec.stops[spec.stops.length - 1];
+  var prev = spec.stops[spec.stops.length - 2] || spec.stops[0];
+  spec.stops.splice(spec.stops.length - 1, 0, {
+    t: round2((prev.t + last.t) / 2),
+    h: (prev.h + last.h) / 2, s: (prev.s + last.s) / 2, l: (prev.l + last.l) / 2,
+  });
+  renderStops(); redraw();
+});
+
+// ---- SHAPE: field + burst, expressed by MOVING THE STOPS ------------
+// Deliberately not a second model axis. The stop list stays the one
+// authority for shape; this is ergonomics over it, so that "where does
+// the field end" — the knob the references actually vary — is one
+// slider instead of four numbers.
+function applyShape() {
+  var end = +$('fend').value / 100;
+  var bias = +$('fbias').value / 100;
+  $('fendv').textContent = Math.round(end * 100) + '%';
+  $('fbiasv').textContent = bias.toFixed(2);
+  var n = spec.stops.length;
+  if (n < 3 || spec.stops[1].px !== undefined) return;   // px stops own their own positions
+  spec.stops[1].t = round2(end);
+  // Interior stops distribute across the burst by the bias exponent.
+  for (var i = 2; i < n - 1; i++) {
+    if (spec.stops[i].px !== undefined) continue;
+    var u = (i - 1) / (n - 2);
+    spec.stops[i].t = round2(end + (1 - end) * Math.pow(u, bias));
+  }
+  renderStops(); redraw();
+}
+$('ffloor').addEventListener('input', function () {
+  spec.floor = +this.value / 100;
+  $('ffloorv').textContent = this.value + '%';
+  redraw();
+});
+$('fend').addEventListener('input', applyShape);
+$('fbias').addEventListener('input', applyShape);
+
+// ---- control wiring --------------------------------------------------
+function syncControls() {
+  $('sid').value = spec.id;
+  $('sname').value = spec.name || spec.id;
+  $('srole').value = spec.role || 'NOON';
+  $('ssun').value = spec.sun === undefined ? 268 : spec.sun;
+  $('ssunv').textContent = $('ssun').value + '°';
+  var pol = SKY.policyOf(spec);
+  $('spolicy').value = spec.policy || 'FINE';
+  $('pband').value = pol.band; $('pbandv').textContent = pol.band;
+  $('pquant').value = pol.quant; $('pquantv').textContent = pol.quant;
+  $('pquantH').value = pol.quantH; $('pquantHv').textContent = pol.quantH;
+  $('pquantS').value = pol.quantS; $('pquantSv').textContent = pol.quantS;
+  $('pdither').value = pol.dither; $('pditherv').textContent = pol.dither || 'off';
+  $('psnap').checked = !!pol.snap;
+  $('ffloor').value = Math.round(SKY.floorOf(spec) * 100);
+  $('ffloorv').textContent = $('ffloor').value + '%';
+  if (spec.stops.length >= 3) {
+    $('fend').value = Math.round(spec.stops[1].t * 100);
+    $('fendv').textContent = Math.round(spec.stops[1].t * 100) + '%';
+  }
+  renderStops();
+}
+$('spolicy').innerHTML = Object.keys(SKY.POLICIES).map(function (k) {
+  return '<option>' + k + '</option>';
+}).join('');
+$('pick').innerHTML = SKY.SPEC_IDS.map(function (id) {
+  return '<option value="' + id + '">' + id + '</option>';
+}).join('');
+$('pick').addEventListener('change', function () { load(this.value); });
+$('dup').addEventListener('click', function () {
+  spec.id = spec.id + '-2'; $('sid').value = spec.id; exportSpec();
+});
+$('sid').addEventListener('input', function () { spec.id = this.value; exportSpec(); });
+$('sname').addEventListener('input', function () { spec.name = this.value; exportSpec(); });
+$('srole').addEventListener('change', function () { spec.role = this.value; redraw(); });
+$('ssun').addEventListener('input', function () {
+  spec.sun = +this.value; $('ssunv').textContent = this.value + '°'; exportSpec();
+});
+$('spolicy').addEventListener('change', function () {
+  spec.policy = this.value;
+  ['band', 'quant', 'quantH', 'quantS', 'dither', 'snap'].forEach(function (k) { delete spec[k]; });
+  syncControls(); redraw();
+});
+[['pband', 'band'], ['pquant', 'quant'], ['pquantH', 'quantH'],
+ ['pquantS', 'quantS'], ['pdither', 'dither']].forEach(function (p) {
+  $(p[0]).addEventListener('input', function () {
+    spec[p[1]] = +this.value;
+    $(p[0] + 'v').textContent = (p[1] === 'dither' && +this.value === 0) ? 'off' : this.value;
+    redraw();
+  });
+});
+$('psnap').addEventListener('change', function () { spec.snap = this.checked; redraw(); });
+['zoom', 'bufh'].forEach(function (k) { $(k).addEventListener('input', redraw); });
+$('refOp').addEventListener('input', drawRef);
+
+load('asia-lime');
+})();
+</script>
+</body>
+</html>

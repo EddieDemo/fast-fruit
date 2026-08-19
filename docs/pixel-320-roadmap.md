@@ -748,3 +748,444 @@ against the analytic slab: left-to-right and right-to-left decks now
 both match to 0.33 px mean error on the underside.
 
 Suite: verify-px-render P1-P3, with P2 the reversed case specifically.
+
+## Terrain fill v3 — THE SLAB POLYGON IS THE ONE AUTHORITY (2026-08-19)
+
+Two device bugs, one root cause. In pixel mode the underside took a
+different shape from vector's on curved ground, and matAbove
+CEILINGS painted as a 1 px line — the roof was 99% invisible. The
+audit (5 seeds, every strand class, shipped fill vs an exact
+rasterization of the slab polygon) measured three failure classes:
+
+  * CEILINGS: matAbove extrudes the bottom UPWARD, so yBot < yTop
+    and Math.max(1, yBot - yTop) collapsed every roof column to 1 px.
+    The P2 fix was for reversed DECKS; ceilings invert the vertical
+    order, which the sampler never touched.
+  * NON-FUNCTION BOUNDARIES: the underside is the top offset 260 px
+    along the normal, so at rollers and vees it backtracks in x and
+    self-overlaps; "first containing segment" picked an arbitrary
+    lobe — worst 140 px on a shipped primary, 580 px on fold legs.
+  * X-EXTENT: columns were only visited under TOP segments, but the
+    bottom and the caps protrude sideways by up to SLAB_T·|nx| —
+    30% of a fold leg was never painted at all.
+
+All three are the same modelling error: two independent
+single-valued samplers (yTop(x) from the top polyline, yBot(x) from
+the bottom) standing in for a polygon, re-earning the polygon's
+implicit properties one shipped bug at a time — exactly the strand-
+order lesson, still being paid.
+
+THE FIX deletes both samplers. The fill now rasterizes THE SAME
+closed polygon the vector path fills (top forward, bottom reversed —
+traceSlabPath's geometry), column by column: intersect the boundary
+with the column's centre line, sort the crossings, fill the NONZERO
+WINDING spans — the rule canvas fill() applies. Pixel silhouette
+equals vector silhouette BY CONSTRUCTION; ceilings, reversed
+strands, folds (several spans per column), caps and self-overlapping
+offsets are not cases, because nothing is a case to a polygon.
+Integer vertices (Phase 1.2 snap) + half-integer sample lines mean a
+sample can never land on a vertex: the crossing-parity tie-break is
+retired by construction, not by epsilon. Everything downstream of
+the span decision — per-band shadow bisection, the world-anchored
+checker — is the shipped logic verbatim; only where [yTop, yBot]
+comes from changed. Mechanically: an edge table bucketed by first
+visible column, swept with an active list — O(edges + columns +
+crossings), and the off-screen bulk of a streamed strand costs one
+range check per edge. The renderer also stops mutating shared
+geometry (the sampler's bo._cur cursor is gone).
+
+THE SUITE LESSON: P1-P3 validated the SAMPLER in isolation — the
+component, not the picture — which is how three classes shipped
+behind a passing suite. New Q1-Q4 assert the picture itself:
+per-column painted coverage must EXACTLY equal the nonzero-winding
+spans of the snapped slab polygon (edgeOff=0, no tolerance), across
+the four measured classes — curved primary, reversed deck,
+non-monotone strand, matAbove ceiling. The reference is an
+independent implementation (direct per-column gather, library sort)
+over the snapped vertices; referencing the SNAPPED polygon is what
+permits exactness, since a float reference legitimately disagrees on
+near-vertical edges (a 0.5 px snap moves a steep crossing by
+|dy/dx|/2). Both checks were mutation-tested: forcing spans to 1 px
+fails all four; dropping the cap edges fails Q3/Q4 — the checks can
+fail, per the K2a1 rule. E3/P3/M1 re-pinned to the new law; E1/E2,
+P1/P2, N1-N5 pass unchanged on behaviour.
+
+# PHASE 6 — THE SKY IS AUTHORED (2026-08-19)
+
+Eddie's review of cropped reference skies (Out Run, Super Hang-On)
+against ours settled that the Phase 4 model was not merely tuned
+wrong but STRUCTURALLY unable to draw four of six references:
+
+  * FLAT. The Out Run title sky is ONE COLOUR. A model whose every
+    parameter is a RATE cannot express "no gradient".
+  * FIELD + BURST. In the crops 60-75% of the sky is a genuine
+    PLATEAU and the whole tonal journey happens in the bottom
+    quarter. Ours ran a ladder the full height and merely COMPRESSED
+    it (SKY_SQUEEZE). That shape difference, not colour choice, was
+    the single biggest reason ours did not read as period.
+  * CHROMA MAY RISE. The Asia sky walks cyan -> yellow-green at FULL
+    saturation. `fade` only ever subtracts, so the SIGN of the chroma
+    move was hard-coded into a law we called atmospheric perspective.
+    Haze is real; a stylised Sega sky is under no obligation to be
+    hazy.
+  * NON-MONOTONE VALUE AND HARD CUTS. The America sky cuts from a
+    violet field into a pale band and back down again, twice. One
+    eased segment has no way to turn around.
+
+Fifth finding, and the one that changed a shipped justification: TONE
+COUNT. The crops run 4-20 tones for a whole sky. Phase 4 spent ~115,
+justified by "the reference hardware spent much of its palette on
+sky" — true, but that was much of SIXTY-FOUR. The budget is now a
+declared number per sky with a suite check, and it is what forces
+plateaus to be plateaus.
+
+## 6.0 THE MODEL — js/sky.js
+
+A sky is an ordered list of STOPS in sky space (t=0 zenith, t=1
+horizon) plus a BAND POLICY. Everything above becomes expressible: a
+flat sky is two stops of one colour; field-plus-burst is a pair at the
+top and a cluster at the bottom; rising chroma is two stop values; a
+cut is a segment the policy refuses to interpolate.
+
+HUE IS STORED UNWRAPPED, and it is load-bearing. Phase 5.0b's v2 cast
+rotated along the SHORTER ARC and seamed wherever the ends sat near
+180 degrees apart — a bug that only appeared on sunsets, i.e. on the
+feature. Here the author writes the hue they mean (cyan 175 to
+yellow-green 78 descends through green; 438 would climb through
+purple). Both are expressible, neither is guessed, and there is no arc
+for an algorithm to choose ambiguously.
+
+QUANTISATION IS THREE-AXIS. Stepping LIGHTNESS alone does not hold a
+tone budget: measured, a burst with a moving hue emitted a distinct
+tone per row at a single lightness rung, because only one of three
+axes was being stepped. The reference hardware quantised COLOURS, not
+brightness — that is the difference between a small palette and a
+small brightness ladder.
+
+DITHER IS A TRANSITION MECHANISM, NOT A TEXTURE. The crops show
+transition zones ALTERNATING (pale, darker, pale) over several rows —
+one-row alternation between adjacent palette entries, which is how the
+hardware faked intermediate tones. Implemented as ordered dithering on
+the RUNG's fractional part. The first cut applied the threshold at
+EVERY row, so a flat field whose lightness happened to sit between two
+rungs alternated forever: a 66%-plateau sky measured an 8% field. It
+now engages only where the exact rung is actually moving.
+
+## 6.1 ROWS, NOT PAINT — the separation that makes the bench honest
+
+`sky.rows(height, horizonY, spec) -> [{y, h, hex}]` is PURE: no
+canvas, no DOM, no state. The renderer blits that list, sky-bench.html
+blits the same list, and verify-px-render reads the same list instead
+of scraping fillRect calls. One authority, three consumers.
+
+This ordering was deliberate. A bench that re-implements the painter
+is a proof that approximates the painter, which is exactly how Phase
+2's rim guarantee passed its PIL proofs and regressed on the device.
+The bench therefore loads the shipped modules and contains no solver —
+pinned by suite check R6a.
+
+The bench AUTHORS DATA, never code: its export is a spec object to
+paste into the library, so a bad sky is never a code change and every
+sky in the game stays diffable and reviewable. Its "field ends" and
+"burst bias" sliders MOVE THE STOPS rather than adding a second shape
+axis — ergonomics over one authority, not a rival to it.
+
+## 6.2 THE LIBRARY
+
+The five shipped hours re-expressed as two-stop specs, BYTE-IDENTICAL
+to Phase 4 (F1: 835 rows, zero mismatches). If a stop list could not
+reproduce the shipped ladder exactly the model would have been wrong,
+and that is how we would have found out before authoring anything.
+
+Six authored against the crops: flat-cobalt (flat), asia-lime (rising
+chroma, descending hue), america-violet (hard cuts, two value dips),
+hangon-violet (violet->cream stripes), africa-pale (5 tones, 77%
+field), night-indigo. Authored, not generated: the reference look
+comes from somebody CHOOSING those stops, and a free generator's
+median output is mud. Variety is a wide library plus a seeded draw —
+art direction with a random seat, not randomness with an art budget.
+
+Proof: phase6-sky-library.png (rendered FROM rows(), not reconstructed).
+
+## 6.3 LIGHT DERIVED FROM THE SKY
+
+Outdoors the sky IS the light, so a sky and a light column are two
+tellings of one fact; Phase 5 authored them side by side and kept them
+in sync by hand. A sky now has two constituents that do different
+jobs: the FIELD (the plateau, most of the area) is the ambient fill,
+and the HORIZON (the burst) is the bounce. The tint mixes them
+field-dominant.
+
+EVERYTHING IS RELATIVE TO A REFERENCE SKY, which is what makes the
+identity EXACT rather than tuned: the reference derives to lift 0 /
+mL 1 / mS 1 / tintK 0 by construction. Phase 5.0b's first NOON
+declared moves its own identity short-circuit never applied; this
+shape makes that class of lie impossible.
+
+Two rules carried forward, each of which cost a shipped bug: VALUE IS
+mL's JOB ALONE (the cast carries hue and chroma only), and CHROMA
+MOVES OPPOSITE VALUE (so mS is derived FROM mL, not measured).
+
+MIGRATION IS EDDIE'S RULING, NOT AN ASSUMPTION. The five classic
+hours keep their AUTHORED columns (pinned by R8d), so nothing that
+exists today changes appearance; only the new skies light themselves.
+Their derived columns differ noticeably from the hand-tuned ones
+(DUSK derives mL 0.80 against an authored 0.70), which is exactly the
+side-by-side judgement to make on device.
+
+Caught in build: lit()'s fast path tested `currentTime === 'NOON'`,
+true only because NOON's column HAPPENS to be the identity — an
+accident of the table, not a fact about the light. With skies choosing
+columns, a NOON-role sky can legitimately cast and the named test
+silently dropped it. It now asks whether THIS COLUMN is the identity,
+which is the question that was always meant.
+
+Also caught: the ambient's first cut measured the below-horizon fill,
+which is ONE row stretched over the rest of the buffer and therefore
+outweighs any real band by area — every legacy hour reported a WHITE
+field and the whole cast collapsed. That row is a continuation of the
+horizon, not a constituent of the sky.
+
+## 6.4 LEGIBILITY IS A LAW
+
+The gameplay read is an 18 px melon airborne against the sky with a
+green nameplate over it. A generator that can make any sky can make
+one that eats the cast.
+
+The metric is COLLISION AREA, not a worst pair: the shipped ladder's
+near-white horizon row legitimately matches a pale melon's highlight,
+and a law the shipped game FAILS is a law whose tolerance gets quietly
+widened until it means nothing. The ceiling is the shipped worst
+(noon, 20.5% of sky area within a redmean distance of 40), stated as
+such. Every authored sky measures under 4%.
+
+## 6.5 SELECTION
+
+Orthogonal to Phase 5.1 by construction. That ruling's guarantee — a
+cup walks the day, consecutive legs never repeat an hour — is a
+property of the ROLE sequence and cost a measured 157-of-300 failure
+to get right, so it is not reopened: the seed now chooses WHICH SKY
+of the already-chosen role. One line at the call site; R10 re-measures
+the old guarantee (0 repeats in 400 cups) alongside the new spread.
+
+## Suite and tooling
+
+verify-px-render F0-F7 (library well-formed, BYTE-IDENTITY, palette
+membership, the classic ladder's own laws re-measured through rows(),
+pinned, coverage, no-movement, and the renderer no longer solving) and
+R1-R10c (tone budget, field share, the four impossible shapes drawn,
+unwrapped hue in source AND behaviour, dither gating, purity, bench
+has no solver, legibility, derived columns, computed fast path,
+selection). Battery 18/18.
+
+MUTATION-TESTED, per the K2a1 rule that a check must be able to fail:
+breaking the Asia plateau fails R1/R2; deleting the authored-column
+door fails R8d (and H2); ungating the dither fails R1/R2; reverting
+the named fast path fails R9/R9a; swapping the ramp for a shortest-arc
+solve fails R4 and R4b.
+
+SUITE LESSONS, two more for the pile. R9a first failed against the
+COMMENT explaining its own fix — fourth time a check of mine has read
+prose as code, so comment-stripping is now applied here too. And R4b's
+first hue probe ran 200 -> 380: exactly 180 degrees, the ANTIPODE,
+where both arcs have equal magnitude — so the shortest-arc mutation
+slipped through and only the source check fired. It runs 200 -> 400
+now. Failing to the very ambiguity the rule exists to retire was a
+fitting way to find out that a source check alone is a weak guard.
+
+Dev: lane slot 9 cycles the sky (slot 6 strength, slot 7 hour).
+Retired: SKY_BASE's ramp constants, SKY_BANDS (vestigial), and
+SKY_DRIFT / SKY_SETTLE (dead since the pinning ruling) — a knob that
+silently does nothing is the hazard SUN_SLOTS nearly shipped.
+
+STILL OPEN. (1) Whether the five classic hours MIGRATE to derived
+columns — needs a device side-by-side. (2) Whether the reference's
+transition alternation is genuinely line dither or capture artefact —
+the bench now renders both, so it is Eddie's eye to settle. (3) Clouds
+remain Phase 4.1's parallax layer and are deliberately not conflated
+with the ramp.
+
+### Phase 6 PERFORMANCE — a pure function is not a free function (2026-08-19)
+
+Eddie, on device: the frame rate collapsed after Phase 6. Measured on
+a fixed scene, warm, stub canvas: 19 ms/frame under a CLASSIC sky,
+268 ms under a DERIVED one. About 4 fps — and only on the new skies,
+so a race crawled or did not depending on its seed.
+
+ROOT CAUSE, one bug with a second queued behind it. lit() opened with
+skyColumn() -> sky.columnFor(spec). On a classic sky that returns the
+authored column immediately; on a derived one it solved TWO ENTIRE
+SKIES (the spec's own ambient, and the reference's) — 0.23 ms per
+call against 0.85 us, roughly 1157 lit() calls a frame. And it ran
+BEFORE litCache.get(), so a cache HIT paid full price too: a memo
+placed after the work it memoises is not a memo.
+
+Attribution, so the fix aimed at the right thing: the reference
+ambient recomputed every call was ~50% (497 ms vs 256 ms per 2000
+calls), the spec's own ambient most of the rest, and register()'s
+linear ramp.indexOf() ~14% — real, and secondary.
+
+FIVE FIXES, in that order of leverage:
+ 1. THE COLUMN IS MEMOISED per (sky, palette version). A column is a
+    pure function of a spec and a spec does not change during a race;
+    `version` is the counter every setSky/setTime/setLight already
+    bumps, so the memo cannot outlive the state it describes.
+ 2. THE REFERENCE AMBIENT IS A CONSTANT, solved once, lazily.
+ 3. THE CACHE IS CONSULTED FIRST in lit(). The key already carries
+    the sky, so a hit is a complete answer on its own.
+ 4. THE REGISTRY IS O(1): a Set beside the ordered array. The array
+    still owns the ramp's ORDER (which consumers read); the Set
+    answers the only question indexOf was actually being asked. The
+    ramp reached 572 entries once every sky had been touched.
+ 5. THE ROW LIST IS CACHED per (spec identity, height, horizon). The
+    sky is PINNED by ruling, so frame N's rows are provably identical
+    to frame N-1's; re-solving also allocated ~167 objects a frame.
+    Keyed by IDENTITY (WeakMap), not by a serialisation: the bench
+    edits one spec object in place, and a value key would have served
+    it a stale sky on every slider move. The bench, ambient(),
+    toneCount() and fieldShare() take rowsUncached() for exactly that
+    reason — correctness over an optimisation none of them was paying
+    for anyway.
+
+RESULT: 268 ms -> 3.2 ms for asia-lime; every sky now between 0.36x
+and 0.95x the classic frame (the classic FINE ladder is the most
+expensive sky in the library, which is the right shape). The registry
+fix also halved the classic path, 19 ms -> 8 ms.
+
+THE REAL LESSON, and why the suite grew a new section: NOTHING IN F OR
+R COULD HAVE CAUGHT THIS. Every check asks whether the output is
+CORRECT, and a function tested for purity and determinism passes
+identically at 1 us and at 1 ms. Phase 6's whole design was "solve it
+properly, once" — the "once" was simply never wired, and no law said
+it had to be.
+
+verify-px-render S1-S5 now says so. The primary checks count WORK, not
+milliseconds — how many times the solver actually runs, which is a
+fact about the code and identical on every machine — with a wall-clock
+RATIO as a loose backstop (2.5x), because absolutes rot across
+machines while ratios do not. S1 measures OBJECT IDENTITY: its first
+version wrapped sky.rowsUncached and counted calls, and was VACUOUS,
+because rows() reaches rowsUncached through the module's own closure
+rather than the exported api object — the wrapper was never called and
+the check reported a clean zero for a reason unrelated to the law. It
+announced itself by naming its worst offender 'null'. Mutation-tested:
+disabling the column memo fails S2, moving the cache lookup back
+behind the derivation fails S3, restoring indexOf fails S4, removing
+the rows memo fails S1/S1a.
+
+## Phase 6.1 — THE FLOOR AND THE BAND (2026-08-19)
+
+Two device findings from Eddie, and a third the measurement turned up
+underneath them.
+
+FINDING 1 — THE BANDS WERE TOO THICK. Measured at Eddie's window
+(1512x850 -> buffer 320x180): america-violet ran a 9 px burst mean,
+africa-pale 9.3, against a reference burst of 1-3 px. Not a bug — I
+simply under-authored, placing too few stops too far apart. But the
+reason it could ship unnoticed IS the defect: band thickness had no
+name, no measure and no gate. It was an implicit product of stop
+spacing x floor x buffer height, exactly as tone count had been
+before it was given a budget.
+
+FINDING 2 — THE RAMP RAN TO THE BOTTOM OF THE FRAME. It should bottom
+out around mid-screen, leaving the lower half for the parallax land
+layers to come. The full-height version is not lost: it is the
+ABOVE-THE-CLOUDS sky, and is now a declared variant.
+
+FINDING 3 (measured, neither of us had named it) — BAND THICKNESS WAS
+DEVICE-DEPENDENT. asia-lime's burst came out 6 px on a desktop and
+24 PX IN PORTRAIT — the same authored sky, four times coarser —
+because every stop was a FRACTION of a buffer whose height runs 148
+(landscape phone) to 693 (portrait). The reference hardware was a
+fixed 320x224 and never had this problem.
+
+### THE FLOOR
+
+`spec.floor`: where the ramp completes. Below it the horizon tone
+HOLDS — which is what the sky always did beneath its last band, so
+this is a parameter, not a mechanism. What is new is WHO OWNS IT: the
+renderer's SKY_HORIZON constant made the proportion of the frame a
+sky occupies a camera decision, and it is an art-direction one. The
+renderer now supplies only the buffer height; SKY_HORIZON is retired.
+
+Ground-level skies floor at 0.5; the classic five keep 0.92 (their
+shipped geometry, on which byte-identity rests) and flat-cobalt
+floors at 1.0 — the Out Run title sky fills the frame, and a flat sky
+has no burst to bottom out anyway.
+
+The held region is NOT dead space: it is the backdrop the parallax
+land layers will sit against, so the horizon tone becomes a
+composition decision once those land.
+
+CONSEQUENCE, caught in build: the ambient derivation samples at a
+fixed HEIGHT (so lighting is device-independent) but the floor within
+that window has to be the SPEC's. Sampling a half-height sky over a
+full-height window counts ~76 rows of held horizon tone as though
+they were sky, and the field/horizon split — the whole basis of the
+cast — comes out wrong. Without it, an above-the-clouds sky and a
+ground-level sky with identical stops would light the world
+differently for no reason. Pinned by T5.
+
+### PIXEL-ANCHORED STOPS
+
+A stop declares EITHER a fraction `t` OR `px`: rows above the floor.
+The burst is authored in pixels and is therefore identical on every
+device; the FIELD — a flat plateau by design — absorbs all the buffer
+variation by simply being taller. That is how the reference art is
+actually built: the burst is authored, the field is a fill.
+
+Measured after: asia-lime's burst is 3-4 px at every buffer height
+from 148 to 693 (was 6 / 24), while its field grows 45 -> 318 px.
+The classic five stay fraction-anchored — they are a full-height
+eased sweep and byte-identity rests on it — and they DO still drift
+(3.8x on a portrait buffer). That is stated, not hidden: T3d asserts
+the drift exists, which is precisely why pixel anchoring does, and
+their budgets are declared at the reference height only.
+
+Short buffers cannot break the solve: pixel stops driven past each
+other clamp to monotone, and a collapsed segment contributes no rows
+— the honest outcome of asking for more bands than there are pixels
+(T4, checked down to an 8-row buffer).
+
+### THE BAND BUDGET
+
+`spec.bandPx`, declared per sky and gated, exactly as the tone budget
+is. The FIELD plateau is excluded by construction (it is the single
+longest run), the same exemption F3f already grants the zenith.
+Authored skies now run a 4 px maximum and a 1.3-2.9 px mean; the
+classic five declare 20 and are exempt by declaration rather than by
+a rule with a hole in it.
+
+The library was re-authored against it: america-violet went to 3 px
+CUT spacing (under CUT, band thickness IS stop spacing), africa-pale
+and hangon-violet gained intermediate stops where quantisation had
+been merging neighbours into one long run.
+
+### Suite
+
+verify-px-render T1-T5: the floor is declared and sealed, the held
+row is one row and reaches the buffer bottom, band budgets hold, the
+authored skies read as a period stripe field, pixel anchoring holds
+thickness on every buffer while the field absorbs the variation,
+anchoring is declared rather than inferred, the fraction-anchored
+drift is asserted to EXIST, short buffers still solve, and each sky
+is measured at its own floor. Battery 18/18. Frame cost unchanged
+(every sky 0.36x-0.93x the classic frame).
+
+MUTATION-TESTED: reverting the floor default fails T1a/T2/T2a/T3a;
+removing a stop from america-violet fails T2/T2a/T3a; pinning px
+anchoring to one buffer height fails T3a; stopping ambient following
+the spec floor fails T5.
+
+SUITE LESSON, the fifth of its kind: F7 failed against the COMMENT
+explaining that SKY_HORIZON had moved. There is now a comment-stripped
+`srcNC` at the top of the file, and every absence check reads it.
+Separately, R5a was rewritten: it looked for a strict ABAB
+alternation and found almost none, because with a dither period of 2
+the pattern is AABB — the check was describing one particular period
+rather than the mechanism. It now measures the NON-MONOTONE walk that
+line dither actually is, against a dither-off control (4 reversals vs
+0), which is a fact about the mechanism rather than about a setting.
+
+Proof: docs/phase61-sky-floor.png (rendered from rows(), floor row
+marked).

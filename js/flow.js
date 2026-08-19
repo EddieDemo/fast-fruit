@@ -778,10 +778,45 @@ window.FF._grant = (id) => {
     const i = order.indexOf(p2.getTime());
     p2.setTime(order[(i + 1) % order.length]);
     paintHour();
+    if (window.FF._paintSkyBtn) window.FF._paintSkyBtn();
   });
   window.FF.devtools.register({
     show: () => { hbtn.style.display = ''; },
     hide: () => { hbtn.style.display = 'none'; },
+  });
+
+  // SKY cycle (Phase 6), lane slot 9. The hour button above chooses a
+  // ROLE (and with it that role's classic sky); this walks every sky
+  // in the library regardless of role, because comparing an Asia sky
+  // against a violet one is exactly the judgement the device is for.
+  const kbtn = document.createElement('button');
+  kbtn.id = 'ff-sky-btn';
+  kbtn.title = 'Cycle the sky (dev)';
+  kbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 9);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  const paintSky = () => {
+    const p2 = window.FF.palette;
+    kbtn.textContent = '\u2601 ' + (p2 && p2.getSky ? p2.getSky() : 'noon');
+  };
+  paintSky();
+  window.FF._paintSkyBtn = paintSky;
+  document.body.appendChild(kbtn);
+  kbtn.addEventListener('click', () => {
+    const p2 = window.FF.palette;
+    if (!p2 || !p2.setSky || !window.FF.sky) return;
+    const order = window.FF.sky.SPEC_IDS;
+    const i = order.indexOf(p2.getSky());
+    p2.setSky(order[(i + 1) % order.length]);
+    paintSky();
+    paintHour();
+  });
+  window.FF.devtools.register({
+    show: () => { kbtn.style.display = ''; },
+    hide: () => { kbtn.style.display = 'none'; },
   });
 
   // Shadow debug (Phase 5.5), lane slot 8: paints the cast flat —

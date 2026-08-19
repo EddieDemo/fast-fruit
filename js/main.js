@@ -239,6 +239,16 @@ function respawnRace(opts) {
     // simply looks like itself.
     const hourBase = cupNow && cupNow.day ? cupNow.day : race.seed;
     window.FF.palette.setTime(window.FF.palette.timeForSeed(hourBase, leg));
+    // PHASE 6 SELECTION. Two orthogonal draws, deliberately: 5.1's
+    // hybrid still chooses the ROLE (so a cup walks through the day
+    // and consecutive legs never repeat an hour — a guarantee that
+    // cost a measured 157-of-300 failure to get right, and is not
+    // reopened here), and the TRACK seed then chooses which sky of
+    // that role. Variety arrives without touching the proven half.
+    if (window.FF.palette.setSky && window.FF.sky) {
+      window.FF.palette.setSky(
+        window.FF.sky.skyForSeed(window.FF.palette.getTime(), race.seed));
+    }
     // The moon's position: seeded per track, so night races differ
     // from one another without any of them being random.
     if (window.FF.palette.setSunSeed) window.FF.palette.setSunSeed(race.seed);

@@ -113,38 +113,14 @@ function tierOf(m) {
 // standard on every device and in both render modes (Eddie ruling,
 // 2026-08-18). Changing this changes the game's whole sense of pace,
 // so it is a ruling, not a tuning knob.
-// ---- SKY CONSTANTS (Phase 4) ----
-// SKY_BASE is the ZENITH tone: the richest, darkest, most saturated
-// end of the ramp. Everything else is derived from it, so a seeded
-// per-track sky is a single hue draw against this one value.
-// v2 (Eddie, 2026-08-18): v1 read as a striped flag, not a sky. Four
-// corrections, all measured against the reference art:
-//  * BAND COUNT 6 -> 14. Six steps cannot read as atmosphere.
-//  * COMPRESSION. Bands are thick at the zenith and progressively
-//    thinner toward the horizon (SKY_SQUEEZE). Even slabs were the
-//    single biggest tell; real atmospheric depth stacks up near the
-//    ground, and the period art encodes exactly that.
-//  * FULL RANGE. The ramp now ends near-WHITE, not "less blue" —
-//    a Hang-On horizon is light, not a desaturated sky colour.
-//  * HUE ROTATION. v1 pinned hue (dH = 0). Every reference rotates:
-//    cyan->mint->cream, violet->pink->cream, blue->sand. SKY_TURN is
-//    that drift, and it is what stops the ramp looking mechanical.
-const SKY_BASE = '#1d3f8a';   // deep zenith blue
-const SKY_BAND_PX = 1;        // BAND HEIGHT IN PIXELS: one row. The
-                              // count follows the buffer (~165 at
-                              // 320x180) — Eddie ruled the 2 px
-                              // version still too coarse.
-const SKY_BANDS = 14;         // (retained: suites read it as the
-                              // nominal ramp resolution)
-const SKY_LIFT = 62;          // L* gained from zenith to horizon
-const SKY_FADE = 72;          // saturation lost over the same span
-const SKY_TURN = 26;          // hue rotation toward the horizon (warm)
-const SKY_SQUEEZE = 2.1;      // >1 packs bands toward the horizon
-const SKY_QUANT = 1;          // L* rung for the sky ladder (finer than
-                              // the body law's 4: a gradient is where
-                              // near-neighbour tones belong)
-const SKY_DRIFT = 0.55;       // how far the sky lags a height CHANGE
-const SKY_SETTLE = 0.9;      // how fast the reference catches up (1/s)
+// ---- SKY CONSTANTS ----
+// THE SKY'S CONSTANTS MOVED (Phase 6). Everything that described the
+// RAMP — base, lift, fade, turn, squeeze, band height, quantisation —
+// is now authored per sky in js/sky.js, because a sky is a designed
+// artefact and not a set of rates. Only the emergency fill stays
+// here; even the floor is authored now.
+// The sky's FLOOR moved to the spec in Phase 6.1 — see js/sky.js.
+const SKY_BASE = '#1d3f8a';   // last-resort fill if the library is absent
 
 const VIEW_W_M = 16.2;
 const VIEW_H_MIN_M = 7.5;   // escape hatch only: see the zoom law
@@ -279,7 +255,6 @@ function createRenderer(canvas) {
     return false;
   }
   let litVer = -1;
-  let skyRefY = null;            // trailing height reference for sky drift
 
   // ---- THE AA-KILLER (pixelation mode) ----
   // Canvas 2D anti-aliases every shape INTO the low-res buffer and
@@ -621,110 +596,56 @@ function createRenderer(canvas) {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // ---- Background ----
-    // ---- THE SKY (PIXEL 320 Phase 4, Eddie 2026-08-18) ----
-    // Atmospheric perspective, encoded the way Super Hang-On encoded
-    // it: SATURATION FALLS AND LIGHTNESS RISES toward the horizon —
-    // real light scatters through more air near the ground, and the
-    // period hardware quantised that to a handful of palette steps.
-    // So the law is one ramp in height with two parameters, which is
-    // exactly what a track seed will drive later.
+    // ---- THE SKY (PIXEL 320 Phase 6, Eddie 2026-08-19) ----
+    // The renderer no longer SOLVES the sky; it blits rows.
     //
-    // Tones are LAW-DERIVED (offsetColor off one base) rather than
-    // authored literals, so they register into the palette
-    // automatically: Phase 5's time-of-day becomes a column swap and
-    // seeded per-track skies become "draw a hue from the seed", not
-    // a new subsystem.
+    // Phase 4's painter computed the ramp inline: one base plus lift,
+    // fade and turn, swept monotonically from zenith to horizon.
+    // Measured against the reference crops that model cannot draw a
+    // flat sky, a field-plus-burst shape, a rising chroma, or a hard
+    // cut — four of six references — so the model moved to js/sky.js
+    // as an ordered STOP LIST plus a band policy.
     //
-    // Anchoring: screen-referenced with a DAMPED camera offset. Our
-    // tracks descend forever, so a world-locked sky would be left
-    // behind inside a lap; a fully fixed one reads as a sticker on
-    // the lens. The damped offset lets a big drop feel like falling
-    // PAST the sky while never running out of bands.
+    // The split is the point. sky.rows() is PURE: (height, horizonY,
+    // spec) -> [{y, h, hex}], with no canvas, no DOM and no state.
+    // The renderer blits that list, the sky bench blits the same
+    // list, and verify-px-render reads the same list rather than
+    // scraping fillRect calls. A bench that re-implements the painter
+    // is a proof that approximates the painter — which is exactly how
+    // Phase 2's rim guarantee passed its proofs and regressed on the
+    // device. One authority, three consumers.
     //
-    // Bands are HARD-STEPPED by ruling. Dithered transitions — and a
-    // hard/dither hybrid — are explored later; the ramp below is
-    // where that pass will hook in.
+    // PINNED, still (Eddie, 2026-08-18): the sky does not move. On a
+    // track that descends forever any height coupling reads as the
+    // backdrop sliding rather than as depth, and a fixed palette
+    // region with the world moving past it is what the reference
+    // hardware did.
+    //
+    // NOT THROUGH lit() (Eddie's ruling, 2026-08-19): the sky is
+    // AUTHORED. Its hour already gives it its own ramp, and passing
+    // those rows through the hour's colour column applied the hour
+    // twice. Strength does not touch it either — standing in a tunnel
+    // dims your surroundings, not the sky above the world.
     if (pxMode) {
-      const sh = window.FF.shading;
-      const N = SKY_BANDS;
-      // Phase 5.2: the sky's own parameters come from the HOUR. A
-      // sunset is not a rotated blue sky — it is a different ramp
-      // (warmer, lower contrast at the horizon), so the hour carries
-      // base/lift/fade/turn rather than just a cast over the old one.
-      const skyP = (window.FF.palette && window.FF.palette.skyParams)
-        ? window.FF.palette.skyParams()
-        : { base: SKY_BASE, lift: SKY_LIFT, fade: SKY_FADE, turn: SKY_TURN };
-      // PINNED (Eddie, 2026-08-18): the sky does not move. The
-      // damped-drift version read as the backdrop sliding around
-      // rather than as depth — on a track that descends forever,
-      // ANY height coupling is motion the eye reads as wrong. A
-      // fixed backdrop is also what the reference hardware did: the
-      // sky was a fixed palette region, and the world moved past it.
-      const drift = 0;
-      // Horizon sits below the frame: the visible slice is the upper
-      // part of the ramp, which is why the richest band is overhead.
-      // Integer horizon: a fractional hz gave the last band a
-      // fractional height — a sub-pixel fill in a pixel renderer,
-      // caught by the coverage check reporting 179.6 of 180 rows.
-      const hz = Math.round(height * 0.92 + drift);
-      // Band EDGES are compressed toward the horizon: edge(i) rises
-      // as a power curve, so the top bands are deep and the lower
-      // ones stack thin. The colour parameter uses the SAME curve, so
-      // tone and thickness stay in step.
-      // v3 (Eddie, 2026-08-18): BAND HEIGHT IS A PIXEL QUANTITY, not
-      // a fraction of the sky. v2 divided the sky into N thick slabs;
-      // the reference art is a FINE stripe field — bands one or two
-      // rows tall, dozens of them, which is why it reads as light
-      // rather than as a flag. The band count therefore falls out of
-      // the buffer height (~80 at 320x180) instead of being chosen.
-      //
-      // The colour parameter still eases (SKY_SQUEEZE), so tone
-      // changes slowly overhead and quickly near the horizon: broad
-      // plateaus of near-equal blue up top, dense fine stripes
-      // stacking into the light at the bottom. That is the period
-      // look, and it comes from the EASE, not from fat bands.
-      const step = SKY_BAND_PX;
-      for (let y = 0; y < hz; y += step) {
-        if (y >= height) break;
-        // k = t^SQ: colour changes SLOWLY overhead and FAST near the
-        // horizon, so plateaus are broad up top and collapse into
-        // dense 2 px stripes at the bottom — the reference look.
-        // (With uniform band height it is the colour RATE that sets
-        // stripe density; the inverse curve, correct for v2's
-        // variable thickness, put the fine stripes at the wrong end.)
-        const k = Math.pow(Math.min(1, y / hz), SKY_SQUEEZE);
-        // skyRamp, not offsetColor: the body law quantises to 4-L*
-        // rungs, which collapsed 166 rows into 29 tones and left
-        // 5-8 px plateaus — visible slabs, however thin the bands.
-        // The sky gets its own fine ladder (SKY_QUANT), which is
-        // where a long ramp of near-neighbours legitimately belongs.
-        // NOT through lit() (Eddie's ruling, 2026-08-19). The hour
-        // already gives the sky its OWN ramp — base, lift, fade,
-        // turn — because a sunset is a different ramp, not a blue sky
-        // recoloured. Passing those rows through the hour's colour
-        // column as well applied the hour TWICE: NIGHT chose a dark
-        // base and was then darkened again for being NIGHT. The
-        // authored ramp is now exactly what appears, so the sky can
-        // be tuned against a fixed target.
-        //
-        // Strength no longer touches the sky either, which is the
-        // right reading: standing in a tunnel dims your surroundings,
-        // not the sky above the world.
-        const tone = sh && sh.skyRamp
-          ? sh.skyRamp(skyP.base, k, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
-          : skyP.base;
-        ctx.fillStyle = tone;
-        ctx.fillRect(0, y, width, Math.min(step, height - y, hz - y));
-      }
-      // Below the horizon line the lowest band continues, so a
-      // portrait window (35 m of vertical) can never show a seam.
-      if (hz < height) {
-        ctx.fillStyle = sh && sh.skyRamp
-          ? sh.skyRamp(skyP.base, 1, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
-          : skyP.base;
-        ctx.fillRect(0, Math.max(0, Math.round(hz)), width,
-          height - Math.max(0, Math.round(hz)));
+      // WHERE THE SKY ENDS IS THE SKY'S OWN BUSINESS (Phase 6.1). The
+      // renderer used to own a SKY_HORIZON constant, which made the
+      // proportion of the frame a sky occupies a camera decision. It
+      // is an art-direction one: a ground-level sky bottoms out around
+      // mid-screen and leaves the lower half for the parallax land
+      // layers; an above-the-clouds sky fills the frame. The renderer
+      // now supplies only the buffer height.
+      const spec = (window.FF.palette && window.FF.palette.skySpec)
+        ? window.FF.palette.skySpec() : null;
+      if (window.FF.sky && spec) {
+        const rowsOut = window.FF.sky.rows(height, spec);
+        for (let i = 0; i < rowsOut.length; i++) {
+          const rw = rowsOut[i];
+          ctx.fillStyle = rw.hex;
+          ctx.fillRect(0, rw.y, width, rw.h);
+        }
+      } else {
+        ctx.fillStyle = SKY_BASE;
+        ctx.fillRect(0, 0, width, height);
       }
     } else {
       ctx.fillStyle = COLORS.sky;

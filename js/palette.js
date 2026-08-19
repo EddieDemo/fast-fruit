@@ -24,7 +24,14 @@
 'use strict';
 
 const ramps = new Map();      // name -> [hex, ...] in ramp order
+const rampSets = new Map();   // name -> Set of the same hexes, for O(1) tests
 const members = new Set();    // int 0xRRGGBB of every registered tone
+// WHY A SET BESIDE THE ARRAY (2026-08-19, perf). register() tested
+// membership with ramp.indexOf(), which is O(n) against a ramp that
+// reached 572 entries once every sky had been touched — and it runs
+// for every sky row of every frame. The ARRAY still owns the ramp's
+// ORDER, which the registry's consumers read; the Set only answers
+// "have I seen this tone", which is all indexOf was ever asked.
 
 // ---- LIGHT COLUMNS (Phase 5) ----
 // A light state is a COLUMN of the palette table: every tone the game
@@ -227,15 +234,26 @@ function litIn(hex, strength) {
 }
 
 function lit(hex) {
-  if (current === 'STANDARD' && currentTime === 'NOON') return hex;
-  const ck = currentTime + '|' + current + '|' + hex;
+  // THE CACHE IS CONSULTED FIRST. It used to sit BEHIND skyColumn(),
+  // so a cache HIT still paid the full derivation — a memo placed
+  // after the work it memoises is not a memo. The key already carries
+  // the sky, so a hit is a complete answer on its own.
+  const ck = currentSkyId + '|' + current + '|' + hex;
   const hit = litCache.get(ck);
   if (hit !== undefined) return hit;
+  // THE FAST PATH IS COMPUTED, NOT NAMED. It used to test
+  // `currentTime === 'NOON'`, which was true because NOON's column is
+  // the identity — an accident of the table, not a fact about the
+  // light. With skies choosing their own columns, a NOON-role sky can
+  // legitimately cast; asking whether THIS column is the identity is
+  // the question that was always meant.
+  const tcol = skyColumn();
+  const ident = isIdentityColumn(tcol);
+  if (current === 'STANDARD' && ident) return hex;
   const col = COLUMNS[current] || COLUMNS.STANDARD;
   let k = toInt(hex);
   if (k === null) return hex;
-  const tcol = TIMES[currentTime];
-  if (tcol && currentTime !== 'NOON') k = applyColumn(k, tcol);
+  if (tcol && !ident) k = applyColumn(k, tcol);
   if (current === 'STANDARD') {
     const out0 = '#' + ((1 << 24) | k).toString(16).slice(1);
     litCache.set(ck, out0);
@@ -249,14 +267,76 @@ function lit(hex) {
   return out;
 }
 
+// ---- THE SKY IS THE SOURCE (Phase 6) ----
+// A sky SPEC (js/sky.js) now carries the ramp, the sun's bearing and
+// — for skies that do not author one — the light column itself.
+// Selecting an hour selects that hour's CLASSIC sky, so every
+// existing call site keeps its exact shipped appearance; a caller who
+// wants one of the new skies says so explicitly afterwards.
+let currentSkyId = 'noon';
+function skyLib() { return (typeof window !== 'undefined' && window.FF && window.FF.sky) || null; }
+function setSky(id) {
+  const lib = skyLib();
+  if (!lib || !lib.SPECS[id] || id === currentSkyId) return currentSkyId;
+  currentSkyId = id;
+  version++;
+  return currentSkyId;
+}
+function getSky() { return currentSkyId; }
+function skySpec() {
+  const lib = skyLib();
+  return lib ? lib.get(currentSkyId) : null;
+}
+// The hour's own light column, sourced through the sky. Classic skies
+// return their authored column verbatim (so nothing that exists today
+// moves); authored-new skies have theirs DERIVED from their own tones.
+// THE COLUMN IS SOLVED ONCE PER SKY, NOT ONCE PER TONE.
+//
+// A column is a pure function of a spec, and a spec does not change
+// during a race — but columnFor() on a DERIVED sky solves two entire
+// skies (its own ambient, and the reference's), and this sits on the
+// hottest path in the renderer. Measured before the memo: 0.23ms per
+// lit() call against 0.85us under a classic sky, ~1157 lit() calls a
+// frame, 268ms/frame — about 4fps, and only on the new skies, so a
+// race crawled or did not depending on its seed.
+//
+// The lesson worth keeping: A PURE FUNCTION IS NOT A FREE FUNCTION.
+// Every check in F and R asks whether the output is CORRECT; a
+// function tested for purity and determinism passes identically at
+// 1us and at 1ms. Phase 6's whole design is "solve it properly,
+// once" — the "once" was simply never wired.
+//
+// Keyed on `version`, the counter every setSky/setTime/setLight
+// already bumps, so the memo cannot outlive the state it describes.
+let colCacheKey = null, colCacheVal = null;
+function skyColumn() {
+  const key = currentSkyId + '|' + version;
+  if (key === colCacheKey) return colCacheVal;
+  const lib = skyLib();
+  const spec = skySpec();
+  colCacheVal = (lib && spec) ? lib.columnFor(spec)
+    : (TIMES[currentTime] || TIMES.NOON);
+  colCacheKey = key;
+  return colCacheVal;
+}
+function isIdentityColumn(c) {
+  return !!c && !c.lift && c.mL === 1 && c.mS === 1 && !c.tintK;
+}
+
 function setTime(name) {
   if (!TIMES[name] || name === currentTime) return currentTime;
   currentTime = name;
+  // The hour's classic sky is the default, always: an hour change
+  // that left a previous race's sky in place would make the hour a
+  // half-truth.
+  currentSkyId = name.toLowerCase();
   version++;
   return currentTime;
 }
 function getTime() { return currentTime; }
 // The sky's parameters for the current hour: base, lift, fade, turn.
+// RETAINED for the classic hours and the suites that read them; the
+// renderer no longer paints from these — it blits FF.sky.rows().
 function skyParams() { return (TIMES[currentTime] || TIMES.NOON).sky; }
 // The sun's bearing for the current hour, in the shading law's units.
 // NIGHT takes a seeded offset so the moon is not in the same socket
@@ -276,8 +356,13 @@ function setSunSeed(seed) {
 }
 const SUN_OVERHEAD = 270;   // y-down world: 270 is straight up
 function sunDeg() {
+  // The bearing belongs to the SKY: a sky and the light falling under
+  // it are one authored fact. The hour table remains the fallback for
+  // any caller running before the library loads.
+  const spec = skySpec();
   const t = TIMES[currentTime] || TIMES.NOON;
-  const base = t.sunDeg === undefined ? SUN_OVERHEAD : t.sunDeg;
+  let base = spec && spec.sun !== undefined ? spec.sun : t.sunDeg;
+  if (base === undefined) base = SUN_OVERHEAD;
   if (currentTime !== 'NIGHT') return base;
   return base + ((sunSeed % 3) - 1) * 15;      // -15, 0 or +15
 }
@@ -334,12 +419,15 @@ function toInt(hex) {
 }
 
 function register(name, tones) {
-  if (!ramps.has(name)) ramps.set(name, []);
-  const ramp = ramps.get(name);
+  let ramp = ramps.get(name);
+  if (ramp === undefined) {
+    ramp = []; ramps.set(name, ramp); rampSets.set(name, new Set());
+  }
+  const seen = rampSets.get(name);
   for (const t of (Array.isArray(tones) ? tones : [tones])) {
     const k = toInt(t);
     if (k === null) continue;
-    if (ramp.indexOf(t) === -1) ramp.push(t);
+    if (!seen.has(t)) { seen.add(t); ramp.push(t); }
     members.add(k);
   }
   return ramp.length;
@@ -363,7 +451,8 @@ function rampNames() { return [...ramps.keys()]; }
 const api = { register, registerTone, tone, isMemberInt, isMemberHex,
   toInt, stats, rampNames, STATES, COLUMNS, lit, setLight, getLight,
   lightVersion, TIMES, TIME_NAMES, setTime, getTime, skyParams,
-  timeForSeed, litIn, sunDeg, setSunSeed };
+  timeForSeed, litIn, sunDeg, setSunSeed,
+  setSky, getSky, skySpec, skyColumn, isIdentityColumn };
 
 if (typeof window !== 'undefined') {
   window.FF = window.FF || {};
