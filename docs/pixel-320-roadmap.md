@@ -340,7 +340,7 @@ height), F3a (density rises toward the horizon), F3e (pinned, no
 coupling), F3f (the zenith plateau is broad by design), F5 (zero
 movement over a long descent).
 
-## Phase 5.1 — LIGHT COLUMNS — SHIPPED (2026-08-18)
+## Phase 5.0a — LIGHT COLUMNS (strength) — SHIPPED (2026-08-18)
 
 A light state is a COLUMN of the palette table. Every tone the game
 emits resolves through palette.lit(), so a state change shifts the
@@ -351,14 +351,23 @@ renders are untouched; only the colour list is read against the new
 column. Columns: BRIGHT / STANDARD / DIM / DARK, with STANDARD the
 identity so nothing changes until a state is chosen.
 
-Columns are SCALES on lightness and saturation plus an absolute hue
-rotation. Additive deltas were wrong twice: adding saturation to a
-GREY invents a hue (the ground turned warm-brown under BRIGHT), and
-subtracting lightness crushes dark tones (DARK put the ground at
-#020202). Scaling keeps greys grey and preserves every ramp's
-relative structure. Multiplying HERE is legitimate — the result is a
-discrete registered palette entry; what stays forbidden is
-multiplying at COMPOSITE time over pixels.
+COLUMN MODEL v2 (Eddie's correction): v1 moved value and chroma
+TOGETHER — brighter meant more saturated — which is a brightness
+slider, not light, and made mud at the dark end. The painter's
+convention, and the physics: STRONG LIGHT WASHES COLOUR OUT (lit
+surfaces climb toward white, chroma falls as value rises) and SHADOW
+GAINS CHROMA (unlit surfaces take bounced coloured ambient, which is
+why night is deep blue, not grey). Three moves per column: lift (a
+fraction of the REMAINING distance to white — a ceiling, since
+scaling clips once a tone is already pale), a chroma scale moving
+OPPOSITE the value change, and a tint toward the column's ambient
+hue. The tint is load-bearing: a chroma SCALE leaves greys untouched,
+so without it the terrain would stay neutral while everything
+coloured deepened. Its weight falls with the tone's own saturation,
+so a grey takes the full cast and a saturated tone defends itself.
+Multiplying HERE is legitimate — the result is a discrete registered
+palette entry; what stays forbidden is multiplying at COMPOSITE time
+over pixels.
 
 Dev: lane slot 6 cycles the column live.
 Suite: verify-px-render G0-G7 (identity, grey neutrality, no crush,
@@ -369,3 +378,323 @@ STILL OPEN in Phase 5: TIME OF DAY (hue-cast columns; ruling needed —
 seeded per track, or sequenced across a cup: morning -> dusk) and SUN
 ANGLE as a bake dimension, plus local sources as dithered ramp-shift
 rings.
+
+## Phase 5.0b — TIME OF DAY (the hours) — SHIPPED (2026-08-18)
+
+A SECOND axis, orthogonal to strength: strength is local light (a
+tunnel, a flare), time is the world's hour, and they compose — a
+tunnel at dusk is not a tunnel at noon. Five hours: MORNING, NOON
+(the identity), GOLDEN, DUSK, NIGHT. Each carries its own SKY
+parameters (base/lift/fade/turn), because a sunset is a different
+RAMP, not a cast over a blue sky.
+
+KEY CORRECTION: the ambient cast is applied in HSL and touches HUE
+and CHROMA ONLY. Blending toward a tint in RGB necessarily drags
+VALUE with it, which is why GOLDEN kept coming out BRIGHTER than
+NOON however the tint tone was chosen (caught by the ordering
+check, twice). Ambient light colours a surface; how much light there
+is stays mL's job. With that split the hour ordering holds by
+construction rather than by tuning.
+
+NOON is a TRUE identity (declares no moves) so the declaration
+matches the fast path — the first version declared lift/tint values
+that the identity short-circuit never applied.
+
+Dev: lane slot 7 cycles the hour, slot 6 the strength.
+Suite: verify-px-render H0-H5.
+
+STILL OPEN: the SELECTION ruling — seeded per track
+(palette.timeForSeed is implemented and deterministic, not wired) or
+sequenced across a cup (race 1 morning -> race 3 dusk). Wiring
+either is one line; the model does not care.
+NEXT in Phase 5: sun angle as a bake dimension, and local sources as
+dithered ramp-shift rings.
+
+### The cast: three versions, one law (2026-08-18)
+
+The ambient cast went through three forms before it was right, and
+the failures are worth keeping because each was a DIFFERENT class:
+
+v1 blended toward the tint in RGB. Physically wrong: blending toward
+a colour drags VALUE with it, so GOLDEN came out brighter than NOON
+however the tint tone was chosen. Value must stay mL's job alone.
+
+v2 rotated HUE toward the ambient along the shorter arc, keeping
+value fixed. Mathematically wrong: the shorter arc is AMBIGUOUS when
+the ambient sits ~180 degrees from the tone, and a warm cast on a
+blue sky is exactly that. As the sky ramp's hue drifted past the
+antipode the rotation flipped sign and the sky jumped from cyan to
+indigo at a single row — the solid block Eddie spotted at the top of
+MORNING. A bug that only appears on sunsets, i.e. on the feature.
+
+v3 (shipped) blends in RGB and then RESTORES the pre-blend
+luminance. No wrap, so continuity holds by construction; value stays
+mL's. Suite I1 measures the largest row-to-row value jump across
+every hour's sky (worst 0.018) so a seam cannot return unnoticed.
+
+SUITE LESSON REPEATED: I2 first checked for the ABSENCE of the
+string "shorter arc" in palette.js and failed against the comment
+EXPLAINING the fix. Third time a suite of mine has read prose as
+code; comment-stripping is now the default in these checks.
+
+## Phase 5 — RENUMBERED (Eddie, 2026-08-18)
+
+Strength and the hours are now 5.0a / 5.0b (shipped). The remaining
+work is numbered as Eddie ruled:
+  5.1 SELECTION      — which hour a race actually gets  [SHIPPED]
+  5.2 REGIONAL LIGHT — terrain regions carry a strength; the
+                       renderer resolves per REGION, not per frame.
+                       This is what turns strength from a dev toggle
+                       into a feature (a tunnel that is actually dim).
+  5.3 SUN ANGLE      — a fourth bake dimension beside rotation,
+                       squash axis and magnitude, so a melon's
+                       terminator swings as it moves through the
+                       world.
+  5.4 LOCAL SOURCES  — dithered ramp-shift rings, two concurrent.
+
+## Phase 5.1 — SELECTION — SHIPPED (2026-08-18)
+
+RULED: hybrid. The hour is drawn from a seed and offset by the cup
+leg, so it is deterministic (no stored state) AND a cup walks
+through the day.
+
+THE CORRECTION THAT MATTERS: the sequencing half only works if every
+leg hashes the SAME base. The first implementation hashed each leg's
+own TRACK seed and added the leg — measured, 157 of 300 cups still
+repeated an hour, i.e. the guarantee I had just written into the
+comment was false. A cup therefore passes its DAY as the base (legs
+0..4 land on consecutive, distinct hours by construction) and a
+one-off race passes its own track seed. Measured after: 0 of 400
+cups repeat, distribution even across the five hours.
+
+Also caught: the wire-up first called cup.state(), which does not
+exist — it would have evaluated to leg 0 for every race and silently
+deleted the sequencing half. The real accessor is cup.current().
+Second invented-field bug of the day (state.race.startY was the
+first), and the suite now pins the accessor by name.
+
+Suite: verify-px-render H5-H8.
+
+## Phase 5.2 — REGIONAL LIGHT — SHIPPED (2026-08-18)
+
+Strength stops being a global dev toggle: regions of one frame now
+resolve in different light. The rule is STRUCTURAL — anything under a
+roof is shaded — rather than a table mapping chunk kinds to states.
+That is physically honest, it covers the tunnel word automatically,
+and any future roofed structure inherits it without a new entry
+anywhere. Ceilings are the strands already flagged matAbove.
+
+Mechanism: palette.litIn(hex, strength) is the same door with an
+explicit column, so regional light OVERRIDES the global state per
+region rather than replacing it. Terrain resolves per COLUMN (cached
+per screen x, since a roof cannot move within a frame); melons
+resolve by their own world position; sprite frames therefore cache a
+resolved canvas PER STRENGTH, because two melons in one frame can
+legitimately sit in different light.
+
+Caught in build: drawMelon is a helper OUTSIDE render() and has no
+`state` — the terrain is published per frame instead (a
+ReferenceError on the first run, not a silent wrong answer, which is
+the good kind).
+
+Suite: verify-px-render J1-J5, and G7's markers moved with the
+resolveFrame signature (the LAW is unchanged: index maps in,
+resolved canvases out, never a re-bake).
+
+## Phase 5.2b + 5.3 — SPLIT SHADOW and SUN ANGLE — SHIPPED (2026-08-18)
+
+Done together because both change a sprite's lighting by WORLD
+POSITION and land in the same resolve path; retrofitting either
+afterward would have cost far more than doing them in one pass.
+
+5.2b SPLIT SHADOW. A melon at an overhang's edge is now half lit and
+half shaded. No curvature or mesh is involved, and none is needed:
+the shadow boundary under a straight deck lip is a VERTICAL line in
+world space, so on the sprite it is a column split. Curvature would
+only matter if the edge had to WRAP the form. The boundary is found
+by probing cover at the body's left and right extremes and bisecting
+for the crossing, then quantised to sprite columns — an 18 px sprite
+has 19 positions — so the resolved canvas caches per (strength,
+side, column) exactly as squash caches per (axis, magnitude).
+The split records WHICH SIDE is shaded: a first cut encoded only a
+column and silently dropped every left-shaded case.
+
+5.3 SUN ANGLE. The sun bearing is a fourth bake dimension beside
+rotation, squash axis and magnitude, and each HOUR carries its own
+bearing — so morning light falls from one side and evening from the
+other, and every melon's terminator swings with the day. In practice
+a race visits one bearing, so the key space does not widen; including
+it in the key is what guarantees a frame baked under morning light is
+never served at dusk.
+
+Suite: verify-px-render K2a-K2f. G7/G7b/J4 markers moved with the
+resolveFrame and bakeFrame signatures — the LAWS are unchanged.
+
+### Sun bearings tightened (2026-08-18, Eddie on device)
+
+The first set ran to 165 degrees at dusk — within 15 of HORIZONTAL,
+which is grazing rim-light — and 120 at night, low enough that
+melons read as UP-lit. The day now swings between roughly 60 and 125
+(worst 34 off vertical), so morning and evening are clearly angled
+without the light ever crawling under the body.
+
+NIGHT sits near vertical with a SEEDED offset (-15/0/+15 by track
+seed): a moon is somewhere overhead, not in a fixed socket, and not
+random either. SUN_SLOTS went 12 -> 24 (15-degree steps) because the
+coarser quantisation would have rounded the moon's variation away to
+nothing — a knob that silently did nothing would have been worse
+than not having it.
+
+Suite: K2a1 (no grazing angle), K2a2 (night near vertical), K2a3
+(the moon varies per track AND survives quantisation).
+
+### The sun's ZERO was wrong (2026-08-19, Eddie on device)
+
+Melons were lit from BELOW for the whole of 5.3. The world is Y-DOWN
+and this shading law's overhead is ~270 degrees — the shipped default
+is 260, commented "upper-left in a y-down world" — and I built the
+entire hour set around 90, which is straight DOWN. Tightening the
+spread (the previous fix) only made the up-lighting more uniform,
+which is why it survived a round of review.
+
+Hours re-centred on the shipped default: NOON 268, MORNING 236,
+GOLDEN 292, DUSK 300, NIGHT 262 with its seeded offset. Every hour's
+light vector now has negative y, i.e. genuinely from above.
+
+THE TESTING LESSON, and it is the important part: K2a1 measured "off
+vertical" as |deg - 90|, which ASSUMED the answer it was meant to
+check. A suite built on the same wrong premise as the code reports
+all clear forever. It now asserts the LIGHT VECTOR itself — sun().y
+must be negative — which is a fact about the world rather than about
+my arithmetic. (The rewritten check then failed on its own seeded
+initialiser, caught immediately because the reported number was
+absurd.)
+
+## Phase 5.5 — SHADOWS CAST ALONG THE SUN RAY — SHIPPED (2026-08-19)
+
+Shadows are now thrown by the light rather than dropped straight
+down. v1 asked "is anything directly above this point", which is a
+vertical projection — correct only for a sun at true vertical, and
+we no longer have one. The probe is a RAY traced back toward the
+sun, tested against terrain segments by exact segment crossing (not
+sampling, which would miss thin decks at the shallow angles this
+exists for).
+
+Measured, deck at world x -300..300:
+  NOON     shadow centre  25   (near vertical, under the caster)
+  MORNING  centre 474           (thrown right)
+  GOLDEN   centre -283          (thrown left)
+  DUSK     centre -387          (further, sun lower)
+Caster height governs the throw — MORNING at 400/700/1400 px up
+gives centres 271/474/805 — which is the thing a vertical projection
+could never express and the reason this is a ray.
+
+The melon's split shadow inherits all of it for free: the bisection
+that finds the boundary calls the same probe, so a melon at the edge
+of a THROWN shadow splits in the right place.
+
+TEST NOTES, two of my own measurement bugs worth keeping:
+* The pixel classifier compared open ground against
+  lit(bandColor(x)) while the renderer computes bandColor(lit(x)) —
+  different order, so every checker partner cell counted as shadow
+  and the shadow appeared to cover the whole screen. Direct probing
+  of shadowedAt() is what separated a real bug from a measurement
+  artefact.
+* J1/J2a encoded the OLD law ("the ground below the deck"), which an
+  angled cast makes false by design. They now assert that a shaded
+  band exists; WHERE it falls is L3-L5's business.
+
+### 5.5b — the shadow edge RAKES (2026-08-19, Eddie on device)
+
+The cast was offset correctly but its EDGE ran straight down the
+terrain: the shadow was probed ONCE PER COLUMN at the surface and
+that answer painted the whole vertical span, so the boundary could
+only ever be a vertical line between columns. A shadow edge must
+rake across a face at the light's angle.
+
+Fix: probe PER BAND, at each band's own world height. A deeper point
+must trace further along the ray to reach the caster's height, so its
+shadow edge sits at a different x — that difference IS the angle.
+
+The first attempt over-corrected: probing inside a slab, the ray
+exits through that slab's OWN top surface, so every column read as
+shadowed below a shallow depth (physically true — underground is
+dark — but not a cast shadow). shadowedAt now takes the strand the
+point BELONGS to and skips it: a visible face is darkened by other
+casters, not by the ground it is part of. buildSlab returns
+`top: pts`, so a slab identifies its own source strand for free.
+
+Measured (deck at x -200..500, 900 px up): at MORNING the edge moves
+from x 410 at the surface to x 140 at 400 px depth — a raking
+boundary; at NOON the same measurement moves only 20 px, because the
+sun is near vertical. Suite M1-M4.
+
+Also shipped: a SHADOW DEBUG view (dev lane slot 8) painting the cast
+flat — magenta shadowed, green lit, with the hour and bearing on the
+button — because a screenshot could not settle whether the shadow was
+wrong or merely large.
+
+### 5.5c — the rake is PER PIXEL, not per metre (2026-08-19)
+
+The edge stepped in 1 m blocks because the shadow was probed once per
+CHECKER CELL and the answer painted across the cell. Probing per
+pixel row would be ~57k segment tests a frame; instead the
+transition depth is BISECTED once per column (9 probes — cheaper
+than the per-cell scan) and the checker band is SPLIT at that exact
+row.
+
+Measured, deck 900 px up: MORNING walks the boundary 102 -> 153
+across 35 columns with EVERY row distinct; DUSK rakes the other way
+(152 -> 103); NOON has 3 edge columns because the sun is near
+vertical. Suite N1-N5, with M1 re-pinned to the surviving law (the
+shadow is evaluated at DEPTH, not once at the surface).
+
+Known limit, stated not hidden: bisection assumes ONE transition down
+a column, which holds for a single caster. Two overlapping casters
+would need an interval scan.
+
+MEASUREMENT NOTE: three separate readings of this bug were my
+instrument, not the code — filtering for pure magenta while the
+checker painted its PARTNER tone; sampling the first 44 shadowed
+columns, all of which were fully-shadowed ones under the deck rather
+than the 35 edge columns; and inferring from painted rects at all.
+Tracing the boundary VARIABLE settled it in one run. The debug view
+now paints flat for the same reason.
+
+### 5.5d — the melon's shadow edge rakes too (2026-08-19)
+
+The terrain raked but the melon did not: its split was a VERTICAL
+column test, written in 5.2b before the cast could rake at all. It is
+now the same geometry as the ground — a HALF-PLANE along the sun
+ray, through the boundary column — so a melon at a shadow edge is
+cut at the light's angle. The sprite cache keys on the boundary's
+ANGLE as well as its column, since the same split under a different
+sun is a different sprite.
+
+Measured (sweeping a deck until its shadow edge crosses the melon):
+MORNING walks the boundary across sprite columns 1 -> 12 down the
+body, DUSK runs the other way 12 -> 6, NOON stays at column 5 with
+the sun overhead. Suite K2d/K2d1.
+
+### 5.5e — the melon's shaded SIDE (2026-08-19)
+
+The boundary was right and at the right angle; the two sides were
+swapped. Cause: the split carried `left: covL` and picked the shaded
+half from the cross product's SIGN. Those describe the same thing
+only while the boundary is VERTICAL — once it slants along the ray,
+"left of the line" and "negative cross" part company, and the melon
+shades on exactly the wrong side. Boundary right, sides mirrored, is
+the signature of a sign error.
+
+Fix, and the reason it is not just a flipped sign: covL is a WORLD
+probe at the body's left extreme, and in sprite space that point is
+(col 0, row spr/2). Evaluating the same cross product THERE gives the
+sign that means covL, so the sprite inherits the ground's answer
+instead of re-deriving it from a convention that can disagree at some
+sun angles and not others. Flipping the comparison would have been
+correct at one hour and wrong at another.
+
+NEW CHECK, and the one that would have caught it: K2d3 asserts the
+melon's shaded half AGREES with the ground probe at the melon's own
+extreme, at every hour. They cannot disagree by construction — which
+is exactly why the disagreement shipped unnoticed.

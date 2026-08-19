@@ -222,6 +222,27 @@ function respawnRace(opts) {
   // decision — today, the bots' fork commitments. Endless races key
   // on the world seed the same way.
   race.seed = (def ? def.seed : (provider.seed || 0)) >>> 0;
+  // PHASE 5.1 — THE HOUR. Chosen from the race seed and the cup leg,
+  // so it is deterministic (same track, same leg, same light) and a
+  // cup still walks through different hours. Set here, beside the
+  // seed it derives from, rather than in the flow layer: this is the
+  // one place that already knows both which track and which leg.
+  if (window.FF.palette && window.FF.palette.setTime) {
+    // cup.current() — NOT cup.state(), which I invented and which
+    // would have silently evaluated to leg 0 for every race, quietly
+    // deleting the sequencing half of the ruling.
+    const cupNow = (window.FF.cup && window.FF.cup.current) ? window.FF.cup.current() : null;
+    const leg = (cupNow && cupNow.leg) || 0;
+    // The BASE decides whether the cup's hours can repeat. A cup
+    // passes its DAY, so its legs land on consecutive — therefore
+    // distinct — hours; a one-off race passes its own track seed and
+    // simply looks like itself.
+    const hourBase = cupNow && cupNow.day ? cupNow.day : race.seed;
+    window.FF.palette.setTime(window.FF.palette.timeForSeed(hourBase, leg));
+    // The moon's position: seeded per track, so night races differ
+    // from one another without any of them being random.
+    if (window.FF.palette.setSunSeed) window.FF.palette.setSunSeed(race.seed);
+  }
   // An unreachable lap target is the whole trick: finishedTick is
   // never set, so every downstream rule (finish screen, career write,
   // ghost save) stays correct without knowing this race is different.

@@ -37,24 +37,105 @@ const members = new Set();    // int 0xRRGGBB of every registered tone
 // DISCIPLINE: light moves in STEPS through hue/sat/lightness of the
 // palette, never through alpha or a brightness multiply. A multiply
 // reads as a filter over pixel art; a column swap reads as light.
-// Deltas are SCALES on lightness and saturation, plus an absolute
-// hue rotation. Additive deltas were wrong twice over: adding
-// saturation to a GREY invents a hue (the ground turned warm-brown
-// under BRIGHT), and subtracting lightness crushes dark tones to
-// black (DARK put the ground at #020202). Scaling keeps greys grey
-// and preserves the relative structure of every ramp.
+// ---- THE COLUMN MODEL (v2, Eddie 2026-08-18) ----
+// v1 moved value and chroma TOGETHER — brighter meant more
+// saturated, darker meant less. That is a brightness slider, not
+// light, and it produced mud at the dark end (dropping value AND
+// chroma is the recipe for it).
 //
-// NOTE on the discipline: multiplying here is fine — the result is a
-// discrete, registered palette entry. What stays forbidden is
-// multiplying at COMPOSITE time over pixels, which mints blends and
-// reads as a filter laid over pixel art.
+// The painter's convention, which is also the physics: STRONG LIGHT
+// WASHES COLOUR OUT — lit surfaces climb toward the white point, so
+// chroma falls as value rises. SHADOW GAINS CHROMA — unlit surfaces
+// are lit by bounced ambient, and that ambient is coloured, which is
+// why night reads as deep saturated blue rather than grey.
+//
+// Three moves per column, each doing a different job:
+//   lift  — fraction of the REMAINING distance to white. A ceiling,
+//           not a scale: scaling upward clips once a tone is already
+//           pale, which is exactly where BRIGHT needs to behave.
+//   mS    — chroma scale, moving OPPOSITE the value change.
+//   tint / tintK — blend toward the column's ambient hue. Without
+//           it a chroma scale leaves GREYS untouched, so terrain
+//           would stay neutral while everything coloured deepened.
+//           Real shadow tints neutrals toward the ambient; this is
+//           what lifts the greys into the night with everything else.
 const COLUMNS = {
-  BRIGHT:   { mL: 1.14, mS: 1.10, dH: 0 },
-  STANDARD: { mL: 1,    mS: 1,    dH: 0 },
-  DIM:      { mL: 0.74, mS: 0.86, dH: 4 },
-  DARK:     { mL: 0.48, mS: 0.70, dH: 9 },
+  BRIGHT:   { lift: 0.30, mL: 1,    mS: 0.72, tint: '#fff6e2', tintK: 0.10 },
+  STANDARD: { lift: 0,    mL: 1,    mS: 1,    tint: null,      tintK: 0 },
+  DIM:      { lift: 0,    mL: 0.70, mS: 1.25, tint: '#2a3f7a', tintK: 0.20 },
+  DARK:     { lift: 0,    mL: 0.44, mS: 1.55, tint: '#16265e', tintK: 0.38 },
 };
 const STATES = Object.keys(COLUMNS);
+
+// ---- TIME OF DAY (Phase 5.2) ----
+// A SECOND, ORTHOGONAL axis. Strength (above) is local light: a
+// tunnel, a shaded gallery, a flare. Time is the world's hour, and
+// the two compose — a tunnel at dusk is not a tunnel at noon. Each
+// hour carries its own SKY parameters too, because the sky is the
+// star of a time change: a sunset is not a rotation of a blue sky,
+// it is a different ramp (warm and low-contrast near the horizon).
+//
+// Selection is deliberately NOT wired here: whether the hour is
+// drawn from the track seed or sequenced across a cup is Eddie's
+// open ruling. timeForSeed() below implements the seeded option so
+// that ruling is a one-line change either way.
+const TIMES = {
+  // NOON is the IDENTITY hour, exactly as STANDARD is the identity
+  // strength: it must declare no moves, or the declaration lies
+  // about what the fast path actually does.
+  // Phase 5.3: each hour carries the SUN's bearing (degrees, the
+  // shading law's own convention: 0 = from the right, 90 = overhead
+  // in screen terms). The terminator on every melon swings with the
+  // day — morning light from one side, evening from the other — and
+  // because it is a per-hour constant the bake can key on it.
+  //
+  // BEARINGS, v3 — AND THE ZERO WAS WRONG (Eddie, on device).
+  // The world is Y-DOWN, so in this law's convention OVERHEAD is
+  // ~270 degrees and the shipped default is 260 ("upper-left in a
+  // y-down world"). I built the first hour set around 90, which is
+  // straight DOWN: every melon has been lit from underneath since
+  // 5.3 landed, and tightening the spread only made the up-lighting
+  // more uniform. The day is now centred on the shipped default:
+  // NOON just left of vertical, MORNING further left, GOLDEN and
+  // DUSK swinging right, none of them within 40 degrees of the
+  // horizon on either side.
+  //
+  // Reference: sunBearingDeg 260 is the value the game shipped and
+  // was tuned against, so it — not a number I reason out from the
+  // trigonometry — is the anchor.
+  NOON: {
+    lift: 0, mL: 1, mS: 1, tint: null, tintK: 0, sunDeg: 268,
+    sky: { base: '#2f6bd8', lift: 60, fade: 74, turn: 12 },
+  },
+  MORNING: {
+    lift: 0.02, mL: 0.97, mS: 1.02, tint: '#c9b48c', tintK: 0.12,
+    sunDeg: 236,
+    sky: { base: '#2a5fc0', lift: 58, fade: 70, turn: 22 },
+  },
+  // Golden hour is WARM but not brighter than noon — the sun is low
+  // and the light is weaker. A pale tint (#ffc177) blended into dark
+  // tones lifted them ABOVE noon, which the ordering check caught:
+  // the cast must carry hue, not luminance, so the tint tones are
+  // chosen near the mid-range and mL does the dimming.
+  GOLDEN: {
+    lift: 0, mL: 0.88, mS: 1.14, tint: '#b8763a', tintK: 0.26,
+    sunDeg: 292,
+    sky: { base: '#1f4f9e', lift: 62, fade: 66, turn: 58 },
+  },
+  DUSK: {
+    lift: 0, mL: 0.70, mS: 1.30, tint: '#5b3466', tintK: 0.34,
+    sunDeg: 300,
+    sky: { base: '#2a2f86', lift: 56, fade: 58, turn: 72 },
+  },
+  NIGHT: {
+    lift: 0, mL: 0.5, mS: 1.45, tint: '#101c4e', tintK: 0.42,
+    sunDeg: 262,
+    sky: { base: '#0d1442', lift: 34, fade: 44, turn: 10 },
+  },
+};
+const TIME_NAMES = Object.keys(TIMES);
+let currentTime = 'NOON';
+
 let current = 'STANDARD';
 let version = 0;              // bumped on every change: caches watch it
 const litCache = new Map();
@@ -89,23 +170,144 @@ function hslToRgbLocal(h, s, l) {
 // The single door: any tone, resolved for the current light column.
 // STANDARD is the identity, so vector mode and every existing check
 // see byte-identical output until a state is actually selected.
+// One tone through BOTH axes: the hour first (the world's light),
+// then the local strength (what this place does to it).
+function applyColumn(k, col) {
+  let [h, sat, l] = rgbToHslLocal((k >> 16) & 255, (k >> 8) & 255, k & 255);
+  sat = Math.max(0, Math.min(1, sat * col.mS));
+  l = Math.max(0, Math.min(1, l * col.mL));
+  if (col.lift) l = l + (1 - l) * col.lift;
+  let [r, g, b] = hslToRgbLocal(h, sat, l);
+  if (col.tint && col.tintK) {
+    // THE CAST: blend toward the ambient in RGB, then RESTORE the
+    // pre-blend luminance.
+    //
+    // v1 blended in RGB and dragged VALUE with it (GOLDEN came out
+    // brighter than NOON). v2 rotated HUE toward the ambient along
+    // the shorter arc — which is AMBIGUOUS when the ambient is near
+    // 180 degrees away, and a warm cast on a blue sky is exactly
+    // that: as the source hue drifted past the antipode the rotation
+    // flipped sign, and the sky jumped from cyan to indigo at one
+    // row. That seam is the solid block Eddie spotted at the top of
+    // MORNING.
+    //
+    // A luminance-preserving RGB blend has no wrap to be ambiguous
+    // about, so it is continuous by construction, and value stays
+    // mL's job alone — which is what the hour ordering rests on.
+    const tk = toInt(col.tint);
+    const tr = (tk >> 16) & 255, tg = (tk >> 8) & 255, tb = tk & 255;
+    const w = col.tintK * (1 - sat * 0.55);
+    const luma = (rr, gg, bb) => 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+    const before = luma(r, g, b);
+    r = r + (tr - r) * w;
+    g = g + (tg - g) * w;
+    b = b + (tb - b) * w;
+    const after = luma(r, g, b);
+    if (after > 0.5) {
+      const f = before / after;
+      r *= f; g *= f; b *= f;
+    }
+    r = Math.max(0, Math.min(255, Math.round(r)));
+    g = Math.max(0, Math.min(255, Math.round(g)));
+    b = Math.max(0, Math.min(255, Math.round(b)));
+  }
+  return (r << 16) | (g << 8) | b;
+}
+
+// Phase 5.2: the same door with an EXPLICIT strength, so different
+// REGIONS of one frame can resolve differently. lit() is this with
+// the global strength — regional light does not replace the global
+// state, it overrides it per region.
+function litIn(hex, strength) {
+  const save = current;
+  current = COLUMNS[strength] ? strength : current;
+  const out = lit(hex);
+  current = save;
+  return out;
+}
+
 function lit(hex) {
-  if (current === 'STANDARD') return hex;
-  const ck = current + '|' + hex;
+  if (current === 'STANDARD' && currentTime === 'NOON') return hex;
+  const ck = currentTime + '|' + current + '|' + hex;
   const hit = litCache.get(ck);
   if (hit !== undefined) return hit;
   const col = COLUMNS[current] || COLUMNS.STANDARD;
-  const k = toInt(hex);
+  let k = toInt(hex);
   if (k === null) return hex;
-  let [h, sat, l] = rgbToHslLocal((k >> 16) & 255, (k >> 8) & 255, k & 255);
-  h += col.dH;
-  sat = Math.max(0, Math.min(1, sat * col.mS));
-  l = Math.max(0, Math.min(1, l * col.mL));
-  const [r, g, b] = hslToRgbLocal(h, sat, l);
-  const out = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+  const tcol = TIMES[currentTime];
+  if (tcol && currentTime !== 'NOON') k = applyColumn(k, tcol);
+  if (current === 'STANDARD') {
+    const out0 = '#' + ((1 << 24) | k).toString(16).slice(1);
+    litCache.set(ck, out0);
+    members.add(k);
+    return out0;
+  }
+  const k2 = applyColumn(k, col);
+  const out = '#' + ((1 << 24) | k2).toString(16).slice(1);
   litCache.set(ck, out);
-  members.add(toInt(out));      // the lit tone is legitimate too
+  members.add(k2);              // the lit tone is legitimate too
   return out;
+}
+
+function setTime(name) {
+  if (!TIMES[name] || name === currentTime) return currentTime;
+  currentTime = name;
+  version++;
+  return currentTime;
+}
+function getTime() { return currentTime; }
+// The sky's parameters for the current hour: base, lift, fade, turn.
+function skyParams() { return (TIMES[currentTime] || TIMES.NOON).sky; }
+// The sun's bearing for the current hour, in the shading law's units.
+// NIGHT takes a seeded offset so the moon is not in the same socket
+// on every track; the offset is small and deterministic, so it never
+// approaches the grazing angles the tightening removed.
+let sunSeed = 0;
+function setSunSeed(seed) {
+  let h = 2166136261 >>> 0;
+  const str = String(seed);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  sunSeed = h;
+  version++;
+  return sunSeed;
+}
+const SUN_OVERHEAD = 270;   // y-down world: 270 is straight up
+function sunDeg() {
+  const t = TIMES[currentTime] || TIMES.NOON;
+  const base = t.sunDeg === undefined ? SUN_OVERHEAD : t.sunDeg;
+  if (currentTime !== 'NIGHT') return base;
+  return base + ((sunSeed % 3) - 1) * 15;      // -15, 0 or +15
+}
+// SELECTION (Phase 5.1, ruled 2026-08-18): the hour is drawn from the
+// TRACK SEED and OFFSET BY THE CUP LEG. The hybrid settles the open
+// question in both directions at once:
+//   * seeded — a given track at a given leg always looks the same,
+//     which is the project's seed law, and no state has to be stored;
+//   * sequenced — the leg offset guarantees a three-race cup shows
+//     three DIFFERENT hours. Pure seeding could legitimately deal
+//     noon three times, which is the weakest possible version of a
+//     feature whose whole point is that the day moves.
+// The sequencing half only works if every leg hashes the SAME base
+// and separates by the leg offset. Hashing each leg's own TRACK seed
+// and adding the leg does nothing — measured: 157 of 300 cups still
+// repeated an hour. So a cup passes its DAY as the base (one base,
+// legs 0..4 land on consecutive, distinct hours by construction) and
+// a one-off race passes its own track seed.
+// Practice runs pass leg 0, so a practised track matches its cup-leg
+// appearance only on leg 1 — deliberate: practice is a rehearsal of
+// leg 1, not of the whole cup.
+function timeForSeed(seed, leg) {
+  let h = 2166136261 >>> 0;
+  const str = String(seed);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  const n = TIME_NAMES.length;
+  return TIME_NAMES[(h + (leg | 0)) % n];
 }
 function setLight(state) {
   if (!COLUMNS[state] || state === current) return current;
@@ -160,7 +362,8 @@ function rampNames() { return [...ramps.keys()]; }
 
 const api = { register, registerTone, tone, isMemberInt, isMemberHex,
   toInt, stats, rampNames, STATES, COLUMNS, lit, setLight, getLight,
-  lightVersion };
+  lightVersion, TIMES, TIME_NAMES, setTime, getTime, skyParams,
+  timeForSeed, litIn, sunDeg, setSunSeed };
 
 if (typeof window !== 'undefined') {
   window.FF = window.FF || {};

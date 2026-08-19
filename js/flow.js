@@ -753,6 +753,67 @@ window.FF._grant = (id) => {
     const p2 = window.FF.palette;
     lbtn.textContent = '\u2600 ' + (p2 ? p2.getLight() : 'STANDARD');
   };
+  // Hour cycle (Phase 5.2), lane slot 7. Strength and hour are
+  // ORTHOGONAL — a tunnel at dusk is not a tunnel at noon — so they
+  // get a control each rather than one combined list.
+  const hbtn = document.createElement('button');
+  hbtn.id = 'ff-hour-btn';
+  hbtn.title = 'Cycle the time of day (dev)';
+  hbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 7);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  const paintHour = () => {
+    const p2 = window.FF.palette;
+    hbtn.textContent = '\u23f1 ' + (p2 && p2.getTime ? p2.getTime() : 'NOON');
+  };
+  paintHour();
+  document.body.appendChild(hbtn);
+  hbtn.addEventListener('click', () => {
+    const p2 = window.FF.palette;
+    if (!p2 || !p2.setTime) return;
+    const order = p2.TIME_NAMES;
+    const i = order.indexOf(p2.getTime());
+    p2.setTime(order[(i + 1) % order.length]);
+    paintHour();
+  });
+  window.FF.devtools.register({
+    show: () => { hbtn.style.display = ''; },
+    hide: () => { hbtn.style.display = 'none'; },
+  });
+
+  // Shadow debug (Phase 5.5), lane slot 8: paints the cast flat —
+  // magenta shadowed, green lit — and reports the hour and the sun's
+  // bearing, so a capture answers "is the shadow in the right place"
+  // without anyone inferring it from tone.
+  const sbtn = document.createElement('button');
+  sbtn.id = 'ff-shadow-btn';
+  sbtn.title = 'Show the shadow cast (dev)';
+  sbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 8);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  const paintShadowBtn = () => {
+    const p2 = window.FF.palette;
+    const hour = p2 && p2.getTime ? p2.getTime() : '?';
+    const deg = p2 && p2.sunDeg ? p2.sunDeg() : '?';
+    sbtn.textContent = (window.FF.PX_SHADOW_DEBUG ? '\u25a0 ' : '\u25a1 ')
+      + hour + ' ' + deg + '\u00b0';
+  };
+  paintShadowBtn();
+  document.body.appendChild(sbtn);
+  sbtn.addEventListener('click', () => {
+    window.FF.PX_SHADOW_DEBUG = !window.FF.PX_SHADOW_DEBUG;
+    paintShadowBtn();
+  });
+  window.FF.devtools.register({
+    show: () => { sbtn.style.display = ''; paintShadowBtn(); },
+    hide: () => { sbtn.style.display = 'none'; },
+  });
   paintLight();
   document.body.appendChild(lbtn);
   lbtn.addEventListener('click', () => {

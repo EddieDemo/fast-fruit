@@ -195,10 +195,89 @@ function createRenderer(canvas) {
                        // ctx as a parameter, so the swap is total
   let pxCanvas = null; // lazy: the low-res world layer
   const pxAltCache = new Map();  // fill tone -> its checker partner
+  const pxSegCache = new Map();  // screen column -> regional strength
+  let pxTerrain = null;          // this frame's terrain, for helpers
+  let pxSunRay = null;           // this frame's direction toward the sun
   // Phase 5: every pixel-mode fill resolves through the light column.
   // STANDARD is the identity, so nothing changes until a state is
   // selected. Caches that hold tones watch palette.lightVersion().
   const L = (hex) => (window.FF.palette ? window.FF.palette.lit(hex) : hex);
+  // Phase 5.2 — REGIONAL LIGHT. A region's strength is decided by
+  // STRUCTURE, not by a table of chunk kinds: anything under a roof
+  // is shaded. That is physically honest, it covers the tunnel word
+  // automatically, and any future roofed thing inherits it without a
+  // new entry anywhere. Ceilings are the strands flagged matAbove.
+  const LR = (hex, strength) => (window.FF.palette && window.FF.palette.litIn
+    ? window.FF.palette.litIn(hex, strength) : hex);
+  const ROOFED = 'DIM';
+  const ROOF_MARGIN = 60;        // world px: ignore your own surface
+  // v2 (Eddie, 2026-08-18): "roofed" was keyed on matAbove, which
+  // ONLY the tunnel word sets — so standing under a GALLERY DECK,
+  // the most common overhead structure in the game, shaded nothing.
+  // The honest rule is structural without being tag-dependent:
+  // anything SOLID ABOVE YOU shades you, roof or deck. Walls are
+  // excluded (they are vertical, so "above" is meaningless for
+  // them) and the margin keeps a surface from roofing itself.
+  // ---- Phase 5.5: SHADOWS CAST ALONG THE SUN RAY ----
+  // v1 asked "is anything directly above this point" — a straight-down
+  // projection, i.e. a sun at true vertical. With MORNING at 236 and
+  // DUSK at 300 the light is well off vertical, so a deck's shadow
+  // belongs to ONE SIDE of the deck and slides across the ground as
+  // the hour turns.
+  //
+  // The probe is now a RAY: from the point, walk back toward the sun
+  // and ask whether any surface blocks it. That also fixes something
+  // v1 got away with only because it was vertical — a caster's HEIGHT
+  // now governs where its shadow lands, so a deck 200 px up and one
+  // 4000 px up no longer shade the same spot.
+  //
+  // Segment intersection, not sampling: a ray crossing a polyline is
+  // an exact test, and sampling would miss thin decks at shallow sun
+  // angles (precisely the dusk case this exists for).
+  const SHADOW_REACH = 6000;     // world px: beyond this, no caster
+  function sunRayDir() {
+    const sh2 = window.FF.shading;
+    const pal2 = window.FF.palette;
+    if (!sh2 || !pal2 || !pal2.sunDeg) return { x: 0, y: -1 };
+    const save = sh2.P.sunBearingDeg;
+    sh2.P.sunBearingDeg = pal2.sunDeg();
+    const v = sh2.sun();
+    sh2.P.sunBearingDeg = save;
+    // Toward the light. y is negative (from above) after the 5.3 fix;
+    // guard anyway so a bad bearing cannot send the ray downward.
+    const y = v.y < -0.05 ? v.y : -1;
+    return { x: v.x, y };
+  }
+  // `own` is the strand this point BELONGS to, and it is skipped.
+  // Without it, probing inside a slab body traces back out through
+  // that slab's own top surface and reports shadow — physically true
+  // (underground is dark) but not a CAST shadow: it painted every
+  // column shaded below a shallow depth. A visible face should be
+  // darkened by other casters, not by the ground it is part of.
+  function shadowedAt(terrain, wx, wy, ray, own) {
+    const d = ray || sunRayDir();
+    // March the ray from just above the point out to SHADOW_REACH,
+    // testing each terrain segment for a true crossing.
+    const ox = wx + d.x * (ROOF_MARGIN / -d.y);
+    const oy = wy - ROOF_MARGIN;
+    const ex = wx + d.x * (SHADOW_REACH / -d.y);
+    const ey = wy - SHADOW_REACH;
+    for (const strand of terrain) {
+      if (strand.isWall || (own && strand === own)) continue;
+      for (let i = 1; i < strand.length; i++) {
+        const a0 = strand[i - 1], b0 = strand[i];
+        // Segment/segment intersection (ray o->e against a0->b0).
+        const r1x = ex - ox, r1y = ey - oy;
+        const s1x = b0.x - a0.x, s1y = b0.y - a0.y;
+        const den = r1x * s1y - r1y * s1x;
+        if (den === 0) continue;                 // parallel
+        const t = ((a0.x - ox) * s1y - (a0.y - oy) * s1x) / den;
+        const u = ((a0.x - ox) * r1y - (a0.y - oy) * r1x) / den;
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
+      }
+    }
+    return false;
+  }
   let litVer = -1;
   let skyRefY = null;            // trailing height reference for sky drift
 
@@ -336,6 +415,10 @@ function createRenderer(canvas) {
     // bakes on a later one, so a wrap change can never freeze the
     // game the way the eager 64-frame bake did.
     bakeBudget = BAKE_PER_FRAME;
+    pxTerrain = state.terrain;
+    // One sun-ray solve per frame: the hour cannot change mid-frame,
+    // and every shadow probe shares it.
+    pxSunRay = sunRayDir();
     // A light change invalidates derived-tone caches. Sprites are
     // INDEXED, so they re-resolve rather than re-bake (Phase 2.3's
     // whole purpose): the index maps stay, only their colour lists
@@ -345,7 +428,11 @@ function createRenderer(canvas) {
       litVer = lv;
       pxAltCache.clear();
       for (const e of melonSprites.values()) {
-        if (e && e.frames) for (const f of e.frames.values()) if (f) f.lit = -1;
+        if (e && e.frames) {
+          for (const f of e.frames.values()) {
+            if (f && f.res) for (const ent of f.res.values()) ent.lit = -1;
+          }
+        }
       }
     }
     const realW = width, realH = height, realDpr = dpr;
@@ -561,6 +648,13 @@ function createRenderer(canvas) {
     if (pxMode) {
       const sh = window.FF.shading;
       const N = SKY_BANDS;
+      // Phase 5.2: the sky's own parameters come from the HOUR. A
+      // sunset is not a rotated blue sky — it is a different ramp
+      // (warmer, lower contrast at the horizon), so the hour carries
+      // base/lift/fade/turn rather than just a cast over the old one.
+      const skyP = (window.FF.palette && window.FF.palette.skyParams)
+        ? window.FF.palette.skyParams()
+        : { base: SKY_BASE, lift: SKY_LIFT, fade: SKY_FADE, turn: SKY_TURN };
       // PINNED (Eddie, 2026-08-18): the sky does not move. The
       // damped-drift version read as the backdrop sliding around
       // rather than as depth — on a track that descends forever,
@@ -606,8 +700,8 @@ function createRenderer(canvas) {
         // The sky gets its own fine ladder (SKY_QUANT), which is
         // where a long ramp of near-neighbours legitimately belongs.
         const tone = L(sh && sh.skyRamp
-          ? sh.skyRamp(SKY_BASE, k, SKY_LIFT, SKY_TURN, SKY_FADE, SKY_QUANT)
-          : SKY_BASE);
+          ? sh.skyRamp(skyP.base, k, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
+          : skyP.base);
         ctx.fillStyle = tone;
         ctx.fillRect(0, y, width, Math.min(step, height - y, hz - y));
       }
@@ -615,8 +709,8 @@ function createRenderer(canvas) {
       // portrait window (35 m of vertical) can never show a seam.
       if (hz < height) {
         ctx.fillStyle = L(sh && sh.skyRamp
-          ? sh.skyRamp(SKY_BASE, 1, SKY_LIFT, SKY_TURN, SKY_FADE, SKY_QUANT)
-          : SKY_BASE);
+          ? sh.skyRamp(skyP.base, 1, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
+          : skyP.base);
         ctx.fillRect(0, Math.max(0, Math.round(hz)), width,
           height - Math.max(0, Math.round(hz)));
       }
@@ -721,14 +815,17 @@ function createRenderer(canvas) {
       // feature must survive the pixel grid, and a filled cell has
       // nothing to survive.
       const gStep = TERRAIN_GRID_SPACING;      // 100 world px = 1 m
+      // The checker partner is derived from the ALREADY-LIT fill, so
+      // it inherits whatever region that fill belongs to for free.
       const altOf = (hex) => {
         let a2 = pxAltCache.get(hex);
         if (a2 === undefined) {
-          a2 = L(window.FF.shading ? window.FF.shading.bandColor(hex, 6) : hex);
+          a2 = window.FF.shading ? window.FF.shading.bandColor(hex, 6) : hex;
           pxAltCache.set(hex, a2);
         }
         return a2;
       };
+      pxSegCache.clear();
       pxGridDone = true;
       var pxGStep = gStep, pxAltOf = altOf;   // used by the fill loop
     }
@@ -775,7 +872,7 @@ function createRenderer(canvas) {
         const t = sl.top, bo = sl.bottom;
         bo._cur = 0;
         for (let i = 1; i < t.length; i++) {
-          const segFill = L((TINT_PX && TINT_PX[t[i].k]) || COLORS.ground);
+          const segRaw = (TINT_PX && TINT_PX[t[i].k]) || COLORS.ground;
           const ax = toScreenX(t[i - 1].x), ay = toScreenY(t[i - 1].y);
           const bx = toScreenX(t[i].x), by = toScreenY(t[i].y);
           let x0 = Math.round(Math.min(ax, bx)), x1 = Math.round(Math.max(ax, bx));
@@ -790,6 +887,46 @@ function createRenderer(canvas) {
             // own geometry — never from the top's index or fraction.
             const yBot = Math.round(botYAt(bo, x + 0.5));
             const hgt = Math.max(1, yBot - yTop);
+            // The shadow is probed PER BAND, at that band's own world
+            // height — not once per column at the surface.
+            //
+            // v1 tested at the surface row and painted the whole
+            // vertical span with the answer, so the lit/shadow
+            // boundary could only ever be a VERTICAL line between
+            // columns: the shadow was offset correctly but its edge
+            // ran straight down the terrain face instead of raking
+            // across it at the light's angle (Eddie, on device).
+            // A face is tall in world terms, and the ray crosses it
+            // at a height that changes along the face — which is
+            // exactly the diagonal that was missing.
+            const wxHere = ((x + 0.5) - cxs) / zoom + camX;
+            // THE BOUNDARY'S EXACT DEPTH for this column.
+            // Probing per checker CELL made the rake step in 1 m
+            // blocks (Eddie: "per metre, not per pixel"). Probing per
+            // PIXEL row would be ~57k segment tests a frame. The
+            // transition depth is BISECTED once per column instead —
+            // 9 probes — which is cheaper than the per-cell scan AND
+            // exact to the pixel.
+            // Bisection assumes ONE transition down a column, which
+            // holds for a single caster; two overlapping casters
+            // would need an interval scan. Noted, not solved.
+            const wyTopC = (yTop - cys) / zoom + camY;
+            const wyBotC = (yBot - cys) / zoom + camY;
+            const shTop = shadowedAt(pxTerrain, wxHere, wyTopC, pxSunRay, sl.top);
+            const shBot = shadowedAt(pxTerrain, wxHere, wyBotC, pxSunRay, sl.top);
+            let shRow = null;
+            if (shTop !== shBot) {
+              let loW = wyTopC, hiW = wyBotC;
+              for (let it = 0; it < 9; it++) {
+                const midW = (loW + hiW) / 2;
+                if (shadowedAt(pxTerrain, wxHere, midW, pxSunRay, sl.top) === shTop) loW = midW;
+                else hiW = midW;
+              }
+              shRow = Math.round(((loW + hiW) / 2 - camY) * zoom + cys);
+            }
+            if (window.FF._pxShTrace) {
+              window.FF._pxShTrace.push({ x, yTop, yBot, shTop, shBot, shRow });
+            }
             // CHECKER FILL: walk this span in world-cell bands. One
             // fillRect per band, not per pixel — a column crosses
             // only a few cells — and the cell indices come from WORLD
@@ -804,9 +941,29 @@ function createRenderer(canvas) {
               let yNext = Math.ceil((nextW - camY) * zoom + cys);
               if (yNext <= y) yNext = y + 1;   // never stall
               const yEnd = Math.min(yEndAll, yNext);
+              // The checker cell decides the TONE PAIR; the shadow
+              // boundary can fall anywhere INSIDE it, so the band is
+              // split at that exact row.
               const light = ((wxCell + cyCell) & 1) === 0;
-              ctx.fillStyle = light ? segFill : pxAltOf(segFill);
-              ctx.fillRect(x, y, 1, yEnd - y);
+              const paintBand = (y0b, y1b, shaded) => {
+                if (y1b <= y0b) return;
+                const base = window.FF.PX_SHADOW_DEBUG
+                  ? (shaded ? '#ff00ff' : '#00c040')
+                  : (shaded ? LR(segRaw, ROOFED) : L(segRaw));
+                // Debug paints FLAT: the checker partner of magenta
+                // is a different magenta, fine to look at but
+                // ambiguous to measure.
+                ctx.fillStyle = window.FF.PX_SHADOW_DEBUG
+                  ? base : (light ? base : pxAltOf(base));
+                ctx.fillRect(x, y0b, 1, y1b - y0b);
+              };
+              if (shRow !== null && shRow > y && shRow < yEnd) {
+                paintBand(y, shRow, shTop);
+                paintBand(shRow, yEnd, !shTop);
+              } else {
+                paintBand(y, yEnd,
+                  shRow === null ? shTop : (shRow <= y ? !shTop : shTop));
+              }
               y = yEnd;
             }
           }
@@ -1159,7 +1316,7 @@ function createRenderer(canvas) {
           smeared = true;
         }
       }
-      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals);
+      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals, dxw, dyw);
       // ---- Contact shadow: the body darkens near its ground touch ----
       if (RIG.P.contactShadow && !pxMode) {
         const wyG = surfY(state, dxw, dyw);
@@ -1912,9 +2069,24 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   }
 
   // frameKey packs (rotation, axis, magnitude) into one integer.
-  const frameKey = (rot, ax, mag) => (rot * (SQ_AXES + 1) + ax) * (SQ_MAGS + 1) + mag;
+  // Phase 5.3: the sun bearing is a FOURTH bake dimension. It is a
+  // per-hour constant, so a race visits exactly one value of it and
+  // the key space does not really widen in practice — but a frame
+  // baked under morning light must never be served at dusk, which is
+  // what including it in the key guarantees.
+  const SUN_SLOTS = 24;          // 15-degree steps: 30 was coarser
+                                 // than the seeded night offset, so
+                                 // the moon's variation quantised
+                                 // away to nothing.
+  const frameKey = (rot, ax, mag, sun) =>
+    ((rot * (SQ_AXES + 1) + ax) * (SQ_MAGS + 1) + mag) * (SUN_SLOTS + 1) + sun;
+  const sunSlot = () => {
+    const pal = window.FF.palette;
+    const deg = pal && pal.sunDeg ? pal.sunDeg() : 90;
+    return ((Math.round(deg / (360 / SUN_SLOTS)) % SUN_SLOTS) + SUN_SLOTS) % SUN_SLOTS;
+  };
 
-  function bakeFrame(e, rot, ax, mag) {
+  function bakeFrame(e, rot, ax, mag, sun) {
     const spr = e.spr, big = spr * SS;
     if (!e.big) {
       e.big = document.createElement('canvas');
@@ -1927,6 +2099,11 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const quarter = (SS * SS) * 0.25;
     bakeLodR = e.rPx;                  // Phase 2.1: painters simplify
     const sh = window.FF.shading;
+    // Render this frame under the hour's sun, then restore — the
+    // shading law reads its bearing from one parameter, so the whole
+    // terminator swings with no other change anywhere.
+    const sunSave = sh ? sh.P.sunBearingDeg : null;
+    if (sh) sh.P.sunBearingDeg = sun * (360 / SUN_SLOTS);
     btx.setTransform(1, 0, 0, 1, 0, 0);
     btx.clearRect(0, 0, big, big);
     // The squash the painter applies — quantized, and applied HERE so
@@ -1994,9 +2171,9 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     }
     const fc = document.createElement('canvas');
     fc.width = spr; fc.height = spr;
-    const frame = { canvas: fc, idx, colors, spr, lit: -1 };
-    resolveFrame(frame);
+    const frame = { canvas: fc, idx, colors, spr, res: null };
     bakeLodR = null;
+    if (sh && sunSave !== null) sh.P.sunBearingDeg = sunSave;
     return frame;
   }
 
@@ -2005,46 +2182,103 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // the current column — not a re-bake. Cost is one pass over a
   // ~20x20 sprite; the 64 rotations and their supersampled renders
   // are untouched.
-  function resolveFrame(f) {
+  // Phase 5.2: a frame resolves PER REGION. Two melons in one frame
+  // can sit in different light — one under a roof, one in the open —
+  // so the resolved canvas is cached per strength rather than there
+  // being a single current one.
+  // Phase 5.2b — THE SPLIT SHADOW. An overhang's shadow boundary is a
+  // VERTICAL line in world space, so on the sprite it is just a
+  // column split: pixels left of it resolve in one column, right of
+  // it in the other. No curvature or mesh is involved — curvature
+  // would only matter if the edge had to WRAP the form, and a
+  // straight deck lip casts a straight edge.
+  //
+  // The boundary moves continuously as the melon rolls, so it is
+  // QUANTISED to sprite columns exactly as squash is quantised: an
+  // 18 px sprite has 19 possible positions, and the resolved canvas
+  // caches per (strength, boundary column).
+  function resolveFrame(f, strength, split) {
     const pal = window.FF.palette;
     const lv = pal ? pal.lightVersion() : 0;
-    if (f.lit === lv) return f;
+    // The cache key includes the boundary's ANGLE as well as its
+    // position: the same column split under a different sun is a
+    // different sprite.
+    const key = (strength || '_') + '|'
+      + (split ? (split.aShaded ? 'L' : 'R') + split.col
+        + ':' + Math.round(Math.atan2(split.ry, split.rx) * 12) : '-');
+    if (!f.res) f.res = new Map();
+    let ent = f.res.get(key);
+    if (ent && ent.lit === lv) return ent;
+    if (!ent) {
+      ent = { canvas: document.createElement('canvas'), lit: -1 };
+      ent.canvas.width = f.spr; ent.canvas.height = f.spr;
+      f.res.set(key, ent);
+    }
     const spr = f.spr;
-    const ftx = f.canvas.getContext('2d');
+    const ftx = ent.canvas.getContext('2d');
     const out = ftx.createImageData(spr, spr);
     const od = out.data;
-    const lut = new Array(f.colors.length);
-    for (let c = 0; c < f.colors.length; c++) {
-      const kk = f.colors[c];
-      if (!pal || pal.getLight() === 'STANDARD') { lut[c] = kk; continue; }
-      const hex = '#' + ((1 << 24) | kk).toString(16).slice(1);
-      lut[c] = pal.toInt(pal.lit(hex));
-    }
+    // Two lookup tables when the sprite straddles a shadow edge: the
+    // lit side and the shaded side. One when it does not.
+    const build = (st2) => {
+      const t = new Array(f.colors.length);
+      for (let c = 0; c < f.colors.length; c++) {
+        const kk = f.colors[c];
+        // The fast path once asked only about STRENGTH, so with
+        // strength STANDARD and the hour at DUSK the sprite skipped
+        // the lookup entirely: the world changed around melons that
+        // never did. palette.lit() already short-circuits when BOTH
+        // axes are the identity, so the door is simply always used.
+        if (!pal) { t[c] = kk; continue; }
+        const hex = '#' + ((1 << 24) | kk).toString(16).slice(1);
+        t[c] = pal.toInt(st2 ? pal.litIn(hex, st2) : pal.lit(hex));
+      }
+      return t;
+    };
+    const lutLit = build(strength);
+    const lutShade = split ? build(ROOFED) : null;
     for (let p = 0; p < f.idx.length; p++) {
       const ci = f.idx[p];
       if (ci === 255) continue;
-      const kk = lut[ci];
+      const col = p % spr;
+      // The boundary is a LINE ALONG THE SUN RAY, not a vertical
+      // column split. v1 predated the raking cast and assumed a
+      // straight edge, so the shadow crossed the melon vertically
+      // while raking across the terrain behind it (Eddie, on
+      // device). Same geometry as the ground: a half-plane whose
+      // direction is the ray's, through the boundary point.
+      let shaded = false;
+      if (split) {
+        const row = (p / spr) | 0;
+        const cross = (col - split.col) * split.ry - (row - spr / 2) * split.rx;
+        // Same side as the probed pixel => same answer as the world
+        // gave there. No convention to get backwards.
+        shaded = ((cross >= 0) === (split.aCross >= 0))
+          ? split.aShaded : !split.aShaded;
+      }
+      const kk = shaded ? lutShade[ci] : lutLit[ci];
       const o4 = p * 4;
       od[o4] = kk >> 16; od[o4 + 1] = (kk >> 8) & 255;
       od[o4 + 2] = kk & 255; od[o4 + 3] = 255;
     }
     ftx.putImageData(out, 0, 0);
-    f.lit = lv;
-    return f;
+    ent.lit = lv;
+    return ent;
   }
 
   // The one door: returns a baked frame, or null when the budget is
   // spent (caller paints vector this frame and tries again next).
-  function melonFrame(e, rot, ax, mag) {
+  function melonFrame(e, rot, ax, mag, strength, split) {
     if (!e) return null;
-    const fk = frameKey(rot, ax, mag);
+    const sun = sunSlot();
+    const fk = frameKey(rot, ax, mag, sun);
     const hit = e.frames.get(fk);
-    if (hit !== undefined) return hit ? resolveFrame(hit) : hit;
+    if (hit !== undefined) return hit ? resolveFrame(hit, strength, split) : hit;
     if (bakeBudget <= 0) return null;
     bakeBudget--;
-    const f = bakeFrame(e, rot, ax, mag);
+    const f = bakeFrame(e, rot, ax, mag, sun);
     e.frames.set(fk, f);
-    return f;
+    return f ? resolveFrame(f, strength, split) : f;
   }
 
   // Quantize a live squash into (axis, magnitude). mag 0 = undeformed.
@@ -2064,10 +2298,14 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   }
   // Verification surface for the cache's pure parts.
   window.FF._pxBake = { squashSlot, frameKey, SS, SQ_AXES, SQ_MAGS,
-    SQ_GATE, SQ_MAX, BAKE_PER_FRAME };
+    SQ_GATE, SQ_MAX, BAKE_PER_FRAME, SUN_SLOTS };
+  // Verification surface for the shadow cast (Phase 5.5).
+  window.FF._pxShadow = { shadowedAt, sunRayDir, SHADOW_REACH, ROOF_MARGIN };
 
-  function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
+  function drawMelon(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals, worldX, worldY) {
     if (pxMode) {
+      const sx0World = worldX !== undefined ? worldX : 0;
+      const sy0World = worldY !== undefined ? worldY : 0;
       const a = bodyA || CONFIG.semiMajor;
       const b = bodyB || CONFIG.semiMinor;
       const rPx = Math.max(3, Math.round(a * zoom));
@@ -2081,7 +2319,65 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         // a splat is authored pixels at integer position, like every
         // other frame. A frame not yet baked returns null and the
         // vector painter covers this tick (time-slicing).
-        const f = melonFrame(e, k, slot.ax, slot.mag);
+        // The melon's own region: shaded when a roof is above it.
+        // drawMelon is a helper OUTSIDE render(), so it has no
+        // `state` — the terrain is published per frame instead of
+        // being reached for.
+        // Where does the shadow edge fall across THIS melon? Probe
+        // the roof at the body's left and right extremes: if one end
+        // is covered and the other is not, the melon straddles an
+        // edge, and a bisection finds the world x where cover
+        // changes. Quantised to sprite columns.
+        const halfW = a;
+        const ray = pxSunRay;
+        const covL = pxTerrain
+          ? shadowedAt(pxTerrain, sx0World - halfW, sy0World, ray) : false;
+        const covR = pxTerrain
+          ? shadowedAt(pxTerrain, sx0World + halfW, sy0World, ray) : false;
+        let mStrength = covL && covR ? ROOFED : null;
+        let split = null;
+        if (covL !== covR && pxTerrain) {
+          // Bisect for the world x where cover changes.
+          let lo = sx0World - halfW, hi = sx0World + halfW;
+          for (let it = 0; it < 8; it++) {
+            const mid = (lo + hi) / 2;
+            const cov = shadowedAt(pxTerrain, mid, sy0World, ray);
+            if (cov === covL) lo = mid; else hi = mid;
+          }
+          const edgeWorld = (lo + hi) / 2;
+          const colF = ((edgeWorld - (sx0World - halfW)) / (2 * halfW)) * e.spr;
+          // The split carries WHICH SIDE is shaded — the edge can lie
+          // either way round, and encoding only a column silently
+          // dropped the left-shaded half of the cases.
+          // Carry the ray's screen direction so the resolve can lay
+          // the boundary at the light's angle rather than vertically.
+          // ANCHOR THE SIDES TO A REAL PROBE, not to a flag.
+          //
+          // v1 carried `left: covL` and picked the shaded half from
+          // the cross product's sign. Those two describe the same
+          // thing only while the boundary is VERTICAL: once it slants
+          // along the ray, "left of the line" and "negative cross"
+          // part company, and the melon came out shaded on exactly
+          // the wrong side (Eddie, on device — boundary right, sides
+          // mirrored, which is the signature of a sign error).
+          //
+          // covL is a WORLD probe at the body's left extreme, and in
+          // sprite space that point is (col 0, row spr/2). Evaluating
+          // the same cross product there gives the sign that MEANS
+          // covL, so the sprite inherits the ground's answer instead
+          // of re-deriving it from a convention that can disagree.
+          const rayS = pxSunRay || { x: 0, y: -1 };
+          const splitCol = Math.max(0, Math.min(e.spr, Math.round(colF)));
+          split = {
+            col: splitCol,
+            rx: rayS.x,
+            ry: rayS.y,
+            aCross: (0 - splitCol) * rayS.y,   // cross at the probed pixel
+            aShaded: covL,                      // what the world says there
+          };
+          mStrength = null;
+        }
+        const f = melonFrame(e, k, slot.ax, slot.mag, mStrength, split);
         if (f) {
           ctx.save();
           ctx.imageSmoothingEnabled = false;
