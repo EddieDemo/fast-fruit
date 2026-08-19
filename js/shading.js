@@ -863,6 +863,29 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc,
+  rgbToHsl,
+  // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
+  // law's 4-L* rungs. A gradient is the one place a long ramp of
+  // near-neighbours is legitimate — the reference hardware spent a
+  // large part of its palette exactly here — so skyRamp exposes the
+  // same HSL solve with its own quantisation, and every tone it
+  // returns is registered like any other.
+  skyRamp(baseHex, k, dL, dH, dS, quant) {
+    const r0 = parseInt(baseHex.slice(1, 3), 16);
+    const g0 = parseInt(baseHex.slice(3, 5), 16);
+    const b0 = parseInt(baseHex.slice(5, 7), 16);
+    let [h, sat, l] = rgbToHsl(r0, g0, b0);
+    const q = quant || 1;
+    h = (((h + dH * k) % 360) + 360) % 360;
+    sat = Math.max(0, Math.min(1, sat - (dS / 100) * k));
+    l = Math.max(0, Math.min(1, l + (dL / 100) * k));
+    // quantise in L* units of q, then rebuild
+    l = Math.round(l * 100 / q) * q / 100;
+    const [r, g, b] = hslToRgb(h, sat, l);
+    const hex = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+    if (window.FF.palette) window.FF.palette.registerTone('sky', hex);
+    return hex;
+  },
   _effSoft: effSoft, _qLattice: qLattice, _seededBandColor: seededBandColor,
 };
 

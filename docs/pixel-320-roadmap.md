@@ -287,3 +287,85 @@ NEW TOOLING: dev-lane 'px capture' button (slot 5) saves the ACTUAL
 live 320 buffer as PNG — every future visual phase iterates against
 device captures, not reconstructions. Visual-proof doctrine amended
 accordingly.
+
+## Phase 4 (sky) — SHIPPED (2026-08-18)
+
+Minimal sky, ruled: hard bands, law-derived tones, screen-anchored
+with a damped camera coupling. The law is atmospheric perspective as
+Super Hang-On encoded it — SATURATION FALLS and LIGHTNESS RISES
+toward the horizon, quantised to steps. One base (SKY_BASE, the
+zenith) plus SKY_LIFT / SKY_FADE / SKY_BANDS; every band is an
+offsetColor() solve, so all six register into the palette and Phase
+5's light columns will drive them without new machinery.
+
+Anchoring: the drift reference is the camera's own TRAILING average
+(SKY_SETTLE), not an absolute world depth — the first version
+referenced a state.race.startY that does not exist, and absolute
+depth would have pinned the drift to its clamp within a lap on a
+descending track. A trailing reference reacts to height CHANGES (a
+drop reads as falling past the sky) then settles.
+
+Suite: verify-px-render F0-F6 (monotone lighten/desaturate, palette
+membership, distinct steps, seamless coverage, drift settling, and a
+guard against the invented state field).
+
+PARKED FOR LATER, by ruling: DITHERED band transitions, and a
+hard/dither HYBRID — the reference art uses both (America stage is
+crisp, the title screen and green stage dither). The ramp loop is
+where that pass hooks in.
+NEXT for the sky: seeded per-track hue (draw SKY_BASE's hue from the
+track seed — the machinery is already a single parameter).
+
+### Sky v4 — pinned, fine ladder (2026-08-18)
+
+Two rulings after device review of v2/v3:
+* PINNED. All camera coupling removed (drift = 0). On a track that
+  descends forever, ANY height coupling reads as the backdrop
+  sliding rather than as depth — and a fixed sky is what the
+  reference hardware did: a fixed palette region with the world
+  moving past it.
+* FINE LADDER. Bands are 1 px, and the sky now uses its OWN
+  quantisation (shading.skyRamp, SKY_QUANT = 1 L*) instead of the
+  body law's 4-L* rungs. That was the real limiter: 166 rows
+  collapsed into 29 tones, so however thin the bands, plateaus of
+  5-8 px still read as slabs. With the fine ladder: 166 rows, ~115
+  tones, mean plateau 1.4 px. A long ramp of near-neighbour tones is
+  legitimate exactly here — the reference hardware spent much of its
+  palette on sky.
+* The horizon row is now integer (a fractional hz gave the final
+  band a sub-pixel height).
+
+Suite: F3 (fine stripe field, measured on PLATEAU size, not band
+height), F3a (density rises toward the horizon), F3e (pinned, no
+coupling), F3f (the zenith plateau is broad by design), F5 (zero
+movement over a long descent).
+
+## Phase 5.1 — LIGHT COLUMNS — SHIPPED (2026-08-18)
+
+A light state is a COLUMN of the palette table. Every tone the game
+emits resolves through palette.lit(), so a state change shifts the
+world coherently — sky, ground, checker, melons, signage — because
+they all read one table. Sprites RE-RESOLVE from their index maps
+(Phase 2.3's whole purpose): the 64 rotations and their supersampled
+renders are untouched; only the colour list is read against the new
+column. Columns: BRIGHT / STANDARD / DIM / DARK, with STANDARD the
+identity so nothing changes until a state is chosen.
+
+Columns are SCALES on lightness and saturation plus an absolute hue
+rotation. Additive deltas were wrong twice: adding saturation to a
+GREY invents a hue (the ground turned warm-brown under BRIGHT), and
+subtracting lightness crushes dark tones (DARK put the ground at
+#020202). Scaling keeps greys grey and preserves every ramp's
+relative structure. Multiplying HERE is legitimate — the result is a
+discrete registered palette entry; what stays forbidden is
+multiplying at COMPOSITE time over pixels.
+
+Dev: lane slot 6 cycles the column live.
+Suite: verify-px-render G0-G7 (identity, grey neutrality, no crush,
+ordering, whole-frame shift and exact return, membership, re-resolve
+not re-bake). verify-px-honesty A6 updated from the Phase 0 stub.
+
+STILL OPEN in Phase 5: TIME OF DAY (hue-cast columns; ruling needed —
+seeded per track, or sequenced across a cup: morning -> dusk) and SUN
+ANGLE as a bake dimension, plus local sources as dithered ramp-shift
+rings.

@@ -735,6 +735,38 @@ window.FF._grant = (id) => {
     show: () => { cbtn.style.display = ''; },
     hide: () => { cbtn.style.display = 'none'; },
   });
+
+  // LIGHT COLUMN cycle (PIXEL 320 Phase 5): steps the palette's light
+  // state. Everything on screen shifts together because everything
+  // resolves through the same table — sprites re-RESOLVE from their
+  // index maps rather than re-baking. Lane slot 6, same dev gate.
+  const lbtn = document.createElement('button');
+  lbtn.id = 'ff-light-btn';
+  lbtn.title = 'Cycle the light column (dev)';
+  lbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 6);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  const paintLight = () => {
+    const p2 = window.FF.palette;
+    lbtn.textContent = '\u2600 ' + (p2 ? p2.getLight() : 'STANDARD');
+  };
+  paintLight();
+  document.body.appendChild(lbtn);
+  lbtn.addEventListener('click', () => {
+    const p2 = window.FF.palette;
+    if (!p2) return;
+    const order = p2.STATES;
+    const i = order.indexOf(p2.getLight());
+    p2.setLight(order[(i + 1) % order.length]);
+    paintLight();
+  });
+  window.FF.devtools.register({
+    show: () => { lbtn.style.display = ''; },
+    hide: () => { lbtn.style.display = 'none'; },
+  });
 })();
 window.FF._dress = (...ids) => {
   const M = window.FF.melon, D = window.FF.decals;

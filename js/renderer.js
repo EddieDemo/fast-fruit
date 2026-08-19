@@ -113,6 +113,39 @@ function tierOf(m) {
 // standard on every device and in both render modes (Eddie ruling,
 // 2026-08-18). Changing this changes the game's whole sense of pace,
 // so it is a ruling, not a tuning knob.
+// ---- SKY CONSTANTS (Phase 4) ----
+// SKY_BASE is the ZENITH tone: the richest, darkest, most saturated
+// end of the ramp. Everything else is derived from it, so a seeded
+// per-track sky is a single hue draw against this one value.
+// v2 (Eddie, 2026-08-18): v1 read as a striped flag, not a sky. Four
+// corrections, all measured against the reference art:
+//  * BAND COUNT 6 -> 14. Six steps cannot read as atmosphere.
+//  * COMPRESSION. Bands are thick at the zenith and progressively
+//    thinner toward the horizon (SKY_SQUEEZE). Even slabs were the
+//    single biggest tell; real atmospheric depth stacks up near the
+//    ground, and the period art encodes exactly that.
+//  * FULL RANGE. The ramp now ends near-WHITE, not "less blue" —
+//    a Hang-On horizon is light, not a desaturated sky colour.
+//  * HUE ROTATION. v1 pinned hue (dH = 0). Every reference rotates:
+//    cyan->mint->cream, violet->pink->cream, blue->sand. SKY_TURN is
+//    that drift, and it is what stops the ramp looking mechanical.
+const SKY_BASE = '#1d3f8a';   // deep zenith blue
+const SKY_BAND_PX = 1;        // BAND HEIGHT IN PIXELS: one row. The
+                              // count follows the buffer (~165 at
+                              // 320x180) — Eddie ruled the 2 px
+                              // version still too coarse.
+const SKY_BANDS = 14;         // (retained: suites read it as the
+                              // nominal ramp resolution)
+const SKY_LIFT = 62;          // L* gained from zenith to horizon
+const SKY_FADE = 72;          // saturation lost over the same span
+const SKY_TURN = 26;          // hue rotation toward the horizon (warm)
+const SKY_SQUEEZE = 2.1;      // >1 packs bands toward the horizon
+const SKY_QUANT = 1;          // L* rung for the sky ladder (finer than
+                              // the body law's 4: a gradient is where
+                              // near-neighbour tones belong)
+const SKY_DRIFT = 0.55;       // how far the sky lags a height CHANGE
+const SKY_SETTLE = 0.9;      // how fast the reference catches up (1/s)
+
 const VIEW_W_M = 16.2;
 const VIEW_H_MIN_M = 7.5;   // escape hatch only: see the zoom law
 const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
@@ -162,6 +195,12 @@ function createRenderer(canvas) {
                        // ctx as a parameter, so the swap is total
   let pxCanvas = null; // lazy: the low-res world layer
   const pxAltCache = new Map();  // fill tone -> its checker partner
+  // Phase 5: every pixel-mode fill resolves through the light column.
+  // STANDARD is the identity, so nothing changes until a state is
+  // selected. Caches that hold tones watch palette.lightVersion().
+  const L = (hex) => (window.FF.palette ? window.FF.palette.lit(hex) : hex);
+  let litVer = -1;
+  let skyRefY = null;            // trailing height reference for sky drift
 
   // ---- THE AA-KILLER (pixelation mode) ----
   // Canvas 2D anti-aliases every shape INTO the low-res buffer and
@@ -297,6 +336,18 @@ function createRenderer(canvas) {
     // bakes on a later one, so a wrap change can never freeze the
     // game the way the eager 64-frame bake did.
     bakeBudget = BAKE_PER_FRAME;
+    // A light change invalidates derived-tone caches. Sprites are
+    // INDEXED, so they re-resolve rather than re-bake (Phase 2.3's
+    // whole purpose): the index maps stay, only their colour lists
+    // are read against the new column.
+    const lv = window.FF.palette ? window.FF.palette.lightVersion() : 0;
+    if (lv !== litVer) {
+      litVer = lv;
+      pxAltCache.clear();
+      for (const e of melonSprites.values()) {
+        if (e && e.frames) for (const f of e.frames.values()) if (f) f.lit = -1;
+      }
+    }
     const realW = width, realH = height, realDpr = dpr;
     if (px) {
       if (!pxCanvas) pxCanvas = document.createElement('canvas');
@@ -484,8 +535,95 @@ function createRenderer(canvas) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // ---- Background ----
-    ctx.fillStyle = COLORS.sky;
-    ctx.fillRect(0, 0, width, height);
+    // ---- THE SKY (PIXEL 320 Phase 4, Eddie 2026-08-18) ----
+    // Atmospheric perspective, encoded the way Super Hang-On encoded
+    // it: SATURATION FALLS AND LIGHTNESS RISES toward the horizon —
+    // real light scatters through more air near the ground, and the
+    // period hardware quantised that to a handful of palette steps.
+    // So the law is one ramp in height with two parameters, which is
+    // exactly what a track seed will drive later.
+    //
+    // Tones are LAW-DERIVED (offsetColor off one base) rather than
+    // authored literals, so they register into the palette
+    // automatically: Phase 5's time-of-day becomes a column swap and
+    // seeded per-track skies become "draw a hue from the seed", not
+    // a new subsystem.
+    //
+    // Anchoring: screen-referenced with a DAMPED camera offset. Our
+    // tracks descend forever, so a world-locked sky would be left
+    // behind inside a lap; a fully fixed one reads as a sticker on
+    // the lens. The damped offset lets a big drop feel like falling
+    // PAST the sky while never running out of bands.
+    //
+    // Bands are HARD-STEPPED by ruling. Dithered transitions — and a
+    // hard/dither hybrid — are explored later; the ramp below is
+    // where that pass will hook in.
+    if (pxMode) {
+      const sh = window.FF.shading;
+      const N = SKY_BANDS;
+      // PINNED (Eddie, 2026-08-18): the sky does not move. The
+      // damped-drift version read as the backdrop sliding around
+      // rather than as depth — on a track that descends forever,
+      // ANY height coupling is motion the eye reads as wrong. A
+      // fixed backdrop is also what the reference hardware did: the
+      // sky was a fixed palette region, and the world moved past it.
+      const drift = 0;
+      // Horizon sits below the frame: the visible slice is the upper
+      // part of the ramp, which is why the richest band is overhead.
+      // Integer horizon: a fractional hz gave the last band a
+      // fractional height — a sub-pixel fill in a pixel renderer,
+      // caught by the coverage check reporting 179.6 of 180 rows.
+      const hz = Math.round(height * 0.92 + drift);
+      // Band EDGES are compressed toward the horizon: edge(i) rises
+      // as a power curve, so the top bands are deep and the lower
+      // ones stack thin. The colour parameter uses the SAME curve, so
+      // tone and thickness stay in step.
+      // v3 (Eddie, 2026-08-18): BAND HEIGHT IS A PIXEL QUANTITY, not
+      // a fraction of the sky. v2 divided the sky into N thick slabs;
+      // the reference art is a FINE stripe field — bands one or two
+      // rows tall, dozens of them, which is why it reads as light
+      // rather than as a flag. The band count therefore falls out of
+      // the buffer height (~80 at 320x180) instead of being chosen.
+      //
+      // The colour parameter still eases (SKY_SQUEEZE), so tone
+      // changes slowly overhead and quickly near the horizon: broad
+      // plateaus of near-equal blue up top, dense fine stripes
+      // stacking into the light at the bottom. That is the period
+      // look, and it comes from the EASE, not from fat bands.
+      const step = SKY_BAND_PX;
+      for (let y = 0; y < hz; y += step) {
+        if (y >= height) break;
+        // k = t^SQ: colour changes SLOWLY overhead and FAST near the
+        // horizon, so plateaus are broad up top and collapse into
+        // dense 2 px stripes at the bottom — the reference look.
+        // (With uniform band height it is the colour RATE that sets
+        // stripe density; the inverse curve, correct for v2's
+        // variable thickness, put the fine stripes at the wrong end.)
+        const k = Math.pow(Math.min(1, y / hz), SKY_SQUEEZE);
+        // skyRamp, not offsetColor: the body law quantises to 4-L*
+        // rungs, which collapsed 166 rows into 29 tones and left
+        // 5-8 px plateaus — visible slabs, however thin the bands.
+        // The sky gets its own fine ladder (SKY_QUANT), which is
+        // where a long ramp of near-neighbours legitimately belongs.
+        const tone = L(sh && sh.skyRamp
+          ? sh.skyRamp(SKY_BASE, k, SKY_LIFT, SKY_TURN, SKY_FADE, SKY_QUANT)
+          : SKY_BASE);
+        ctx.fillStyle = tone;
+        ctx.fillRect(0, y, width, Math.min(step, height - y, hz - y));
+      }
+      // Below the horizon line the lowest band continues, so a
+      // portrait window (35 m of vertical) can never show a seam.
+      if (hz < height) {
+        ctx.fillStyle = L(sh && sh.skyRamp
+          ? sh.skyRamp(SKY_BASE, 1, SKY_LIFT, SKY_TURN, SKY_FADE, SKY_QUANT)
+          : SKY_BASE);
+        ctx.fillRect(0, Math.max(0, Math.round(hz)), width,
+          height - Math.max(0, Math.round(hz)));
+      }
+    } else {
+      ctx.fillStyle = COLORS.sky;
+      ctx.fillRect(0, 0, width, height);
+    }
 
     // THE CAMERA NEVER ROTATES (ruled by Eddie, 2026-08-17):
     // gravity-down is a permanent invariant of the presentation.
@@ -586,7 +724,7 @@ function createRenderer(canvas) {
       const altOf = (hex) => {
         let a2 = pxAltCache.get(hex);
         if (a2 === undefined) {
-          a2 = (window.FF.shading ? window.FF.shading.bandColor(hex, 6) : hex);
+          a2 = L(window.FF.shading ? window.FF.shading.bandColor(hex, 6) : hex);
           pxAltCache.set(hex, a2);
         }
         return a2;
@@ -605,11 +743,39 @@ function createRenderer(canvas) {
         slope: '#3a3a3a', roller: '#37413a', flat: '#454545',
         kicker: '#463c34', gap: '#46343c', sw: '#343c46',
       } : null;
+      // THE UNDERSIDE IS ITS OWN CURVE (Eddie, 2026-08-18). The slab
+      // bottom is the top offset along the SURFACE NORMAL, so on any
+      // sloped segment it is displaced in x as well as y: the two
+      // polylines share neither x positions nor, necessarily, a point
+      // count. v1 indexed the bottom by the TOP's segment index and
+      // interpolated it with the top's own u — lockstep, which only
+      // holds on flat ground (where every headless check I wrote
+      // happened to run). On slopes it drifted, and the pixel
+      // underside took a visibly different shape from the vector one.
+      // The fix is to ask the bottom polyline the same question the
+      // top answers: "where are you at THIS screen x?" — resolved by
+      // an advancing cursor, since columns march monotonically.
+      const botYAt = (bo, sx) => {
+        // cursor per slab: columns advance left to right, so the walk
+        // is amortised O(1) rather than a search per column.
+        let k = bo._cur || 0;
+        if (k >= bo.length - 1) k = 0;
+        const xAt = (n) => toScreenX(bo[n].x);
+        while (k < bo.length - 2 && xAt(k + 1) < sx) k++;
+        while (k > 0 && xAt(k) > sx) k--;
+        bo._cur = k;
+        const x0b = xAt(k), x1b = xAt(k + 1);
+        const y0b = toScreenY(bo[k].y), y1b = toScreenY(bo[k + 1].y);
+        const dx = x1b - x0b;
+        const tt = dx === 0 ? 0 : Math.max(0, Math.min(1, (sx - x0b) / dx));
+        return y0b + (y1b - y0b) * tt;
+      };
       for (const sl of slabWorld.slabs) {
         if (sl.isWall) continue;
         const t = sl.top, bo = sl.bottom;
+        bo._cur = 0;
         for (let i = 1; i < t.length; i++) {
-          const segFill = (TINT_PX && TINT_PX[t[i].k]) || COLORS.ground;
+          const segFill = L((TINT_PX && TINT_PX[t[i].k]) || COLORS.ground);
           const ax = toScreenX(t[i - 1].x), ay = toScreenY(t[i - 1].y);
           const bx = toScreenX(t[i].x), by = toScreenY(t[i].y);
           let x0 = Math.round(Math.min(ax, bx)), x1 = Math.round(Math.max(ax, bx));
@@ -620,13 +786,9 @@ function createRenderer(canvas) {
             // Surface row for THIS column, sampled at its centre.
             const u = span === 0 ? 0 : Math.max(0, Math.min(1, (x + 0.5 - ax) / span));
             const yTop = Math.round(ay + (by - ay) * u);
-            // Slab bottom under the same column: the underside is
-            // parallel per segment, so its own interpolation keeps
-            // thin slabs honest instead of assuming a fixed depth.
-            const j = Math.min(bo.length - 1, i);
-            const cy0 = toScreenY(bo[j - 1] ? bo[j - 1].y : bo[j].y);
-            const cy1 = toScreenY(bo[j].y);
-            const yBot = Math.round(cy0 + (cy1 - cy0) * u);
+            // Slab bottom AT THIS COLUMN, from the bottom polyline's
+            // own geometry — never from the top's index or fraction.
+            const yBot = Math.round(botYAt(bo, x + 0.5));
             const hgt = Math.max(1, yBot - yTop);
             // CHECKER FILL: walk this span in world-cell bands. One
             // fillRect per band, not per pixel — a column crosses
@@ -1832,20 +1994,43 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     }
     const fc = document.createElement('canvas');
     fc.width = spr; fc.height = spr;
-    const ftx = fc.getContext('2d');
+    const frame = { canvas: fc, idx, colors, spr, lit: -1 };
+    resolveFrame(frame);
+    bakeLodR = null;
+    return frame;
+  }
+
+  // PHASE 5's PAYOFF: a frame is an INDEX MAP plus a colour list, so
+  // a light change is a RE-RESOLVE — read the same indices against
+  // the current column — not a re-bake. Cost is one pass over a
+  // ~20x20 sprite; the 64 rotations and their supersampled renders
+  // are untouched.
+  function resolveFrame(f) {
+    const pal = window.FF.palette;
+    const lv = pal ? pal.lightVersion() : 0;
+    if (f.lit === lv) return f;
+    const spr = f.spr;
+    const ftx = f.canvas.getContext('2d');
     const out = ftx.createImageData(spr, spr);
     const od = out.data;
-    for (let p = 0; p < idx.length; p++) {
-      const ci = idx[p];
+    const lut = new Array(f.colors.length);
+    for (let c = 0; c < f.colors.length; c++) {
+      const kk = f.colors[c];
+      if (!pal || pal.getLight() === 'STANDARD') { lut[c] = kk; continue; }
+      const hex = '#' + ((1 << 24) | kk).toString(16).slice(1);
+      lut[c] = pal.toInt(pal.lit(hex));
+    }
+    for (let p = 0; p < f.idx.length; p++) {
+      const ci = f.idx[p];
       if (ci === 255) continue;
-      const kk = colors[ci];
+      const kk = lut[ci];
       const o4 = p * 4;
       od[o4] = kk >> 16; od[o4 + 1] = (kk >> 8) & 255;
       od[o4 + 2] = kk & 255; od[o4 + 3] = 255;
     }
     ftx.putImageData(out, 0, 0);
-    bakeLodR = null;
-    return { canvas: fc, idx, colors };
+    f.lit = lv;
+    return f;
   }
 
   // The one door: returns a baked frame, or null when the budget is
@@ -1854,7 +2039,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (!e) return null;
     const fk = frameKey(rot, ax, mag);
     const hit = e.frames.get(fk);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return hit ? resolveFrame(hit) : hit;
     if (bakeBudget <= 0) return null;
     bakeBudget--;
     const f = bakeFrame(e, rot, ax, mag);
