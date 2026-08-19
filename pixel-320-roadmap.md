@@ -748,3 +748,64 @@ against the analytic slab: left-to-right and right-to-left decks now
 both match to 0.33 px mean error on the underside.
 
 Suite: verify-px-render P1-P3, with P2 the reversed case specifically.
+
+## Terrain fill v3 — THE SLAB POLYGON IS THE ONE AUTHORITY (2026-08-19)
+
+Two device bugs, one root cause. In pixel mode the underside took a
+different shape from vector's on curved ground, and matAbove
+CEILINGS painted as a 1 px line — the roof was 99% invisible. The
+audit (5 seeds, every strand class, shipped fill vs an exact
+rasterization of the slab polygon) measured three failure classes:
+
+  * CEILINGS: matAbove extrudes the bottom UPWARD, so yBot < yTop
+    and Math.max(1, yBot - yTop) collapsed every roof column to 1 px.
+    The P2 fix was for reversed DECKS; ceilings invert the vertical
+    order, which the sampler never touched.
+  * NON-FUNCTION BOUNDARIES: the underside is the top offset 260 px
+    along the normal, so at rollers and vees it backtracks in x and
+    self-overlaps; "first containing segment" picked an arbitrary
+    lobe — worst 140 px on a shipped primary, 580 px on fold legs.
+  * X-EXTENT: columns were only visited under TOP segments, but the
+    bottom and the caps protrude sideways by up to SLAB_T·|nx| —
+    30% of a fold leg was never painted at all.
+
+All three are the same modelling error: two independent
+single-valued samplers (yTop(x) from the top polyline, yBot(x) from
+the bottom) standing in for a polygon, re-earning the polygon's
+implicit properties one shipped bug at a time — exactly the strand-
+order lesson, still being paid.
+
+THE FIX deletes both samplers. The fill now rasterizes THE SAME
+closed polygon the vector path fills (top forward, bottom reversed —
+traceSlabPath's geometry), column by column: intersect the boundary
+with the column's centre line, sort the crossings, fill the NONZERO
+WINDING spans — the rule canvas fill() applies. Pixel silhouette
+equals vector silhouette BY CONSTRUCTION; ceilings, reversed
+strands, folds (several spans per column), caps and self-overlapping
+offsets are not cases, because nothing is a case to a polygon.
+Integer vertices (Phase 1.2 snap) + half-integer sample lines mean a
+sample can never land on a vertex: the crossing-parity tie-break is
+retired by construction, not by epsilon. Everything downstream of
+the span decision — per-band shadow bisection, the world-anchored
+checker — is the shipped logic verbatim; only where [yTop, yBot]
+comes from changed. Mechanically: an edge table bucketed by first
+visible column, swept with an active list — O(edges + columns +
+crossings), and the off-screen bulk of a streamed strand costs one
+range check per edge. The renderer also stops mutating shared
+geometry (the sampler's bo._cur cursor is gone).
+
+THE SUITE LESSON: P1-P3 validated the SAMPLER in isolation — the
+component, not the picture — which is how three classes shipped
+behind a passing suite. New Q1-Q4 assert the picture itself:
+per-column painted coverage must EXACTLY equal the nonzero-winding
+spans of the snapped slab polygon (edgeOff=0, no tolerance), across
+the four measured classes — curved primary, reversed deck,
+non-monotone strand, matAbove ceiling. The reference is an
+independent implementation (direct per-column gather, library sort)
+over the snapped vertices; referencing the SNAPPED polygon is what
+permits exactness, since a float reference legitimately disagrees on
+near-vertical edges (a 0.5 px snap moves a steep crossing by
+|dy/dx|/2). Both checks were mutation-tested: forcing spans to 1 px
+fails all four; dropping the cap edges fails Q3/Q4 — the checks can
+fail, per the K2a1 rule. E3/P3/M1 re-pinned to the new law; E1/E2,
+P1/P2, N1-N5 pass unchanged on behaviour.

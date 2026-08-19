@@ -699,18 +699,30 @@ function createRenderer(canvas) {
         // 5-8 px plateaus — visible slabs, however thin the bands.
         // The sky gets its own fine ladder (SKY_QUANT), which is
         // where a long ramp of near-neighbours legitimately belongs.
-        const tone = L(sh && sh.skyRamp
+        // NOT through lit() (Eddie's ruling, 2026-08-19). The hour
+        // already gives the sky its OWN ramp — base, lift, fade,
+        // turn — because a sunset is a different ramp, not a blue sky
+        // recoloured. Passing those rows through the hour's colour
+        // column as well applied the hour TWICE: NIGHT chose a dark
+        // base and was then darkened again for being NIGHT. The
+        // authored ramp is now exactly what appears, so the sky can
+        // be tuned against a fixed target.
+        //
+        // Strength no longer touches the sky either, which is the
+        // right reading: standing in a tunnel dims your surroundings,
+        // not the sky above the world.
+        const tone = sh && sh.skyRamp
           ? sh.skyRamp(skyP.base, k, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
-          : skyP.base);
+          : skyP.base;
         ctx.fillStyle = tone;
         ctx.fillRect(0, y, width, Math.min(step, height - y, hz - y));
       }
       // Below the horizon line the lowest band continues, so a
       // portrait window (35 m of vertical) can never show a seam.
       if (hz < height) {
-        ctx.fillStyle = L(sh && sh.skyRamp
+        ctx.fillStyle = sh && sh.skyRamp
           ? sh.skyRamp(skyP.base, 1, skyP.lift, skyP.turn, skyP.fade, SKY_QUANT)
-          : skyP.base);
+          : skyP.base;
         ctx.fillRect(0, Math.max(0, Math.round(hz)), width,
           height - Math.max(0, Math.round(hz)));
       }
@@ -840,131 +852,217 @@ function createRenderer(canvas) {
         slope: '#3a3a3a', roller: '#37413a', flat: '#454545',
         kicker: '#463c34', gap: '#46343c', sw: '#343c46',
       } : null;
-      // THE UNDERSIDE IS ITS OWN CURVE (Eddie, 2026-08-18). The slab
-      // bottom is the top offset along the SURFACE NORMAL, so on any
-      // sloped segment it is displaced in x as well as y: the two
-      // polylines share neither x positions nor, necessarily, a point
-      // count. v1 indexed the bottom by the TOP's segment index and
-      // interpolated it with the top's own u — lockstep, which only
-      // holds on flat ground (where every headless check I wrote
-      // happened to run). On slopes it drifted, and the pixel
-      // underside took a visibly different shape from the vector one.
-      // The fix is to ask the bottom polyline the same question the
-      // top answers: "where are you at THIS screen x?" — resolved by
-      // an advancing cursor, since columns march monotonically.
-      const botYAt = (bo, sx) => {
-        // cursor per slab: columns advance left to right, so the walk
-        // is amortised O(1) rather than a search per column.
-        let k = bo._cur || 0;
-        if (k >= bo.length - 1) k = 0;
-        const xAt = (n) => toScreenX(bo[n].x);
-        while (k < bo.length - 2 && xAt(k + 1) < sx) k++;
-        while (k > 0 && xAt(k) > sx) k--;
-        bo._cur = k;
-        const x0b = xAt(k), x1b = xAt(k + 1);
-        const y0b = toScreenY(bo[k].y), y1b = toScreenY(bo[k + 1].y);
-        const dx = x1b - x0b;
-        const tt = dx === 0 ? 0 : Math.max(0, Math.min(1, (sx - x0b) / dx));
-        return y0b + (y1b - y0b) * tt;
+      // THE SLAB POLYGON IS THE ONE AUTHORITY (v3, 2026-08-19).
+      // v1 indexed the bottom polyline by the top's segment index
+      // (lockstep — drifted on every slope). v2 sampled the bottom
+      // by x-range containment (P1-P3), which fixed reversed decks
+      // and shipped three remaining classes, all measured:
+      //   * CEILINGS (matAbove): the bottom is extruded UPWARD, so
+      //     yBot < yTop and Math.max(1, yBot - yTop) collapsed the
+      //     whole slab to a 1 px line — every roof, ~99% of columns.
+      //   * NON-FUNCTION BOUNDARIES: the underside is the top offset
+      //     260 px along the normal, so at rollers and vees it
+      //     backtracks in x and self-overlaps; "first containing
+      //     segment" picked an arbitrary lobe (worst 140 px on a
+      //     shipped primary, 580 px on fold legs).
+      //   * X-EXTENT: columns were only visited under TOP segments,
+      //     but the bottom and the caps protrude sideways by up to
+      //     SLAB_T·|nx| — 30% of a fold leg was never painted.
+      // All three are the same modelling error: two independent
+      // single-valued samplers standing in for a polygon. The fill
+      // now rasterizes THE SAME closed polygon the vector path fills
+      // (top forward, bottom reversed — traceSlabPath's geometry),
+      // column by column: intersect the boundary with the column's
+      // centre line, sort the crossings, and fill the NONZERO WINDING
+      // spans — the same rule canvas fill() applies. Pixel silhouette
+      // equals vector silhouette by construction; ceilings, reversed
+      // strands, folds (several spans per column), caps and
+      // self-overlapping offsets are not cases, because nothing is a
+      // case to a polygon.
+      //
+      // Vertices snap to the integer grid (Phase 1.2) and columns
+      // sample at x + 0.5, so a sample can never land on a vertex:
+      // the crossing-parity tie-break every scanline rasterizer
+      // frets over is retired by construction, not by epsilon.
+      //
+      // THE SPAN PAINTER: everything below the span decision —
+      // per-band shadow bisection, the world-anchored checker — is
+      // the shipped logic, verbatim; only where [yTop, yBot] comes
+      // from has changed.
+      const paintSpan = (x, yTop, yBot, segRaw, own) => {
+        // The shadow is probed PER BAND, at that band's own world
+        // height — not once per column at the surface.
+        //
+        // v1 tested at the surface row and painted the whole
+        // vertical span with the answer, so the lit/shadow
+        // boundary could only ever be a VERTICAL line between
+        // columns: the shadow was offset correctly but its edge
+        // ran straight down the terrain face instead of raking
+        // across it at the light's angle (Eddie, on device).
+        // A face is tall in world terms, and the ray crosses it
+        // at a height that changes along the face — which is
+        // exactly the diagonal that was missing.
+        const wxHere = ((x + 0.5) - cxs) / zoom + camX;
+        // THE BOUNDARY'S EXACT DEPTH for this column.
+        // Probing per checker CELL made the rake step in 1 m
+        // blocks (Eddie: "per metre, not per pixel"). Probing per
+        // PIXEL row would be ~57k segment tests a frame. The
+        // transition depth is BISECTED once per column instead —
+        // 9 probes — which is cheaper than the per-cell scan AND
+        // exact to the pixel.
+        // Bisection assumes ONE transition down a column, which
+        // holds for a single caster; two overlapping casters
+        // would need an interval scan. Noted, not solved.
+        const wyTopC = (yTop - cys) / zoom + camY;
+        const wyBotC = (yBot - cys) / zoom + camY;
+        const shTop = shadowedAt(pxTerrain, wxHere, wyTopC, pxSunRay, own);
+        const shBot = shadowedAt(pxTerrain, wxHere, wyBotC, pxSunRay, own);
+        let shRow = null;
+        if (shTop !== shBot) {
+          let loW = wyTopC, hiW = wyBotC;
+          for (let it = 0; it < 9; it++) {
+            const midW = (loW + hiW) / 2;
+            if (shadowedAt(pxTerrain, wxHere, midW, pxSunRay, own) === shTop) loW = midW;
+            else hiW = midW;
+          }
+          shRow = Math.round(((loW + hiW) / 2 - camY) * zoom + cys);
+        }
+        if (window.FF._pxShTrace) {
+          window.FF._pxShTrace.push({ x, yTop, yBot, shTop, shBot, shRow });
+        }
+        // CHECKER FILL: walk this span in world-cell bands. One
+        // fillRect per band, not per pixel — a column crosses
+        // only a few cells — and the cell indices come from WORLD
+        // coordinates, so the pattern belongs to the ground.
+        const wxCell = Math.floor((((x + 0.5) - cxs) / zoom + camX) / pxGStep);
+        let y = yTop;
+        const yEndAll = yBot;
+        while (y < yEndAll) {
+          const wy = (y - cys) / zoom + camY;
+          const cyCell = Math.floor(wy / pxGStep);
+          const nextW = (cyCell + 1) * pxGStep;
+          let yNext = Math.ceil((nextW - camY) * zoom + cys);
+          if (yNext <= y) yNext = y + 1;   // never stall
+          const yEnd = Math.min(yEndAll, yNext);
+          // The checker cell decides the TONE PAIR; the shadow
+          // boundary can fall anywhere INSIDE it, so the band is
+          // split at that exact row.
+          const light = ((wxCell + cyCell) & 1) === 0;
+          const paintBand = (y0b, y1b, shaded) => {
+            if (y1b <= y0b) return;
+            const base = window.FF.PX_SHADOW_DEBUG
+              ? (shaded ? '#ff00ff' : '#00c040')
+              : (shaded ? LR(segRaw, ROOFED) : L(segRaw));
+            // Debug paints FLAT: the checker partner of magenta
+            // is a different magenta, fine to look at but
+            // ambiguous to measure.
+            ctx.fillStyle = window.FF.PX_SHADOW_DEBUG
+              ? base : (light ? base : pxAltOf(base));
+            ctx.fillRect(x, y0b, 1, y1b - y0b);
+          };
+          if (shRow !== null && shRow > y && shRow < yEnd) {
+            paintBand(y, shRow, shTop);
+            paintBand(shRow, yEnd, !shTop);
+          } else {
+            paintBand(y, yEnd,
+              shRow === null ? shTop : (shRow <= y ? !shTop : shTop));
+          }
+          y = yEnd;
+        }
       };
       for (const sl of slabWorld.slabs) {
         if (sl.isWall) continue;
         const t = sl.top, bo = sl.bottom;
-        bo._cur = 0;
-        for (let i = 1; i < t.length; i++) {
-          const segRaw = (TINT_PX && TINT_PX[t[i].k]) || COLORS.ground;
-          const ax = toScreenX(t[i - 1].x), ay = toScreenY(t[i - 1].y);
-          const bx = toScreenX(t[i].x), by = toScreenY(t[i].y);
-          let x0 = Math.round(Math.min(ax, bx)), x1 = Math.round(Math.max(ax, bx));
-          if (x1 < -2 || x0 > width + 2) continue;      // off-screen span
-          x0 = Math.max(x0, -1); x1 = Math.min(x1, width + 1);
-          const span = bx - ax;
-          for (let x = x0; x <= x1; x++) {
-            // Surface row for THIS column, sampled at its centre.
-            const u = span === 0 ? 0 : Math.max(0, Math.min(1, (x + 0.5 - ax) / span));
-            const yTop = Math.round(ay + (by - ay) * u);
-            // Slab bottom AT THIS COLUMN, from the bottom polyline's
-            // own geometry — never from the top's index or fraction.
-            const yBot = Math.round(botYAt(bo, x + 0.5));
-            const hgt = Math.max(1, yBot - yTop);
-            // The shadow is probed PER BAND, at that band's own world
-            // height — not once per column at the surface.
-            //
-            // v1 tested at the surface row and painted the whole
-            // vertical span with the answer, so the lit/shadow
-            // boundary could only ever be a VERTICAL line between
-            // columns: the shadow was offset correctly but its edge
-            // ran straight down the terrain face instead of raking
-            // across it at the light's angle (Eddie, on device).
-            // A face is tall in world terms, and the ray crosses it
-            // at a height that changes along the face — which is
-            // exactly the diagonal that was missing.
-            const wxHere = ((x + 0.5) - cxs) / zoom + camX;
-            // THE BOUNDARY'S EXACT DEPTH for this column.
-            // Probing per checker CELL made the rake step in 1 m
-            // blocks (Eddie: "per metre, not per pixel"). Probing per
-            // PIXEL row would be ~57k segment tests a frame. The
-            // transition depth is BISECTED once per column instead —
-            // 9 probes — which is cheaper than the per-cell scan AND
-            // exact to the pixel.
-            // Bisection assumes ONE transition down a column, which
-            // holds for a single caster; two overlapping casters
-            // would need an interval scan. Noted, not solved.
-            const wyTopC = (yTop - cys) / zoom + camY;
-            const wyBotC = (yBot - cys) / zoom + camY;
-            const shTop = shadowedAt(pxTerrain, wxHere, wyTopC, pxSunRay, sl.top);
-            const shBot = shadowedAt(pxTerrain, wxHere, wyBotC, pxSunRay, sl.top);
-            let shRow = null;
-            if (shTop !== shBot) {
-              let loW = wyTopC, hiW = wyBotC;
-              for (let it = 0; it < 9; it++) {
-                const midW = (loW + hiW) / 2;
-                if (shadowedAt(pxTerrain, wxHere, midW, pxSunRay, sl.top) === shTop) loW = midW;
-                else hiW = midW;
-              }
-              shRow = Math.round(((loW + hiW) / 2 - camY) * zoom + cys);
+        const n = t.length, m = 2 * n;
+        // Closed boundary in SNAPPED screen space: top forward,
+        // bottom reversed, the closing edge (m-1 -> 0) the start cap
+        // and edge n-1 the end cap. Same vertex list, same order, as
+        // the vector path's polygon.
+        const vx = new Array(m), vy = new Array(m);
+        for (let i = 0; i < n; i++) {
+          vx[i] = tsx(t[i].x); vy[i] = tsy(t[i].y);
+          vx[n + i] = tsx(bo[n - 1 - i].x); vy[n + i] = tsy(bo[n - 1 - i].y);
+        }
+        let xLo = Infinity, xHi = -Infinity;
+        for (let i = 0; i < m; i++) {
+          if (vx[i] < xLo) xLo = vx[i];
+          if (vx[i] > xHi) xHi = vx[i];
+        }
+        const c0 = Math.max(0, xLo), c1 = Math.min(width - 1, xHi - 1);
+        if (c1 < c0) continue;
+        // Edge events, bucketed by first visible column, swept with an
+        // active list — O(edges + columns + crossings), and the
+        // off-screen bulk of a streamed strand costs one range check
+        // per edge.
+        const starts = new Array(c1 - c0 + 1);
+        const colEnd = new Array(m).fill(-1);
+        for (let e = 0; e < m; e++) {
+          const e2 = e + 1 === m ? 0 : e + 1;
+          const xa = vx[e], xb = vx[e2];
+          if (xa === xb) continue;               // vertical: no crossing
+          // Integer vertices, half-integer samples: the centre line
+          // x + 0.5 crosses this edge exactly for x in
+          // [min, max - 1] — half-open, so a shared vertex is never
+          // counted twice and an extremum's pair cancels.
+          const a2 = Math.max(c0, Math.min(xa, xb));
+          const b2 = Math.min(c1, Math.max(xa, xb) - 1);
+          if (b2 < a2) continue;
+          (starts[a2 - c0] || (starts[a2 - c0] = [])).push(e);
+          colEnd[e] = b2;
+        }
+        const active = [];
+        const crY = [], crD = [], crE = [];
+        for (let x = c0; x <= c1; x++) {
+          const add = starts[x - c0];
+          if (add) for (let i2 = 0; i2 < add.length; i2++) active.push(add[i2]);
+          if (!active.length) continue;
+          const xs = x + 0.5;
+          crY.length = 0; crD.length = 0; crE.length = 0;
+          for (let ai = 0; ai < active.length; ai++) {
+            const e = active[ai];
+            if (x > colEnd[e]) {
+              active[ai] = active[active.length - 1];
+              active.pop(); ai--; continue;
             }
-            if (window.FF._pxShTrace) {
-              window.FF._pxShTrace.push({ x, yTop, yBot, shTop, shBot, shRow });
+            const e2 = e + 1 === m ? 0 : e + 1;
+            const xa = vx[e], xb = vx[e2];
+            const yc = vy[e] + (vy[e2] - vy[e]) * (xs - xa) / (xb - xa);
+            crY.push(yc); crD.push(xb > xa ? 1 : -1); crE.push(e);
+          }
+          if (crY.length < 2) continue;
+          // Sort crossings by y (insertion sort: the list is tiny and
+          // usually already ordered).
+          for (let i2 = 1; i2 < crY.length; i2++) {
+            const ky = crY[i2], kd = crD[i2], ke = crE[i2];
+            let j2 = i2 - 1;
+            while (j2 >= 0 && crY[j2] > ky) {
+              crY[j2 + 1] = crY[j2]; crD[j2 + 1] = crD[j2]; crE[j2 + 1] = crE[j2];
+              j2--;
             }
-            // CHECKER FILL: walk this span in world-cell bands. One
-            // fillRect per band, not per pixel — a column crosses
-            // only a few cells — and the cell indices come from WORLD
-            // coordinates, so the pattern belongs to the ground.
-            const wxCell = Math.floor((((x + 0.5) - cxs) / zoom + camX) / pxGStep);
-            let y = yTop;
-            const yEndAll = yTop + hgt;
-            while (y < yEndAll) {
-              const wy = (y - cys) / zoom + camY;
-              const cyCell = Math.floor(wy / pxGStep);
-              const nextW = (cyCell + 1) * pxGStep;
-              let yNext = Math.ceil((nextW - camY) * zoom + cys);
-              if (yNext <= y) yNext = y + 1;   // never stall
-              const yEnd = Math.min(yEndAll, yNext);
-              // The checker cell decides the TONE PAIR; the shadow
-              // boundary can fall anywhere INSIDE it, so the band is
-              // split at that exact row.
-              const light = ((wxCell + cyCell) & 1) === 0;
-              const paintBand = (y0b, y1b, shaded) => {
-                if (y1b <= y0b) return;
-                const base = window.FF.PX_SHADOW_DEBUG
-                  ? (shaded ? '#ff00ff' : '#00c040')
-                  : (shaded ? LR(segRaw, ROOFED) : L(segRaw));
-                // Debug paints FLAT: the checker partner of magenta
-                // is a different magenta, fine to look at but
-                // ambiguous to measure.
-                ctx.fillStyle = window.FF.PX_SHADOW_DEBUG
-                  ? base : (light ? base : pxAltOf(base));
-                ctx.fillRect(x, y0b, 1, y1b - y0b);
-              };
-              if (shRow !== null && shRow > y && shRow < yEnd) {
-                paintBand(y, shRow, shTop);
-                paintBand(shRow, yEnd, !shTop);
-              } else {
-                paintBand(y, yEnd,
-                  shRow === null ? shTop : (shRow <= y ? !shTop : shTop));
+            crY[j2 + 1] = ky; crD[j2 + 1] = kd; crE[j2 + 1] = ke;
+          }
+          // NONZERO WINDING: a span is interior while the running sum
+          // is non-zero — the rule canvas fill() applies to the same
+          // polygon in vector mode.
+          let w2 = 0, spanY = 0, openE = -1;
+          for (let i2 = 0; i2 < crY.length; i2++) {
+            const was = w2; w2 += crD[i2];
+            if (was === 0 && w2 !== 0) { spanY = crY[i2]; openE = crE[i2]; }
+            else if (was !== 0 && w2 === 0) {
+              const yT = Math.round(spanY), yB = Math.round(crY[i2]);
+              if (yB > yT) {
+                // Dev tint: a span's kind is the kind of the TOP edge
+                // bounding it (the opening crossing on a deck, the
+                // closing one on a ceiling); default ground otherwise.
+                let segRaw = COLORS.ground;
+                if (TINT_PX) {
+                  const eC = crE[i2];
+                  const kTop = openE < n - 1 ? t[openE + 1].k
+                    : (eC < n - 1 ? t[eC + 1].k : null);
+                  if (kTop && TINT_PX[kTop]) segRaw = TINT_PX[kTop];
+                }
+                paintSpan(x, yT, yB, segRaw, sl.top);
               }
-              y = yEnd;
             }
           }
         }
