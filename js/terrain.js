@@ -37,17 +37,11 @@
 (function () {
 'use strict';
 
-// Deterministic 32-bit RNG. Do not replace with Math.random — ever.
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Deterministic 32-bit RNG — OWNED BY dmath.js since 2026-08-19.
+// It lived here, which meant every seeded consumer in the game
+// depended on the terrain generator being loaded for a ten-line
+// function. Same bytes, earlier home, no stream moves.
+const mulberry32 = window.FF.mulberry32;
 
 // Random in range [lo, hi).
 const rr = (rng, lo, hi) => lo + rng() * (hi - lo);
@@ -867,7 +861,7 @@ function segStartIndex(poly, xLo) {
 
 window.FF.segStartIndex = segStartIndex;
 window.FF.createTerrainGen = createTerrainGen;
-window.FF.mulberry32 = mulberry32;
+// (window.FF.mulberry32 is published by dmath.js — see above.)
 // The pure parts, exported so the suite holds the laws to themselves
 // rather than doing geometry archaeology on point lists.
 // makeCursor: the primitive vocabulary without the streaming shell —

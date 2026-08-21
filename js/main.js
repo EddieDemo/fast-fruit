@@ -246,8 +246,29 @@ function respawnRace(opts) {
     // reopened here), and the TRACK seed then chooses which sky of
     // that role. Variety arrives without touching the proven half.
     if (window.FF.palette.setSky && window.FF.sky) {
-      window.FF.palette.setSky(
-        window.FF.sky.skyForSeed(window.FF.palette.getTime(), race.seed));
+      const skyLib = window.FF.sky;
+      // THE STAGE IS ONE DECISION. Sky and ground rolled separately
+      // could hand a track a lime sky over an ochre desert; the
+      // reference never does that — Asia is a cyan sky AND green
+      // fields. So the track rolls a STAGE, and the stage names both.
+      const stage = skyLib.stageForSeed(race.seed);
+      if (window.FF.palette.setGround) window.FF.palette.setGround(stage.ground);
+      const ground = skyLib.groundHex(stage.ground);
+      // The sky is GENERATED from the seed, gated against the cast,
+      // the band budget and the ground it will sit above. A roll that
+      // fails every attempt falls back to the hour's authored classic
+      // rather than shipping something that failed a law.
+      const role = window.FF.palette.getTime();
+      const gen = skyLib.generate ? skyLib.generate(role, race.seed, ground) : null;
+      if (gen && gen.generated) {
+        // THE SPEC ITSELF, not a name. Registering it would give a
+        // one-race value a permanent entry in a global table, which
+        // is exactly the leak that measured 11 specs to 61 over fifty
+        // races.
+        window.FF.palette.setSky(gen);
+      } else {
+        window.FF.palette.setSky(skyLib.skyForSeed(role, race.seed));
+      }
     }
     // The moon's position: seeded per track, so night races differ
     // from one another without any of them being random.

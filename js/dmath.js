@@ -78,7 +78,36 @@ function dpow(b, e) {
   return dexp(e * dln(b));
 }
 
+// ---- THE DETERMINISTIC RNG -------------------------------------------
+// mulberry32 lived in terrain.js until 2026-08-19, which made every
+// consumer — melon, decals, names, emote, shading's seeded anchors —
+// depend on the TERRAIN GENERATOR being loaded, for a ten-line
+// function that has nothing to do with terrain. sky-bench.html found
+// that out the hard way: it loads the colour tier only, and
+// shading.anchorColor() threw because window.FF.mulberry32 was
+// undefined.
+//
+// Its home is here. dmath is the deterministic-arithmetic module and
+// a seeded RNG is deterministic arithmetic; it also loads FIRST in
+// both index.html and the harness, so no consumer can now be earlier
+// than its own dependency. The function is byte-identical and every
+// consumer reads it at CALL time through window.FF, so the move
+// cannot shift a single stream — pinned by the path-hash tripwire.
+//
+// Do not replace with Math.random — ever.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 window.FF = window.FF || {};
 window.FF.dmath = { sin: dsin, cos: dcos, ln: dln, exp: dexp, pow: dpow };
+window.FF.mulberry32 = mulberry32;
 
 })();

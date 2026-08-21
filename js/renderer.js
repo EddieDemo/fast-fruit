@@ -1,5 +1,31 @@
 (function () {
 'use strict';
+
+// ---- CHECKERBOARD PATTERNS, built once and kept -----------------------
+// Keyed by the pair and the cell size, because a sky reuses the same
+// few pairs down its whole burst and a race reuses them every frame.
+const patCache = new Map();
+function checkerPattern(ctx, a, b, cell) {
+  if (!ctx || typeof ctx.createPattern !== 'function'
+    || typeof document === 'undefined') return null;
+  const key = a + '|' + b + '|' + cell;
+  const hit = patCache.get(key);
+  if (hit !== undefined) return hit;
+  let pat = null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = cell * 2; c.height = cell * 2;
+    const g = c.getContext('2d');
+    g.fillStyle = a;
+    g.fillRect(0, 0, cell * 2, cell * 2);
+    g.fillStyle = b;
+    g.fillRect(cell, 0, cell, cell);
+    g.fillRect(0, cell, cell, cell);
+    pat = ctx.createPattern(c, 'repeat');
+  } catch (e) { pat = null; }
+  patCache.set(key, pat);
+  return pat;
+}
 // ============================================================
 // RENDERER — draws the world from state. Reads everything, writes
 // only presentation state (camera, fx decay). Never touches the sim.
@@ -642,6 +668,43 @@ function createRenderer(canvas) {
           const rw = rowsOut[i];
           ctx.fillStyle = rw.hex;
           ctx.fillRect(0, rw.y, width, rw.h);
+          // A CHECKERED ROW dithers ACROSS the row, and is painted with
+          // a 2x2 PATTERN rather than cell by cell.
+          //
+          // Per-pixel rectangles measured 5648 fillRect calls a frame
+          // on a WEAVE sky against ~25 for a plain one — 225x, every
+          // frame, because rows() caches the SOLVE but the BLIT
+          // happens regardless. That is the same shape as the Phase 6
+          // performance crisis, and it would have been felt on a
+          // phone.
+          //
+          // A pattern anchored at the origin tiles into exactly the
+          // checkerboard the per-pixel version drew: it repeats every
+          // two rows, so a multi-row band comes out offset per row for
+          // free, and the whole band is ONE fillRect.
+          //
+          // Optional by design — a consumer that ignores `checker`
+          // paints the modal colour, which is what the old model
+          // produced.
+          if (rw.checker) {
+            const pat = checkerPattern(ctx, rw.hex, rw.checker.second,
+              rw.checker.cell || 1);
+            if (pat) {
+              ctx.fillStyle = pat;
+              ctx.fillRect(0, rw.y, width, rw.h);
+            } else {
+              // No pattern support (a headless shim): fall back to the
+              // honest slow path rather than silently painting flat.
+              const cell = rw.checker.cell || 1;
+              ctx.fillStyle = rw.checker.second;
+              for (let yy = 0; yy < rw.h; yy++) {
+                const off = (((rw.y + yy) / cell) | 0) & 1 ? cell : 0;
+                for (let x = off; x < width; x += cell * 2) {
+                  ctx.fillRect(x, rw.y + yy, cell, 1);
+                }
+              }
+            }
+          }
         }
       } else {
         ctx.fillStyle = SKY_BASE;
@@ -769,6 +832,16 @@ function createRenderer(canvas) {
       // columns AFTER the fill, which now covers the inline grid
       // (measured — the grid vanished on coloured sections). One
       // colour decision per span, then the grid on top of it.
+      // THE TERRAIN KEEPS ITS OWN COLOURS (Eddie's ruling, 2026-08-19).
+      // A melon rolls a base from its species band, derives a shading
+      // ramp, and passes every tone through lit(); terrain uses the
+      // same door and simply had ONE base, and that base was a pure
+      // neutral — the most cast-susceptible thing there is. The
+      // GROUND KIT gives it chroma of its own, so the sky tints it
+      // rather than dyeing it. `tarmac` is the shipped grey exactly,
+      // so nothing moves until a stage selects otherwise.
+      const GROUND_BASE = (window.FF.palette && window.FF.palette.groundTone)
+        ? window.FF.palette.groundTone() : COLORS.ground;
       const TINT_PX = window.FF.DEV_TERRAIN_COLORS ? {
         slope: '#3a3a3a', roller: '#37413a', flat: '#454545',
         kicker: '#463c34', gap: '#46343c', sw: '#343c46',
@@ -975,7 +1048,7 @@ function createRenderer(canvas) {
                 // Dev tint: a span's kind is the kind of the TOP edge
                 // bounding it (the opening crossing on a deck, the
                 // closing one on a ceiling); default ground otherwise.
-                let segRaw = COLORS.ground;
+                let segRaw = GROUND_BASE;
                 if (TINT_PX) {
                   const eC = crE[i2];
                   const kTop = openE < n - 1 ? t[openE + 1].k

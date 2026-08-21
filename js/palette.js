@@ -221,6 +221,18 @@ function applyColumn(k, col) {
   return (r << 16) | (g << 8) | b;
 }
 
+// APPLY A COLUMN TO A TONE, without touching global state. The sky
+// generator's gates need to know what the terrain will look like
+// under a candidate sky before that sky is ever selected, and
+// installing it just to ask would be a side effect for a question.
+function applyColumnTo(hex, col) {
+  const k = toInt(hex);
+  if (k === null || !col) return hex;
+  const out = applyColumn(k, col);
+  members.add(out);
+  return '#' + ((1 << 24) | out).toString(16).slice(1);
+}
+
 // Phase 5.2: the same door with an EXPLICIT strength, so different
 // REGIONS of one frame can resolve differently. lit() is this with
 // the global strength — regional light does not replace the global
@@ -238,7 +250,22 @@ function lit(hex) {
   // so a cache HIT still paid the full derivation — a memo placed
   // after the work it memoises is not a memo. The key already carries
   // the sky, so a hit is a complete answer on its own.
-  const ck = currentSkyId + '|' + current + '|' + hex;
+  // THE KEY CARRIES `version`, and it must. Without it the key was
+  // (sky id, strength, tone) — sufficient only while a sky ID maps to
+  // ONE column forever, which is true of the game and false of the
+  // bench: the bench installs a scratch spec under a stable id and
+  // changes its column on every edit, so the FIRST answer was cached
+  // and served for every later one. Measured: a sky edited from lime
+  // to white-and-purple kept painting the ground lime green.
+  //
+  // `version` is bumped by every mutator — setSky, setTime, setLight,
+  // setSunSeed — so it is exactly "has anything that could change the
+  // answer changed". skyColumn's memo already keys this way; lit()
+  // was the one door that did not, and the two now share a
+  // discipline rather than differing by accident.
+  //
+  // Cost: none during a race, where version is constant.
+  const ck = currentSkyId + '|' + version + '|' + current + '|' + hex;
   const hit = litCache.get(ck);
   if (hit !== undefined) return hit;
   // THE FAST PATH IS COMPUTED, NOT NAMED. It used to test
@@ -275,15 +302,40 @@ function lit(hex) {
 // wants one of the new skies says so explicitly afterwards.
 let currentSkyId = 'noon';
 function skyLib() { return (typeof window !== 'undefined' && window.FF && window.FF.sky) || null; }
-function setSky(id) {
+// A GENERATED SKY IS A VALUE, NOT A NAME.
+//
+// main.js used to call sky.define() on every race so it could pass an
+// id here, and nothing ever removed them: measured, the registry went
+// from 11 specs to 61 over fifty races and would keep going for as
+// long as the session lasted. Each entry holds a node list and a
+// rows() cache line, so it is slow rather than fatal — but an
+// unbounded structure in a game meant to run for hours is a leak, and
+// giving a one-race value a permanent name is what created it.
+//
+// setSky now accepts the SPEC ITSELF. A library sky is still chosen
+// by id, because a library sky genuinely has a name.
+let currentSkySpec = null;
+function setSky(idOrSpec) {
   const lib = skyLib();
-  if (!lib || !lib.SPECS[id] || id === currentSkyId) return currentSkyId;
-  currentSkyId = id;
+  if (!lib) return currentSkyId;
+  if (idOrSpec && typeof idOrSpec === 'object') {
+    if (currentSkySpec === idOrSpec) return currentSkyId;
+    currentSkySpec = idOrSpec;
+    currentSkyId = idOrSpec.id || 'generated';
+    version++;
+    return currentSkyId;
+  }
+  if (!lib.SPECS[idOrSpec] || (idOrSpec === currentSkyId && !currentSkySpec)) {
+    return currentSkyId;
+  }
+  currentSkySpec = null;
+  currentSkyId = idOrSpec;
   version++;
   return currentSkyId;
 }
 function getSky() { return currentSkyId; }
 function skySpec() {
+  if (currentSkySpec) return currentSkySpec;
   const lib = skyLib();
   return lib ? lib.get(currentSkyId) : null;
 }
@@ -319,6 +371,25 @@ function skyColumn() {
   colCacheKey = key;
   return colCacheVal;
 }
+// ---- THE GROUND KEEPS ITS OWN COLOURS (Eddie's ruling) ----
+// Terrain is RECOLOURED by the light exactly as a melon is, but its
+// base tones are its own rather than derived from the sky. TARMAC is
+// the shipped grey, byte-for-byte, so nothing changes appearance
+// until a stage selects otherwise.
+let currentGround = 'tarmac';
+function setGround(kitId) {
+  const lib = skyLib();
+  if (!lib || !lib.GROUND_KITS[kitId] || kitId === currentGround) return currentGround;
+  currentGround = kitId;
+  version++;
+  return currentGround;
+}
+function getGround() { return currentGround; }
+function groundTone() {
+  const lib = skyLib();
+  return lib ? lib.groundHex(currentGround) : '#3a3a3a';
+}
+
 function isIdentityColumn(c) {
   return !!c && !c.lift && c.mL === 1 && c.mS === 1 && !c.tintK;
 }
@@ -452,7 +523,8 @@ const api = { register, registerTone, tone, isMemberInt, isMemberHex,
   toInt, stats, rampNames, STATES, COLUMNS, lit, setLight, getLight,
   lightVersion, TIMES, TIME_NAMES, setTime, getTime, skyParams,
   timeForSeed, litIn, sunDeg, setSunSeed,
-  setSky, getSky, skySpec, skyColumn, isIdentityColumn };
+  setSky, getSky, skySpec, skyColumn, isIdentityColumn, applyColumnTo,
+  setGround, getGround, groundTone };
 
 if (typeof window !== 'undefined') {
   window.FF = window.FF || {};
