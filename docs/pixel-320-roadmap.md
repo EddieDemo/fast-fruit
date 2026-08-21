@@ -3153,3 +3153,67 @@ cache lookup fails AG1b, and restoring define() fails AG2c.
     nobody has seen them lit, with terrain, in order.
   * The 90% floor against the parallax land layers, once those exist
     (Eddie: not yet, so not yet a problem).
+
+## Phase 7.15 — AN INTEGER UPSCALE (Eddie's ruling, 2026-08-21)
+
+From a device capture: the checkerboard cells are uneven in width.
+
+They were. A 320-wide buffer on a 1179-wide phone is a scale of
+3.684, so every buffer pixel lands on THREE OR FOUR device pixels and
+some columns come out wider than others. Nearest-neighbour does not
+blur it — it makes some columns fatter. Solid bands hide this
+completely; a ONE-PIXEL CHECKERBOARD is the most demanding content the
+buffer can hold and put it under a microscope. The terrain
+stair-steps in the same capture had it all along.
+
+### The scale is the whole number now; the buffer width follows
+
+  device                    scale   buffer     edge lost
+  iPhone 15 Pro portrait     x4     294x639    3px (0.25%)
+  iPhone 15 Pro landscape    x8     319x147    4px (0.16%)
+  iPad 10.9 landscape        x7     337x234    1px (0.04%)
+  Pixel 7 landscape          x8     300x135    0px
+  desktop 2560               x8     320x180    0px
+
+Every buffer pixel is now exactly `scale` device pixels wide, on
+every device. The alternative — letterboxing a locked 320 — measured
+19% OF THE WIDTH LOST on a phone in portrait. This loses at most
+scale-1 pixels, centred rather than banded to one side.
+
+### WHAT IT DOES NOT COST, which was Eddie's condition
+
+NO WORLD VIEW. The camera law is `zoom = width / (VIEW_W_M * 100)`,
+so the buffer width CANCELS: the metres on screen are fixed at 16.2
+and the buffer only decides the resolution they are drawn at.
+Verified across four device sizes — 16.0 m before, 16.0 m after.
+
+AND NOT THE SKY. I claimed earlier that "every burstPx and rhythm is
+stated in 320-space" and that a variable buffer would break them.
+THAT WAS WRONG, and the retraction matters because it nearly ruled
+out the right answer: every one of those measurements is VERTICAL, a
+count of ROWS, and rows() never receives a width at all. A narrower
+buffer does not change a single band.
+
+The dev override (FF.PIXELATE_W) still forces a width with a
+fractional scale, because comparing chunk tiers side by side is worth
+more than crisp edges while you are doing it.
+
+### THE SUITE KNEW 320 BY HEART, in nine places
+
+The buffer had been 320 on every window since Phase 0, and nine
+checks simply knew that: band filters keyed on `q.w === 320`, camera
+centres written as `160`, column loops running to 320, a buffer
+height derived as `round(320 * 850 / 1512)`. They now ASK — the
+renderer publishes `FF._bufferSize()` and the suite reads it after
+the first render, since the buffer is lazy.
+
+The last one to fall was `cxq = 160`, which is why every column's
+EDGE read as wrong while the fills themselves matched exactly. A
+constant that is half of another constant is worth writing as such.
+
+Suite: verify-px-render AH1-AH4, and nine existing checks re-derived.
+Mutation-tested — a fixed 320 buffer fails AH1, and a height not
+floored to the same scale fails AH1a.
+
+STILL OPEN: a fresh device capture, to confirm the cells now read as
+even. Everything above is arithmetic.

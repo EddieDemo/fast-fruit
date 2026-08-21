@@ -196,6 +196,15 @@ function createRenderer(canvas) {
                        // when FF.PIXELATE is on; every helper receives
                        // ctx as a parameter, so the swap is total
   let pxCanvas = null; // lazy: the low-res world layer
+  let pxScale = 0;     // the integer upscale, 0 when a dev width is forced
+  // THE BUFFER IS NO LONGER A CONSTANT, so anything that needs its
+  // size must ASK. It was 320 everywhere and a dozen places simply
+  // knew that; now it is whatever divides the display exactly.
+  function bufferSize() {
+    return pxCanvas
+      ? { w: pxCanvas.width, h: pxCanvas.height, scale: pxScale }
+      : { w: 0, h: 0, scale: 0 };
+  }
   const pxAltCache = new Map();  // fill tone -> its checker partner
   const pxSegCache = new Map();  // screen column -> regional strength
   let pxTerrain = null;          // this frame's terrain, for helpers
@@ -444,9 +453,41 @@ function createRenderer(canvas) {
       // 640 — the VGA tier, the truer Out Run / Super Hang-On read;
       // 380 is the Game-Boy-adjacent chunk. Sprites key on screen
       // radius, so switching width just triggers fresh bakes.
-      const pw = (window.FF.PIXELATE_W | 0) || 320;  // LOCKED (Eddie): the
-                                    // OutRun-board width
-      const ph = Math.max(1, Math.round(pw * height / Math.max(1, width)));
+      // ---- AN INTEGER SCALE, ALWAYS (Eddie's ruling, 2026-08-21) ----
+      //
+      // A 320-wide buffer on a 1179-wide phone is a scale of 3.684, so
+      // every buffer pixel lands on THREE OR FOUR device pixels and
+      // some columns come out wider than others. Solid bands hide it;
+      // a one-pixel checkerboard is the most demanding content the
+      // buffer can hold and put it under a microscope. The terrain
+      // stair-steps had it all along.
+      //
+      // The fix is to make the SCALE the whole number and let the
+      // BUFFER WIDTH follow, rather than the other way round. What
+      // that costs is the exact 320 — measured, it becomes 294 to 337
+      // across real devices. What it does NOT cost is world view: the
+      // camera law is `zoom = width / (VIEW_W_M * 100)`, so the metres
+      // on screen are fixed and the buffer width only decides the
+      // resolution they are drawn at. Nor does it touch the sky —
+      // rows() never receives a width, and every burstPx and rhythm is
+      // a count of ROWS.
+      //
+      // The alternative was letterboxing a locked 320, which measured
+      // 19% of the width lost on a phone in portrait. This loses at
+      // most SCALE-1 device pixels at the edge — under 0.3% — and
+      // those are centred rather than banded to one side.
+      const TARGET_W = 320;         // the OutRun board, still the aim
+      const devW = Math.max(1, width), devH = Math.max(1, height);
+      const dev = (window.FF.PIXELATE_W | 0);
+      const scale = dev ? 0 : Math.max(1, Math.round(devW / TARGET_W));
+      // A dev override (console: FF.PIXELATE_W=380) keeps the old
+      // fractional behaviour, because comparing chunk tiers side by
+      // side is worth more than crisp edges while you are doing it.
+      const pw = dev || Math.max(1, Math.floor(devW / scale));
+      const ph = dev
+        ? Math.max(1, Math.round(pw * devH / devW))
+        : Math.max(1, Math.floor(devH / scale));
+      pxScale = scale;
       if (pxCanvas.width !== pw) pxCanvas.width = pw;
       if (pxCanvas.height !== ph) pxCanvas.height = ph;
       ctx = pxCanvas.getContext('2d');
@@ -1516,8 +1557,20 @@ function createRenderer(canvas) {
       if (canvas.style && canvas.style.imageRendering !== 'pixelated') {
         canvas.style.imageRendering = 'pixelated';
       }
-      ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
-        0, 0, width, height);
+      // DRAWN AT THE EXACT INTEGER SCALE and centred. Stretching to
+      // fill the last few device pixels would undo the whole point;
+      // the remainder is at most SCALE-1 pixels per axis, so on an
+      // 8x display that is seven device pixels of edge, split either
+      // side.
+      if (pxScale) {
+        const dw = pxCanvas.width * pxScale, dh = pxCanvas.height * pxScale;
+        const ox = Math.floor((width - dw) / 2), oy = Math.floor((height - dh) / 2);
+        ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
+          ox, oy, dw, dh);
+      } else {
+        ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
+          0, 0, width, height);
+      }
       ctx.imageSmoothingEnabled = true;
       ctx.webkitImageSmoothingEnabled = true;
     } else if (canvas.style && canvas.style.imageRendering) {
@@ -2111,6 +2164,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // Dev-lane capture (Eddie, 2026-08-18): the actual 320 buffer as a
   // PNG data URL — ground truth for visual iteration, because PIL
   // reconstructions passed proofs while the real device regressed.
+  window.FF._bufferSize = bufferSize;
   window.FF._pxCapture = () => {
     try { return pxCanvas ? pxCanvas.toDataURL('image/png') : null; }
     catch (e) { return null; }
