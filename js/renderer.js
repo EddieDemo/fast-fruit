@@ -2425,6 +2425,17 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   function melonFrame(e, rot, ax, mag, strength, split) {
     if (!e) return null;
     const sun = sunSlot();
+    // THE LIGHT IS A BAKE DIMENSION TOO (the wrap-white forensics,
+    // 2026-08-24). frameKey already carries the sun BEARING with the
+    // rule "a frame baked under morning light must never be served at
+    // dusk" — but the palette's light state (column, sky, ambient)
+    // was not in the key, so melons wore STALE light after the sky
+    // installed: neutral wrap whites while every law-abiding layer
+    // went olive. One entry keeps ONE light generation: on a version
+    // change the frame cache clears rather than accreting dead bakes.
+    const palL = window.FF.palette;
+    const lv = palL && palL.lightVersion ? palL.lightVersion() : 0;
+    if (e.lightV !== lv) { e.frames.clear(); e.lightV = lv; }
     const fk = frameKey(rot, ax, mag, sun);
     const hit = e.frames.get(fk);
     if (hit !== undefined) return hit ? resolveFrame(hit, strength, split) : hit;

@@ -675,6 +675,20 @@ function isoContour(angle, a, b, tau, spokes, taper) {
 }
 
 
+// ---- THE CANONICAL WHITE (ruled 2026-08-24) ----
+// ONE white pigment for the whole game: #f6f6f6 — a step under full
+// white, and COLOURLESS. Under the ceiling because the band structure
+// needs headroom (a highlight on #ffffff has nowhere to go and the
+// terminator vanishes; the law clamps at L* 97 for the same reason).
+// Zero chroma because any temperature a white shows must come from
+// the LIGHT — ambient, hour, column — never smuggled in by the
+// pigment: the wrap-vs-cloud forensics traced a visible warm/cool
+// split to two hand-typed near-whites carrying opposite traces.
+// Consumers: decal art whites, the cloud lit face. Smoke keeps its
+// own grey — that is a material, not a failed white.
+const WHITE_HEX = '#f6f6f6';
+const WHITE_RGB = [246, 246, 246];
+
 // ---- SPHERE TERMINATOR (rig S1, approved 2026-08-24) ----
 // Smoke (and later clouds) shade with the SAME solver as melons —
 // this is the sphere case of isoContour (a = b = 1, taper 0), not a
@@ -890,6 +904,7 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc, sphereContour, _sphereStats,
+  WHITE_HEX, WHITE_RGB,
   rgbToHsl,
   // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
   // law's 4-L* rungs. A gradient is the one place a long ramp of

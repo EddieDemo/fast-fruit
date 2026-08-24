@@ -553,7 +553,11 @@ function starHit(pts, x, y, cx, cy, R, aim) {
   }
   return polyHit(pts, dx, dy);
 }
-const WHITE = [246, 248, 242];
+// THE CANONICAL WHITE (shading.js owns it; ruled 2026-08-24). The
+// old literal [246,248,242] carried a green trace nobody authored —
+// re-pinned to the shared colourless pigment, a ~2-unit shift.
+const WHITE = (window.FF.shading && window.FF.shading.WHITE_RGB)
+  || [246, 246, 246];
 
 function ring(nx, ny, r, w) {
   const d = Math.sqrt(nx * nx + ny * ny);
@@ -897,7 +901,10 @@ const VARSITY_SRC = {
     '################',
   ],
 };
-const VARSITY_FILL = [246, 248, 242];
+// Canonical white here too (found by verify-cloud-rig H5 on its
+// first run): the varsity numeral fill was a third hand-typed
+// near-white carrying the same unauthored green trace.
+const VARSITY_FILL = WHITE;
 const VARSITY_EDGE = [26, 26, 18];
 
 // { w, h, cells } per glyph: 2 = stroke, 1 = outline, 0 = empty. The

@@ -250,11 +250,41 @@ function hslToRgbLocal(h, s, l) {
 // see byte-identical output until a state is actually selected.
 // One tone through BOTH axes: the hour first (the world's light),
 // then the local strength (what this place does to it).
+// THE AMBIENT DIAL (engine-level, 2026-08-24). The cast-on-neutrals
+// rule is right in kind and was untunable in degree: rolled night
+// skies derive strong warm ambients, and at full strength every
+// neutral in the world goes olive. ONE scale on the tint term — it
+// moves melons, smoke, clouds and terrain in lockstep, because they
+// all resolve through this door. Default 1 = shipped behaviour.
+let ambientScale = 1;
+function setAmbient(k2) {
+  const v = Math.max(0, Math.min(1, +k2));
+  if (v === ambientScale) return ambientScale;
+  ambientScale = v; version++;
+  return ambientScale;
+}
+function getAmbient() { return ambientScale; }
+
 function applyColumn(k, col) {
   let [h, sat, l] = rgbToHslLocal((k >> 16) & 255, (k >> 8) & 255, k & 255);
-  sat = Math.max(0, Math.min(1, sat * col.mS));
+  // CHROMA, NOT HSL-S, IS WHAT A LIGHT COLUMN SCALES (the two-whites
+  // forensics, 2026-08-24). HSL saturation is ill-conditioned near
+  // white: an 8-unit RGB spread at L 0.95 reads as S 0.31, invisible
+  // there — and mS-then-mL made it a fully visible olive once L fell.
+  // Measured: cream #f6f4ee through a night column came out khaki
+  // #7c662d while its green-trace sibling came out leaf green; the
+  // same frame showed both. The column now scales the tone's ABSOLUTE
+  // chroma and re-derives S at the destination lightness, so a
+  // near-white stays near-neutral at any depth of night, and the
+  // ambient TINT term remains the one legitimate source of colour on
+  // neutrals. Mid-chroma tones keep their night deepening: their
+  // chroma is real, so scaling it is the same law it always was.
+  const chroma = (1 - Math.abs(2 * l - 1)) * sat;
+  const c2 = Math.max(0, Math.min(1, chroma * col.mS));
   l = Math.max(0, Math.min(1, l * col.mL));
   if (col.lift) l = l + (1 - l) * col.lift;
+  const denom = 1 - Math.abs(2 * l - 1);
+  sat = denom > 1e-6 ? Math.max(0, Math.min(1, c2 / denom)) : 0;
   let [r, g, b] = hslToRgbLocal(h, sat, l);
   if (col.tint && col.tintK) {
     // THE CAST: blend toward the ambient in RGB, then RESTORE the
@@ -274,7 +304,7 @@ function applyColumn(k, col) {
     // mL's job alone — which is what the hour ordering rests on.
     const tk = toInt(col.tint);
     const tr = (tk >> 16) & 255, tg = (tk >> 8) & 255, tb = tk & 255;
-    const w = col.tintK * (1 - sat * 0.55);
+    const w = col.tintK * ambientScale * (1 - sat * 0.55);
     const luma = (rr, gg, bb) => 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
     const before = luma(r, g, b);
     r = r + (tr - r) * w;
@@ -594,6 +624,7 @@ function rampNames() { return [...ramps.keys()]; }
 
 const api = { register, registerTone, tone, isMemberInt, isMemberHex,
   toInt, stats, rampNames, STATES, COLUMNS, lit, setLight, getLight,
+  setAmbient, getAmbient,
   lightVersion, TIMES, TIME_NAMES, setTime, getTime, skyParams,
   timeForSeed, litIn, sunDeg, setSunSeed,
   setSky, getSky, skySpec, skyColumn, isIdentityColumn, applyColumnTo,

@@ -50,7 +50,9 @@ G.FF = G.FF || {};
 const P = {
   tau: 0.55,      // material split, same ruled number as smoke
   mix: 0.35,      // shadow partner: effective lit pulled toward the sky entry
-  litMix: 0.12,   // lit face: white pulled toward the sky's band-centre entry
+                  // (litMix RETIRED 2026-08-24: with a colourless
+                  // canonical pigment there is nothing left for it to
+                  // do that the ambient law does not do better.)
   parallax: 0,    // RULED 0 (Eddie, 2026-08-24): clouds are PINNED,
                   // like the sky they live in — at the fiction's
                   // distances the honest rate is indistinguishable
@@ -81,13 +83,13 @@ const P = {
   gateCut: 0.45,  // coverage below this spawns nothing (kills debris)
   lean: 0.16,     // wind shear
   warpLam: 2.4, warpAmp: 0.42, // ONE low-frequency warp octave
-  litHex: '#f6f4ed',
+  litHex: null,   // resolved at build: the CANONICAL WHITE
+                  // (shading.WHITE_HEX) — one pigment, one law.
   stripW: 640,    // periodic strip width in cloud-x
 };
 const SCHEMA = [
   { key: 'tau', label: 'terminator tau', min: 0.05, max: 0.95, step: 0.01 },
   { key: 'mix', label: 'shadow mix', min: 0, max: 1, step: 0.05 },
-  { key: 'litMix', label: 'lit mix', min: 0, max: 1, step: 0.02 },
   { key: 'parallax', label: 'parallax', min: 0, max: 1, step: 0.05 },
   { key: 'band', label: 'band height', min: 0.3, max: 1.2, step: 0.02 },
   { key: 'anchor', label: 'scale anchor', min: 40, max: 200, step: 2 },
@@ -419,9 +421,16 @@ function strip(spec, seedStr, skyH) {
     const n = parseInt(hex.slice(1), 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   };
-  const bandMidY = Math.max(0, Math.min(skyH - 1,
-    Math.round(floorY - 0.5 * P.band * P.anchor)));
-  const litEffHex = hexMix(P.litHex, rowHex[bandMidY] || P.litHex, P.litMix);
+  // THE LIT FACE IS A WHITE PIGMENT UNDER THE ONE LAW (ruled after
+  // the Poland-wrap screenshot, 2026-08-24): ink branch (a neutral),
+  // then palette.lit — the hour and light column applied exactly
+  // once, the identical path a white melon wrap takes. The shadow
+  // partners then derive from THIS lit, so night reaches them
+  // automatically while they stay anchored to the sky behind.
+  const pigment = P.litHex || (SH && SH.WHITE_HEX) || '#f6f6f6';
+  const inkLit = (SH && SH.inkColor && SH.P)
+    ? SH.inkColor(pigment, SH.P.baseFillSlot) : pigment;
+  const litEffHex = (pal && pal.lit) ? pal.lit(inkLit) : inkLit;
   if (pal && pal.registerTone) pal.registerTone('cloud', litEffHex);
   const lit = hexToRgb(litEffHex);
   const rgba = new Uint8ClampedArray(w * skyH * 4);
@@ -445,18 +454,27 @@ function strip(spec, seedStr, skyH) {
       rgba[i4] = col[0]; rgba[i4 + 1] = col[1]; rgba[i4 + 2] = col[2]; rgba[i4 + 3] = 255;
     }
   }
-  return { w, h: skyH, rgba, floorY };
+  return { w, h: skyH, rgba, floorY, lit: litEffHex };
 }
 
 // ---- Draw (renderer-facing; caches the built strip as a canvas) ----
 let cacheKey = null, cacheCanvas = null, version = 0;
 function invalidate() { version++; cacheKey = null; }
+// Pure and exported: everything a cached strip depends on must appear
+// here, or a change in it serves stale pixels. verify-cloud-rig holds
+// this function directly — the cache itself is browser-only, and a
+// check that cannot reach what it guards is vacuous.
+function stripKey(seedStr, height) {
+  const pal = G.FF.palette;
+  const bearing = (pal && pal.sunDeg) ? pal.sunDeg() : -1;
+  const lightKey = (pal && pal.getLight ? pal.getLight() : '') + '.'
+    + (pal && pal.lightVersion ? pal.lightVersion() : 0);
+  return seedStr + '|' + height + '|' + bearing + '|' + lightKey + '|' + version;
+}
 function draw(ctx, camX, width, height, spec) {
   if (!G.FF.sky || !spec || typeof document === 'undefined') return;
   const seedStr = String(spec.id || spec.role || 'sky') + '|clouds';
-  const pal = G.FF.palette;
-  const bearing = (pal && pal.sunDeg) ? pal.sunDeg() : -1;
-  const key = seedStr + '|' + height + '|' + bearing + '|' + version;
+  const key = stripKey(seedStr, height);
   if (key !== cacheKey) {
     const st = strip(spec, seedStr, height);
     const cv = document.createElement('canvas');
@@ -472,7 +490,7 @@ function draw(ctx, camX, width, height, spec) {
   if (off + width > P.stripW) ctx.drawImage(cacheCanvas, P.stripW - off, 0);
 }
 
-G.FF.cloud = { P, SCHEMA, circlesFor, buildCodes, strip, partnerOf, draw, _litAt: litAt,
+G.FF.cloud = { P, SCHEMA, circlesFor, buildCodes, strip, partnerOf, draw, stripKey, _litAt: litAt,
   invalidate, _stats, _fnvStr: fnvStr, _gnoise: gnoise };
 if (typeof module !== 'undefined' && module.exports) module.exports = G.FF.cloud;
 })();
