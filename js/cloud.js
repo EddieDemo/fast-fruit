@@ -44,7 +44,15 @@ const P = {
   mix: 0.35,      // shadow partner: effective lit pulled toward the sky entry
   litMix: 0.12,   // lit face: white pulled toward the sky's band-centre entry
   parallax: 0.15, // world-x scroll rate (quantized to even px at draw)
-  band: 0.78,     // cloud band height as a share of sky height
+  band: 0.78,     // cloud band height as a share of the SCALE ANCHOR
+  anchor: 90,     // register sky height (px in the 320-wide register)
+                  // that the tuning was authored against. Bubble and
+                  // band sizes derive from THIS, never from the
+                  // buffer: an object with identity must not scale
+                  // with the window it is seen through. Portrait
+                  // shows the SAME clouds with more sky, not bigger
+                  // ones. (The constant-encodes-its-container lesson,
+                  // caught on device 2026-08-24.)
   below: 0.45,    // how far the mass centre-of-base sits below the floor
   cellK: 0.60,    // large-bubble cell size vs band height
   ax: 1.15, ay: 0.80,          // large lattice anisotropy (wind at mass level)
@@ -65,6 +73,7 @@ const SCHEMA = [
   { key: 'litMix', label: 'lit mix', min: 0, max: 1, step: 0.02 },
   { key: 'parallax', label: 'parallax', min: 0, max: 1, step: 0.05 },
   { key: 'band', label: 'band height', min: 0.3, max: 1.2, step: 0.02 },
+  { key: 'anchor', label: 'scale anchor', min: 40, max: 200, step: 2 },
   { key: 'below', label: 'base below floor', min: 0, max: 1, step: 0.05 },
   { key: 'cellK', label: 'bubble cell', min: 0.3, max: 1.2, step: 0.02 },
   { key: 'ax', label: 'cell stretch x', min: 0.6, max: 2.2, step: 0.05 },
@@ -136,44 +145,53 @@ function _stats() { return { builds: stats.builds, circles: stats.circles,
 // same circle on every lap — spawned, infinite, stateless.
 function circlesFor(seedStr, skyH, floorY) {
   const seed = fnvStr(seedStr);
-  // The band is sized by the FLOOR, not the buffer: the visible sky
-  // above the horizon is the canvas the clouds compose against. A
-  // 92%-floor sky and a 43%-floor sky get proportionate clouds, not
-  // the same wall of them.
-  const bandH = P.band * floorY;
+  // SCALE from the anchor (orientation-invariant); PLACEMENT from the
+  // floor. The first floor-sizing attempt made portrait clouds giant —
+  // every dimension inflated with the taller buffer. The floor still
+  // decides where clouds sit and where the horizon clips them; the
+  // anchor decides how big a bubble is, everywhere, always.
+  const bandH = P.band * P.anchor;
   const C = Math.max(16, P.cellK * bandH);
   const baseY = floorY + P.below * bandH;
+  // BAND-LOCAL COORDINATES. Everything below works in `by` = height
+  // relative to the BASE LINE (negative above it), and only the final
+  // push translates to the buffer. The first anchoring fix left the
+  // lattice pinned to buffer y=0, so a different floor sampled
+  // DIFFERENT cells — new clouds, not the same clouds moved. A
+  // cloud's identity now lives entirely in the band: same seed, same
+  // clouds, any floor, any buffer.
   const covLam = 140 + 70 * mulberry(fnvW(fnvW(2166136261, seed), 0x99));
   const covSeed = (seed ^ 0x77) >>> 0;
   const covn = (x) => gnoise(x / covLam, 0.5, covSeed);
-  const envr = (px, py) => {
-    const hp = (baseY - py) / bandH;
+  const envr = (px, by) => {
+    const hp = -by / bandH;
     const gate = Math.min(1, Math.max(0, (covn(px) + 0.10) / 0.30));
     const ceil = 0.30 + 0.95 * gate;
     const top = Math.min(1, Math.max(0, 1 - (hp - ceil) / 0.30));
-    // BUFFER-TOP FADE: only the HORIZON may clip a cloud (standing
-    // ruling); a crown running off the buffer top reads as a cut, so
-    // radii die approaching it instead.
-    const tf = Math.min(1, Math.max(0, (py - 0.05 * floorY) / (0.20 * floorY)));
+    // BAND-TOP FADE: only the HORIZON may clip a cloud (standing
+    // ruling); a crown running past the band's reach reads as a cut,
+    // so radii die approaching it instead. Anchored to the band, so
+    // tall buffers get more EMPTY sky above the same clouds.
+    const tf = Math.min(1, Math.max(0, (1.5 - hp) / 0.25));
     return top * tf * (0.35 + 0.65 * gate);
   };
-  const dil = (py) => {
-    let h = (baseY - py) / bandH;
+  const dil = (by) => {
+    let h = -by / bandH;
     h = h < -0.4 ? -0.4 : h > 1.2 ? 1.2 : h;
     return C * (P.dilBase - P.dilSlope * h);
   };
   const octave = (cw, ch, oseed, rmin, rmax) => {
     const out = [];
-    const y0 = baseY - 1.30 * bandH, y1 = baseY + 0.60 * bandH;
+    const y0 = -1.30 * bandH, y1 = 0.60 * bandH;
     const x0 = -2 * C, x1 = P.stripW + 2 * C;
     for (let iy = Math.floor(y0 / ch); iy <= Math.floor(y1 / ch); iy++) {
       for (let ix = Math.floor(x0 / cw); ix <= Math.floor(x1 / cw); ix++) {
         const jx = cellRand(oseed, ix, iy, 11);
         const jy = cellRand(oseed, ix, iy, 22);
         const rr = rmin + (rmax - rmin) * cellRand(oseed, ix, iy, 33);
-        const px = (ix + jx) * cw, py = (iy + jy) * ch;
-        const r = rr * envr(px, py);
-        if (r >= 0.6) out.push([px, py, r]);
+        const px = (ix + jx) * cw, by = (iy + jy) * ch;
+        const r = rr * envr(px, by);
+        if (r >= 0.6) out.push([px, by, r]);
       }
     }
     return out;
@@ -198,20 +216,21 @@ function circlesFor(seedStr, skyH, floorY) {
       if (d < dmin) dmin = d;
     }
     if (dmin > P.win * C) continue;
-    const h = (baseY - py) / bandH;
+    const h = -py / bandH;   // band-local: py here is `by`
     const crown = smoother((h - P.crownLo) / Math.max(1e-6, P.crownHi - P.crownLo));
     const r2 = r * crown;
     if (r2 >= 0.6) small.push([px, py, r2]);
   }
   const circles = [];
-  const push = (px, py, rd) => {
-    // shear (wind at MASS level) + warp applied to whole centres
+  const push = (px, by, rd) => {
+    // shear (wind at MASS level) + warp applied to whole centres —
+    // all in band space, so warp and shear are floor-independent too.
     const lamw = P.warpLam * C, A = P.warpAmp * C;
-    const sx = px - P.lean * (baseY - py);
-    const wx = A * gnoise(px / lamw, py / lamw, (seed ^ 0x51) >>> 0);
-    const wy = A * gnoise(px / lamw + 7.31, py / lamw + 3.17, (seed ^ 0x52) >>> 0);
+    const sx = px + P.lean * by;
+    const wx = A * gnoise(px / lamw, by / lamw, (seed ^ 0x51) >>> 0);
+    const wy = A * gnoise(px / lamw + 7.31, by / lamw + 3.17, (seed ^ 0x52) >>> 0);
     let cx = sx - wx;
-    const cy = py - wy;
+    const cy = baseY + by - wy;   // the ONLY translation to the buffer
     cx = ((cx % P.stripW) + P.stripW) % P.stripW;   // periodic strip
     circles.push([cx, cy, rd]);
     // wrap duplicates so circles crossing the seam tile cleanly
@@ -359,7 +378,7 @@ function strip(spec, seedStr, skyH) {
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   };
   const bandMidY = Math.max(0, Math.min(skyH - 1,
-    Math.round(floorY - 0.5 * P.band * floorY)));
+    Math.round(floorY - 0.5 * P.band * P.anchor)));
   const litEffHex = hexMix(P.litHex, rowHex[bandMidY] || P.litHex, P.litMix);
   if (pal && pal.registerTone) pal.registerTone('cloud', litEffHex);
   const lit = hexToRgb(litEffHex);
