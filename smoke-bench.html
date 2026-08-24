@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fast Fruit — smoke bench</title>
+<!--
+  SMOKE BENCH — Rig S1 proof: the retired 2D proxy vs the melon rig.
+
+  WHAT THIS FILE REUSES vs MIRRORS (stated per the sky-bench rule):
+  every terminator comes from FF.shading.sphereContour and every tone
+  from FF.shading.inkColor — the solver and the law, i.e. the contract
+  under proof, are the game's own. The 20-line ball-fill loop is
+  MIRRORED from renderer.js drawPuffs (which lives inside the renderer
+  closure); verify-smoke-rig D-checks pin the real painter to the same
+  solver and colours, so the mirror cannot silently diverge in what it
+  proves. The OLD proxy is reimplemented here verbatim from the
+  retired code, because it no longer exists in the game.
+
+  The puff is AUTHORED (fixed ball list) — no Math.random, so the two
+  columns and every elevation row show the identical cloud of balls
+  and the only variable is the shading. Judge at 1x; 2x/3x are for
+  diagnosis. file:// compatible, zero dependencies, one file.
+-->
+<style>
+  :root { --bg:#101013; --panel:#191920; --ink:#e8e8ef; --dim:#8b8b9c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:13px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  h1 { font-size:14px; margin:14px 16px 4px; }
+  .note { color:var(--dim); margin:0 16px 10px; }
+  .row { margin:14px 16px; }
+  .row b { display:block; margin-bottom:6px; }
+  canvas { image-rendering: pixelated; background:#5b87b8; display:block; }
+  .pair { display:flex; gap:12px; }
+  .pair span { color:var(--dim); font-size:11px; }
+  .ctl { margin:0 16px; }
+  button { background:var(--panel); color:var(--ink); border:1px solid #2b2b36;
+    padding:4px 10px; font:inherit; cursor:pointer; }
+  button.on { border-color:#7fdd6a; color:#7fdd6a; }
+</style>
+</head>
+<body>
+<h1>SMOKE BENCH — proxy (left) vs rig (right)</h1>
+<p class="note">Same authored puff everywhere. The payoff is the bottom
+row: at grazing sun the proxy still takes a round bite; the rig cuts a
+near-straight chord, like the melons.</p>
+<div class="ctl">scale
+  <button data-s="1" class="on">1x</button>
+  <button data-s="2">2x</button>
+  <button data-s="3">3x</button>
+</div>
+<div id="rows"></div>
+<script src="js/palette.js"></script>
+<script src="js/shading.js"></script>
+<script>
+(function () {
+  'use strict';
+  const SH = window.FF.shading;
+  const SMOKE_BASE = '#e2e2e2';
+
+  // Authored puff: 12 balls, mid-life sizes. Fixed forever.
+  const BALLS = [
+    [0, 0, 30], [-34, 8, 22], [30, 10, 24], [-14, -20, 20], [16, -18, 21],
+    [-46, 18, 14], [44, 20, 15], [4, 22, 26], [-24, 24, 18], [26, -30, 12],
+    [-6, -34, 13], [48, -6, 11],
+  ];
+  const W = 150, H = 110, CX = 72, CY = 58;
+
+  function drawProxy(ctx) {
+    // The RETIRED code, verbatim in spirit: base disc + white disc
+    // offset sunward by 0.38r, clipped. Kept here as the comparator.
+    const sn = SH.sun();
+    for (const [dx, dy, r] of BALLS) {
+      const bx = CX + dx, by = CY + dy;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#e2e2e2'; ctx.fill(); ctx.clip();
+      ctx.beginPath();
+      ctx.arc(bx + sn.x * r * 0.38, by + sn.y * r * 0.38, r * 0.9, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawRig(ctx) {
+    // Mirrors renderer.js drawPuffs: rig solver + ink law + column.
+    const pal = window.FF.palette;
+    const L = (hex) => (pal && pal.lit ? pal.lit(hex) : hex);
+    const baseFill = L(SH.inkColor(SMOKE_BASE, SH.P.baseFillSlot));
+    // Material ruling 2026-08-24: one split at SMOKE_TAU 0.55.
+    const bandDraw = [{
+      inv: false,
+      fill: L(SH.inkColor(SMOKE_BASE, SH.P.highlightFillSlot)),
+      iso: SH.sphereContour(0.55, 24),
+    }];
+    for (const [dx, dy, r] of BALLS) {
+      const bx = CX + dx, by = CY + dy;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = baseFill; ctx.fill(); ctx.clip();
+      for (const bd of bandDraw) {
+        ctx.fillStyle = bd.fill;
+        ctx.beginPath();
+        if (bd.inv) {
+          ctx.arc(bx, by, r, 0, Math.PI * 2);
+          if (bd.iso && !bd.iso.full) {
+            const pts = bd.iso.pts;
+            ctx.moveTo(bx + pts[0][0] * r, by + pts[0][1] * r);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(bx + pts[i][0] * r, by + pts[i][1] * r);
+            ctx.closePath();
+          }
+          ctx.fill('evenodd');
+        } else {
+          if (!bd.iso) continue;
+          if (bd.iso.full) ctx.arc(bx, by, r, 0, Math.PI * 2);
+          else {
+            const pts = bd.iso.pts;
+            ctx.moveTo(bx + pts[0][0] * r, by + pts[0][1] * r);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(bx + pts[i][0] * r, by + pts[i][1] * r);
+            ctx.closePath();
+          }
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  const ROWS = [
+    { label: 'grazing — elevation 5\u00b0 (MORNING/DUSK register)', elev: 5 },
+    { label: 'default — elevation 45\u00b0', elev: 45 },
+    { label: 'high — elevation 85\u00b0 (near-noon)', elev: 85 },
+  ];
+  let scale = 1;
+  const rowsEl = document.getElementById('rows');
+
+  function render() {
+    rowsEl.innerHTML = '';
+    for (const row of ROWS) {
+      const div = document.createElement('div');
+      div.className = 'row';
+      const b = document.createElement('b');
+      b.textContent = row.label;
+      div.appendChild(b);
+      const pair = document.createElement('div');
+      pair.className = 'pair';
+      for (const mode of ['proxy', 'rig']) {
+        const wrap = document.createElement('div');
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        cv.style.width = (W * scale) + 'px';
+        cv.style.height = (H * scale) + 'px';
+        const ctx = cv.getContext('2d');
+        const bSave = SH.P.sunBearingDeg, eSave = SH.P.sunElevationDeg;
+        SH.P.sunBearingDeg = 260;
+        SH.P.sunElevationDeg = row.elev;
+        (mode === 'proxy' ? drawProxy : drawRig)(ctx);
+        SH.P.sunBearingDeg = bSave; SH.P.sunElevationDeg = eSave;
+        const cap = document.createElement('span');
+        cap.textContent = mode;
+        wrap.appendChild(cv); wrap.appendChild(cap);
+        pair.appendChild(wrap);
+      }
+      div.appendChild(pair);
+      rowsEl.appendChild(div);
+    }
+  }
+  document.querySelectorAll('button[data-s]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('button[data-s]').forEach((b2) => b2.classList.remove('on'));
+      btn.classList.add('on');
+      scale = parseInt(btn.dataset.s, 10);
+      render();
+    });
+  });
+  render();
+})();
+</script>
+</body>
+</html>

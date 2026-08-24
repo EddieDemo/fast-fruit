@@ -675,6 +675,33 @@ function isoContour(angle, a, b, tau, spokes, taper) {
 }
 
 
+// ---- SPHERE TERMINATOR (rig S1, approved 2026-08-24) ----
+// Smoke (and later clouds) shade with the SAME solver as melons —
+// this is the sphere case of isoContour (a = b = 1, taper 0), not a
+// second implementation. One property makes it nearly free: the
+// terminator on a UNIT sphere depends only on the threshold and the
+// sun state, never on the ball's radius or position, so one solve
+// serves every ball in every puff, scaled at draw time. Cached on
+// (tau, spokes, bearing, elevation, shadeEcc); _sphereStats counts
+// SOLVES so verification can prove the cache works by counting work,
+// not milliseconds. Note shadeEcc: the melon rig multiplies the axial
+// radius by it, so it is part of the sun state for cache purposes —
+// at the honest default 1.0 the surface is a true sphere.
+let sphereSolveCount = 0;
+const sphereCache = new Map();
+function sphereContour(tau, spokes) {
+  const n = spokes || 24;
+  const key = tau + '|' + n + '|' + P.sunBearingDeg + '|' + P.sunElevationDeg
+    + '|' + P.shadeEcc;
+  if (sphereCache.has(key)) return sphereCache.get(key);
+  sphereSolveCount++;
+  const c = isoContour(0, 1, 1, tau, n, 0);
+  if (sphereCache.size > 64) sphereCache.clear();
+  sphereCache.set(key, c);
+  return c;
+}
+function _sphereStats() { return { solves: sphereSolveCount, cached: sphereCache.size }; }
+
 // Rim arcs: perimeter angles (ellipse parameter t) where the outward
 // 2D normal faces AWAY from the sun beyond the cutoff. Returns [t0,t1]
 // (t1 > t0, radians) or null. With `taper`, the peak is the parameter
@@ -862,7 +889,7 @@ window.FF.shading = {
   rimMaskRegion, palette, slotColor, offsetColor,
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
-  bodyLight, isoContour, rimArc,
+  bodyLight, isoContour, rimArc, sphereContour, _sphereStats,
   rgbToHsl,
   // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
   // law's 4-L* rungs. A gradient is the one place a long ramp of

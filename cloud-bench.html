@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fast Fruit — cloud bench</title>
+<!--
+  CLOUD BENCH — the authoring and auditing tool for js/cloud.js.
+
+  THE ONE RULE (inherited from sky-bench): this file contains no cloud
+  solver. Every cloud pixel comes from FF.cloud.strip(), the same pure
+  function the renderer caches and blits; every sky pixel from
+  FF.sky.rows(). The bench edits FF.cloud.P live through the SCHEMA
+  the module publishes, so a slider here is the value the game ships.
+
+  Workflow: pick an hour, roll seeds, drag until it looks right, then
+  COPY TUNING and send the JSON back — those numbers become the new
+  defaults in cloud.js (and CLOUD ruling constants where ruled).
+
+  file:// compatible, zero dependencies, one file.
+-->
+<style>
+  :root { --bg:#101013; --panel:#191920; --line:#2b2b36;
+    --ink:#e8e8ef; --dim:#8b8b9c; --accent:#7fdd6a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    display:flex; min-height:100vh; }
+  #panel { width:250px; padding:12px; background:var(--panel);
+    border-right:1px solid var(--line); overflow-y:auto; flex-shrink:0; }
+  #view { flex:1; padding:14px; overflow:auto; }
+  h1 { font-size:13px; margin:0 0 10px; }
+  label { display:block; color:var(--dim); margin-top:8px; }
+  label span.val { float:right; color:var(--ink); }
+  input[type=range] { width:100%; }
+  select, input[type=number], button, textarea {
+    background:var(--bg); color:var(--ink); border:1px solid var(--line);
+    font:inherit; padding:3px 6px; }
+  button { cursor:pointer; margin:2px 2px 2px 0; }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  canvas { image-rendering:pixelated; display:block; margin-bottom:4px; }
+  .cap { color:var(--dim); font-size:10px; margin-bottom:12px; }
+  textarea { width:100%; height:88px; font-size:10px; margin-top:6px; }
+  .group { border-top:1px solid var(--line); margin-top:10px; padding-top:4px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>CLOUD BENCH</h1>
+  <label>hour
+    <select id="role">
+      <option>MORNING</option><option selected>NOON</option>
+      <option>DUSK</option><option>MIDNIGHT</option>
+    </select>
+  </label>
+  <label>seed <input type="number" id="seed" value="12345" style="width:90px">
+    <button id="reroll">reroll</button></label>
+  <label>frames <span class="val" id="framesV">4</span>
+    <input type="range" id="frames" min="1" max="8" value="4"></label>
+  <label>sky height <span class="val" id="skyhV">120</span>
+    <input type="range" id="skyh" min="60" max="180" value="120"></label>
+  <label>sun elevation <span class="val" id="elevV">45</span>
+    <input type="range" id="elev" min="1" max="89" value="45"></label>
+  <div>scale
+    <button data-s="1" class="on">1x</button>
+    <button data-s="2">2x</button>
+    <button data-s="3">3x</button>
+  </div>
+  <div class="group" id="sliders"></div>
+  <div class="group">
+    <button id="copy">copy tuning</button>
+    <button id="reset">reset defaults</button>
+    <textarea id="dump" readonly></textarea>
+  </div>
+</div>
+<div id="view"></div>
+<script src="js/dmath.js"></script>
+<script src="js/oklab.js"></script>
+<script src="js/palette.js"></script>
+<script src="js/shading.js"></script>
+<script src="js/sky.js"></script>
+<script src="js/cloud.js"></script>
+<script>
+(function () {
+'use strict';
+const FF = window.FF;
+const CL = FF.cloud;
+const DEFAULTS = JSON.parse(JSON.stringify(CL.P));
+let scale = 1;
+const $ = (id) => document.getElementById(id);
+
+// Auto-build sliders from the module's own SCHEMA — the bench never
+// invents a parameter the game doesn't have.
+const slidersEl = $('sliders');
+for (const s of CL.SCHEMA) {
+  const lab = document.createElement('label');
+  lab.textContent = s.label + ' ';
+  const val = document.createElement('span');
+  val.className = 'val'; val.id = 'v_' + s.key;
+  val.textContent = CL.P[s.key];
+  lab.appendChild(val);
+  const inp = document.createElement('input');
+  inp.type = 'range'; inp.min = s.min; inp.max = s.max; inp.step = s.step;
+  inp.value = CL.P[s.key]; inp.id = 'in_' + s.key;
+  inp.addEventListener('input', () => {
+    CL.P[s.key] = parseFloat(inp.value);
+    val.textContent = inp.value;
+    CL.invalidate();
+    render();
+  });
+  lab.appendChild(inp);
+  slidersEl.appendChild(lab);
+}
+
+function drawSkyRows(ctx, W, H, spec) {
+  for (const rw of FF.sky.rows(H, spec)) {
+    ctx.fillStyle = rw.hex;
+    ctx.fillRect(0, rw.y, W, rw.h);
+    if (rw.checker) {
+      const cell = rw.checker.cell || 1;
+      ctx.fillStyle = rw.checker.second;
+      for (let yy = rw.y; yy < rw.y + rw.h && yy < H; yy++) {
+        for (let x = 0; x < W; x++) {
+          if (((x / cell | 0) & 1) === ((yy / cell | 0) & 1)) ctx.fillRect(x, yy, 1, 1);
+        }
+      }
+    }
+  }
+}
+
+function render() {
+  const role = $('role').value;
+  const seed0 = parseInt($('seed').value, 10) || 0;
+  const frames = parseInt($('frames').value, 10);
+  const H = parseInt($('skyh').value, 10);
+  const W = 320;
+  FF.shading.P.sunElevationDeg = parseInt($('elev').value, 10);
+  const view = $('view');
+  view.innerHTML = '';
+  for (let i = 0; i < frames; i++) {
+    const seed = seed0 + i;
+    const spec = FF.sky.generate(role, seed);
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    cv.style.width = (W * scale) + 'px';
+    cv.style.height = (H * scale) + 'px';
+    const ctx = cv.getContext('2d');
+    drawSkyRows(ctx, W, H, spec);
+    const st = CL.strip(spec, String(spec.id || role) + '|clouds|' + seed, H);
+    const sc = document.createElement('canvas');
+    sc.width = st.w; sc.height = st.h;
+    sc.getContext('2d').putImageData(new ImageData(st.rgba, st.w, st.h), 0, 0);
+    ctx.drawImage(sc, 0, 0);
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = role + '  seed=' + seed + '  floor=' + st.floorY
+      + '  (' + (spec.id || 'rolled') + ')';
+    view.appendChild(cv);
+    view.appendChild(cap);
+  }
+  $('dump').value = JSON.stringify(CL.P, null, 1);
+}
+
+$('role').addEventListener('change', () => { CL.invalidate(); render(); });
+$('seed').addEventListener('change', () => { CL.invalidate(); render(); });
+$('reroll').addEventListener('click', () => {
+  $('seed').value = (Math.random() * 100000) | 0;   // bench-only convenience
+  CL.invalidate(); render();
+});
+for (const id of ['frames', 'skyh', 'elev']) {
+  $(id).addEventListener('input', () => {
+    $(id + 'V').textContent = $(id).value;
+    CL.invalidate(); render();
+  });
+}
+document.querySelectorAll('button[data-s]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('button[data-s]').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    scale = parseInt(btn.dataset.s, 10);
+    render();
+  });
+});
+$('copy').addEventListener('click', () => {
+  $('dump').select();
+  document.execCommand('copy');
+});
+$('reset').addEventListener('click', () => {
+  Object.assign(CL.P, DEFAULTS);
+  for (const s of CL.SCHEMA) {
+    const inp = document.getElementById('in_' + s.key);
+    if (inp) { inp.value = CL.P[s.key]; document.getElementById('v_' + s.key).textContent = CL.P[s.key]; }
+  }
+  CL.invalidate(); render();
+});
+render();
+})();
+</script>
+</body>
+</html>

@@ -747,6 +747,13 @@ function createRenderer(canvas) {
             }
           }
         }
+        // ---- CLOUDS (Rig S2, 2026-08-24) ----
+        // Painted over the sky rows, under the grid and terrain. The
+        // layer builds ONCE per (sky, hour) into a periodic strip and
+        // blits it here; it clips itself at the sky floor, so a floor
+        // at 0% reveals the whole towering shape. Parallax and its
+        // even-pixel quantization live in cloud.js with the reason.
+        if (window.FF.cloud) window.FF.cloud.draw(ctx, cam.x, width, height, spec);
       } else {
         ctx.fillStyle = SKY_BASE;
         ctx.fillRect(0, 0, width, height);
@@ -2577,8 +2584,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
 
   // ---- Respawn smoke: the cartoon poof ----
   // (Restored after the rig refactor accidentally swept it away with
-  // its neighboring constants.) Presentation-tier FX; each ball is
-  // cel-shaded by the RIG's sun: grey base, white core sunward.
+  // its neighboring constants.) Presentation-tier FX; each ball is a
+  // SPHERE under the one rig — see drawPuffs for the S1 notes.
+  // The pigment is a neutral near-white; every displayed tone derives
+  // from it through the ink law + light column, never directly.
+  const SMOKE_BASE = '#e2e2e2';
+  const SMOKE_TAU = 0.55;
   const puffs = [];
   let puffPrevAlive = [];
 
@@ -2617,7 +2628,50 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
 
   function drawPuffs(ctx, state, cam, w, h, toScreenX, toScreenY, zoom) {
     if (!puffs.length) return;
+    // Rig S1 (approved 2026-08-24): the 2D proxy — a white disc offset
+    // sunward and clipped — is RETIRED. Each ball is now shaded by the
+    // SAME solver the melons use: RIG.sphereContour, the unit-sphere
+    // case of isoContour, scaled per ball. The visible payoff is at
+    // low sun: the proxy's shading edge was always a circular arc,
+    // while a real sphere terminator flattens toward a straight chord
+    // as elevation drops — the same behaviour the melons have.
+    //
+    // COLOURS: the hard-coded #e2e2e2/#ffffff are retired with it.
+    // Smoke is a NEUTRAL, so its tones come through the INK branch of
+    // the law (inkColor), not the melon slot ramp — offsetColor on a
+    // near-white invents hue (the olive-white lesson, shading.js
+    // "BAND OFFSETS FOR AN INK"). Each tone then passes through the
+    // hour's light column (palette.lit) and is REGISTERED, so px-mode
+    // honesty can count it.
+    //
+    // BEARING: from palette.sunDeg() — the sky and its light are one
+    // authored fact — via the same save/set/restore pattern as
+    // sunRayDir and the sprite bakes. Softness is pinned hard here
+    // (cel edges), matching the old two-tone character; the studio's
+    // tau sliders drive the split like they drive the melons'.
     const period = state.period;
+    const pal = window.FF.palette;
+    const sunSave = RIG.P.sunBearingDeg;
+    if (pal && pal.sunDeg) RIG.P.sunBearingDeg = pal.sunDeg();
+    const L = (hex) => (pal && pal.lit ? pal.lit(hex) : hex);
+    const reg = (hex) => {
+      if (pal && pal.registerTone) pal.registerTone('smoke', hex);
+      return hex;
+    };
+    const baseFill = reg(L(RIG.inkColor(SMOKE_BASE, RIG.P.baseFillSlot)));
+    // MATERIAL RULING (Eddie, 2026-08-24, from smoke-rig-proof.png):
+    // smoke splits ONCE, at SMOKE_TAU — the shadow band is off and the
+    // highlight threshold is the material's own, not the melon taus.
+    // The melon numbers (.20/.98) are wrong for a near-white material:
+    // heavy grey at grazing sun, polka-dot highlights near noon. The
+    // SUN, the SOLVER and the COLOUR LAW remain fully shared — tau is
+    // a material parameter, like SMOKE_BASE. Studio tau sliders
+    // therefore drive melons only; the sun sliders drive everything.
+    const bandDraw = [{
+      inv: false,
+      fill: reg(L(RIG.inkColor(SMOKE_BASE, RIG.P.highlightFillSlot))),
+      iso: RIG.sphereContour(SMOKE_TAU, 24),
+    }];
     for (let p = puffs.length - 1; p >= 0; p--) {
       const puff = puffs[p];
       const age = (state.tick - puff.born) / 120;
@@ -2642,17 +2696,46 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         ctx.globalAlpha = 0.95 * Math.min(1, (1 - t) * 4);
         ctx.beginPath();
         ctx.arc(bx, by, r, 0, Math.PI * 2);
-        ctx.fillStyle = '#e2e2e2';
+        ctx.fillStyle = baseFill;
         ctx.fill();
         ctx.clip();
-        const sn = RIG.sun();
-        ctx.beginPath();
-        ctx.arc(bx + sn.x * r * 0.38, by + sn.y * r * 0.38, r * 0.9, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
+        for (const bd of bandDraw) {
+          // Same fill logic as the melon band painter: a lit band
+          // fills inside its contour; an INVERTED band owns the
+          // complement (ball minus contour, even-odd). No contour:
+          // nothing above threshold — inverted covers the whole ball,
+          // a lit band draws none.
+          ctx.fillStyle = bd.fill;
+          ctx.beginPath();
+          if (bd.inv) {
+            ctx.arc(bx, by, r, 0, Math.PI * 2);
+            if (bd.iso && !bd.iso.full) {
+              const pts = bd.iso.pts;
+              ctx.moveTo(bx + pts[0][0] * r, by + pts[0][1] * r);
+              for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(bx + pts[i][0] * r, by + pts[i][1] * r);
+              }
+              ctx.closePath();
+            }
+            ctx.fill('evenodd');
+          } else {
+            if (!bd.iso) { continue; }
+            if (bd.iso.full) ctx.arc(bx, by, r, 0, Math.PI * 2);
+            else {
+              const pts = bd.iso.pts;
+              ctx.moveTo(bx + pts[0][0] * r, by + pts[0][1] * r);
+              for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(bx + pts[i][0] * r, by + pts[i][1] * r);
+              }
+              ctx.closePath();
+            }
+            ctx.fill();
+          }
+        }
         ctx.restore();
       }
     }
+    RIG.P.sunBearingDeg = sunSave;
   }
 
   // ---- Full-spectrum nameplate colors with SOLVED contrast ----
