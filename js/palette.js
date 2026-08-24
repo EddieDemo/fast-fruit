@@ -86,6 +86,24 @@ const STATES = Object.keys(COLUMNS);
 // drawn from the track seed or sequenced across a cup is Eddie's
 // open ruling. timeForSeed() below implements the seeded option so
 // that ruling is a one-line change either way.
+// OVERHEAD, and the anchor everything else is measured from. 268 is
+// the shipped value the game was tuned against on device — not a
+// number reasoned out from trigonometry.
+const SUN_OVERHEAD = 268;
+// How far the transitions swing. NOT 90, and not 72 either.
+//
+// The shading law has a standing rule that every hour must light from
+// ABOVE — melons lit from underneath was a shipped bug Eddie caught
+// on device — and the check demands the vertical component clear
+// -0.4. Measured against the real shading law: 72 degrees gives
+// -0.195, 60 gives -0.332, and 50 is the first that clears it at
+// -0.435 while still being strongly sidelit (horizontal -0.557).
+//
+// So the transitions are a LOW sun rather than a sun ON the horizon.
+// That is the honest compromise between the astronomy Eddie asked for
+// and a shading law that has already been burned once by taking the
+// astronomy literally.
+const SUN_LOW = 50;
 const TIMES = {
   // NOON is the IDENTITY hour, exactly as STANDARD is the identity
   // strength: it must declare no moves, or the declaration lies
@@ -96,47 +114,100 @@ const TIMES = {
   // day — morning light from one side, evening from the other — and
   // because it is a per-hour constant the bake can key on it.
   //
-  // BEARINGS, v3 — AND THE ZERO WAS WRONG (Eddie, on device).
-  // The world is Y-DOWN, so in this law's convention OVERHEAD is
-  // ~270 degrees and the shipped default is 260 ("upper-left in a
-  // y-down world"). I built the first hour set around 90, which is
-  // straight DOWN: every melon has been lit from underneath since
-  // 5.3 landed, and tightening the spread only made the up-lighting
-  // more uniform. The day is now centred on the shipped default:
-  // NOON just left of vertical, MORNING further left, GOLDEN and
-  // DUSK swinging right, none of them within 40 degrees of the
-  // horizon on either side.
+  // BEARINGS, v4 — FOUR CARDINAL POINTS (Eddie's ruling, 2026-08-21).
   //
-  // Reference: sunBearingDeg 260 is the value the game shipped and
-  // was tuned against, so it — not a number I reason out from the
-  // trigonometry — is the anchor.
+  // The five hours were MORNING, NOON, GOLDEN, DUSK, NIGHT, and two
+  // things were wrong with them.
+  //
+  // THE SUN BARELY MOVED. The five bearings spanned 236 to 300 — a
+  // total of SIXTY-FOUR DEGREES across an entire day, with overhead
+  // at ~270. The sun wobbled about the zenith and never came near
+  // either horizon; NIGHT sat at 262, eight degrees from noon, still
+  // lighting every melon from overhead.
+  //
+  // AND THE TABLES DISAGREED WITH EACH OTHER. By bearing, MORNING
+  // (-32 from noon) mirrored DUSK (+32). By sky lightness, MORNING
+  // overlapped GOLDEN by 0.91 and DUSK by only 0.17. Two tables in
+  // two files encoding opposite opinions about what MORNING is,
+  // drifting apart unnoticed because nothing related them.
+  //
+  // FOUR CARDINAL POINTS at an equatorial site:
+  //   MORNING   sun low, one side       overhead - 72
+  //   NOON      overhead                overhead
+  //   DUSK      sun low, other side     overhead + 72
+  //   MIDNIGHT  no sun — SKYLIGHT       overhead
+  //
+  // TWO CORRECTIONS TO THE LITERAL ASTRONOMY, both caught by checks.
+  //
+  // MIDNIGHT IS NOT "THE SUN BELOW". Placed at overhead+180 the sun
+  // sits straight down and every melon is lit FROM UNDERNEATH — the
+  // exact fault Eddie caught on device at Phase 5.3. At midnight
+  // there IS no sun: the light is moonlight and skylight, and both
+  // come from ABOVE. `sunDeg` drives the shading law, so it must be
+  // the direction light ARRIVES from, not where the sun physically
+  // is. Midnight therefore keeps an overhead bearing and does its
+  // work through mL and the tint instead.
+  //
+  // AND THE TRANSITIONS STOP SHORT OF THE HORIZON. At exactly +/-90
+  // the vertical component is 0.03 — a grazing light with a
+  // terminator straight down the middle of every melon, and
+  // degenerate at the boundary. 72 degrees keeps the sun low and
+  // strongly sidelit (horizontal 0.95) while still clearly above the
+  // horizon (vertical 0.3).
+  //
+  // The MIRROR still holds, which is the property that matters:
+  // morning is exactly as far from noon as dusk is, on the other
+  // side, so shadows fall opposite ways.
+  //
+  // The structure is what earns it. NOON and MIDNIGHT are the two
+  // EXTREMES — sun highest and lowest, flat uniform skies. MORNING
+  // and DUSK are the two TRANSITIONS — sun on the horizon, big lift,
+  // burning horizon, maximum contrast. Two kinds of hour, mirrored,
+  // which makes SYMMETRY TESTABLE: morning must sit as far from noon
+  // as dusk does, and their lifts must match. The old five had no
+  // such structure, which is exactly why the two tables could
+  // disagree for weeks.
+  //
+  // GOLDEN is gone. It was never a time of day — it is a QUALITY of
+  // light that happens twice, and naming it as a slot is what hid the
+  // duplication. MIDNIGHT replaces NIGHT for the matching reason:
+  // four cardinal POINTS want point names, not span names.
+  // THE BEARINGS ARE DERIVED, NOT TYPED. SUN_OVERHEAD is the anchor
+  // (the shipped, device-tuned value); the four points are exactly
+  // 90 degrees apart around it, so the symmetry cannot be broken by
+  // editing one number. That is the whole reason the old tables
+  // drifted.
   NOON: {
-    lift: 0, mL: 1, mS: 1, tint: null, tintK: 0, sunDeg: 268,
+    lift: 0, mL: 1, mS: 1, tint: null, tintK: 0, sunDeg: SUN_OVERHEAD,
     sky: { base: '#2f6bd8', lift: 60, fade: 74, turn: 12 },
   },
+  // SUNRISE. Warm, but the sun is on the horizon so the light is
+  // weaker than noon — mL does the dimming and the tint carries hue,
+  // because the cast must never carry luminance (a pale tint blended
+  // into dark tones once lifted them ABOVE noon and the ordering
+  // check caught it).
+  // THE TINT MUST NOT CARRY LUMINANCE, and this reintroduced the
+  // fault the old GOLDEN comment warned about: a pale warm tint
+  // blended into a dark neutral lifted it ABOVE noon (value 0.243
+  // against noon's 0.227) while mL said 0.88. The tint tone is now
+  // chosen near the mid-range so mL alone does the dimming.
   MORNING: {
-    lift: 0.02, mL: 0.97, mS: 1.02, tint: '#c9b48c', tintK: 0.12,
-    sunDeg: 236,
+    lift: 0, mL: 0.88, mS: 1.14, tint: '#8a5f34', tintK: 0.24,
+    sunDeg: (SUN_OVERHEAD - SUN_LOW + 360) % 360,
     sky: { base: '#2a5fc0', lift: 58, fade: 70, turn: 22 },
   },
-  // Golden hour is WARM but not brighter than noon — the sun is low
-  // and the light is weaker. A pale tint (#ffc177) blended into dark
-  // tones lifted them ABOVE noon, which the ordering check caught:
-  // the cast must carry hue, not luminance, so the tint tones are
-  // chosen near the mid-range and mL does the dimming.
-  GOLDEN: {
-    lift: 0, mL: 0.88, mS: 1.14, tint: '#b8763a', tintK: 0.26,
-    sunDeg: 292,
-    sky: { base: '#1f4f9e', lift: 62, fade: 66, turn: 58 },
-  },
+  // SUNSET — morning's mirror. Same elevation, opposite side, so the
+  // shadows fall the other way. Warmer and redder than sunrise
+  // because the day's aerosol load has built up, which is a real
+  // asymmetry rather than a decorative one.
   DUSK: {
-    lift: 0, mL: 0.70, mS: 1.30, tint: '#5b3466', tintK: 0.34,
-    sunDeg: 300,
+    lift: 0, mL: 0.84, mS: 1.20, tint: '#7d3c28', tintK: 0.30,
+    sunDeg: (SUN_OVERHEAD + SUN_LOW) % 360,
     sky: { base: '#2a2f86', lift: 56, fade: 58, turn: 72 },
   },
-  NIGHT: {
+  MIDNIGHT: {
     lift: 0, mL: 0.5, mS: 1.45, tint: '#101c4e', tintK: 0.42,
-    sunDeg: 262,
+    sunDeg: SUN_OVERHEAD,   // skylight, from above
     sky: { base: '#0d1442', lift: 34, fade: 44, turn: 10 },
   },
 };
@@ -425,7 +496,9 @@ function setSunSeed(seed) {
   version++;
   return sunSeed;
 }
-const SUN_OVERHEAD = 270;   // y-down world: 270 is straight up
+// (SUN_OVERHEAD is declared once, above the hour table — it WAS
+// declared twice, 268 there and 270 here, which is the same fault as
+// the one that made the hours drift: two constants for one idea.)
 function sunDeg() {
   // The bearing belongs to the SKY: a sky and the light falling under
   // it are one authored fact. The hour table remains the fallback for
@@ -434,7 +507,7 @@ function sunDeg() {
   const t = TIMES[currentTime] || TIMES.NOON;
   let base = spec && spec.sun !== undefined ? spec.sun : t.sunDeg;
   if (base === undefined) base = SUN_OVERHEAD;
-  if (currentTime !== 'NIGHT') return base;
+  if (currentTime !== 'MIDNIGHT') return base;
   return base + ((sunSeed % 3) - 1) * 15;      // -15, 0 or +15
 }
 // SELECTION (Phase 5.1, ruled 2026-08-18): the hour is drawn from the

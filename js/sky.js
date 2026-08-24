@@ -910,18 +910,107 @@ function fieldShare(spec, height) { return bandStats(spec, height).fieldShare; }
 //
 // The ABSOLUTE cap was the tighter constraint, not the fraction:
 // flat-cobalt needs 0.245 and NOON was capped at 0.19. Both raised.
+// TWO CHANGES HERE, and they do different jobs (Eddie, 2026-08-21).
+//
+// THE ABSOLUTE CAPS decide whether a colour is REACHABLE. The Out Run
+// title sky measures #4245ef — L 0.511, C 0.246, h 273, which is 89%
+// of everything sRGB can show at that lightness and hue. Only NOON
+// could roll it: the others were blocked by an absolute cap or by a
+// hue arc that stopped short. Caps raised so it is reachable at more
+// than one hour. (Written when there were five hours including a
+// GOLDEN; the day is four cardinal points now.)
+//
+// THE CHROMA SHARE FLOOR decides how OFTEN. It sat at 0.42, so half
+// of every hour's rolls came out below 68% of the gamut — muted by
+// construction. Measured before: a median share of 0.66-0.71 and only
+// 16% of rolls at 85%+. Raising the floor shifts the whole
+// distribution rather than extending its tail, which is the
+// difference between "possible" and "the game feels like this".
+//
+// This is the second widening, and like the first it is against a
+// MEASURED TARGET rather than a preference — the reference art sits
+// where our ranges did not reach.
+// FOUR CARDINAL POINTS, and the structure is the point (Eddie's
+// ruling, 2026-08-21). NOON and MIDNIGHT are the two EXTREMES — sun
+// highest and lowest, so a flat uniform sky and a SMALL lift.
+// MORNING and DUSK are the two TRANSITIONS — sun on the horizon, so
+// a LARGE lift and a burning horizon.
+//
+// THE LIFT WAS BACKWARDS BEFORE. Noon and morning climbed 0.30-0.44
+// while golden and dusk climbed 0.24-0.40 — the wrong way round. You
+// barely see a gradient looking up at midday; a sunset is enormous
+// contrast top to bottom. Now noon and midnight are the flat ones and
+// the transitions carry the climb, which is a signature that survives
+// any hue rotation — and that matters, because opening the hue arcs
+// is the next thing on the list.
+//
+// MORNING AND DUSK ARE MIRRORS and share a sky region deliberately:
+// same lightness, same lift, same chroma. What separates them is the
+// SUN BEARING (opposite sides, so shadows fall the other way), a
+// modest warmth skew (the day's aerosol load builds, so sunset runs
+// redder than sunrise), and later the atmospheric haze on the distant
+// layers. None of that lives in the sky's own colours.
+// ---- HUE IS A CENTRE AND A REACH, NOT A WINDOW ----------------------
+//
+// Every zenith the generator could roll lay between 235 and 320 —
+// blue through violet to magenta, and NOTHING else. Measured over
+// 2000 rolls: ZERO warm zeniths. That was not a law, it was a sample
+// bias: the arcs were generalised from a reference set of blue title
+// screens, and I then defended it with a physical argument about
+// atmosphere, which is reasoning backwards.
+//
+// The references disagree, and Eddie found them. Super Hang-On's
+// America Stage 8 has a RED zenith at hue 33 fading to gold at 89;
+// Stage G is redder still at 28; the ending art runs lilac 316 to
+// yellow 105; Asia Stage 6 is cyan at 176. Five of six sat outside
+// our arcs. So did TWO OF OUR OWN reference skies — asia-lime's
+// zenith at 175 and africa-pale's at 190 — which AA1 had been
+// passing by approaching from somewhere else entirely.
+//
+// `c` is the centre, `reach` how far a roll may travel from it, and
+// `k` how strongly it clusters: hue = c +/- reach * u^k for uniform
+// u, so k above 1 keeps most rolls near the centre while the tail
+// still reaches the whole circle. What distinguishes an hour is now
+// which hues are LIKELY, not which exist — and that only works
+// because the hours were first separated on lift and structure.
+//
+// This is a game with exaggerated palettes (Eddie): unreal skies are
+// meant to be possible.
 const HOURS = {
-  MORNING: { zenith: { L: [0.46, 0.88], frac: [0.42, 0.95], h: [250, 275] },
-    cap: [0.07, 0.22], lift: [0.30, 0.42] },
-  NOON: { zenith: { L: [0.50, 0.84], frac: [0.42, 0.95], h: [235, 292] },
-    cap: [0.08, 0.28], lift: [0.30, 0.44] },
-  GOLDEN: { zenith: { L: [0.45, 0.56], frac: [0.42, 0.95], h: [275, 300] },
-    cap: [0.08, 0.24], lift: [0.26, 0.40] },
-  DUSK: { zenith: { L: [0.36, 0.48], frac: [0.45, 0.95], h: [290, 320] },
-    cap: [0.10, 0.30], lift: [0.24, 0.40] },
-  NIGHT: { zenith: { L: [0.16, 0.26], frac: [0.42, 0.95], h: [255, 285] },
-    cap: [0.05, 0.17], lift: [0.10, 0.22] },
+  // Sunrise: rose and gold, cooler than sunset because the day's
+  // aerosol load has not built up yet.
+  MORNING: { zenith: { L: [0.44, 0.62], frac: [0.58, 0.97],
+      h: { c: 350, reach: 180, k: 2.1 } },
+    cap: [0.10, 0.30], lift: [0.34, 0.52] },
+  // The lower bound is 0.46, not 0.50, because flat-cobalt — the Out
+  // Run title sky, and the reason the FLAT family exists — measures
+  // 0.47. A reference sitting just outside its own hour is the fault
+  // AA1 exists to catch.
+  NOON: { zenith: { L: [0.46, 0.84], frac: [0.58, 0.97],
+      h: { c: 264, reach: 180, k: 2.4 } },
+    cap: [0.10, 0.30], lift: [0.14, 0.28] },
+  // The arc starts at 270, not 275: the Out Run title blue sits at
+  // hue 273 and DUSK was reaching it in SAMPLING while its declared
+  // range excluded it — the sampled check and the analytic one
+  // disagreeing, which is the whole reason both exist.
+  // Sunset: red and orange. America Stage 8 measures a zenith of 33.
+  DUSK: { zenith: { L: [0.40, 0.58], frac: [0.58, 0.97],
+      h: { c: 28, reach: 180, k: 2.1 } },
+    cap: [0.12, 0.32], lift: [0.34, 0.52] },
+  MIDNIGHT: { zenith: { L: [0.14, 0.26], frac: [0.56, 0.97],
+      h: { c: 274, reach: 180, k: 2.6 } },
+    cap: [0.06, 0.20], lift: [0.08, 0.20] },
 };
+// Roll a hue from a centre: clustered near it, able to reach anywhere.
+// ORDERED, not rejection-sampled, so it stays one draw and stays
+// deterministic.
+function rollHue(R, spec) {
+  if (Array.isArray(spec)) return R.span(spec);   // legacy window
+  const u = R.r();
+  const sign = R.r() < 0.5 ? -1 : 1;
+  const d = spec.reach * Math.pow(u, spec.k || 2);
+  return ((spec.c + sign * d) % 360 + 360) % 360;
+}
 // dL is applied on top of the hour's own lift; dC and dh are the
 // family's signature move.
 // A family's chroma move is a MULTIPLIER on the zenith's share, for
@@ -1095,12 +1184,25 @@ const FAMILY_PATHS = {
 };
 
 // Which families each hour may draw. NIGHT never washes to white.
+// The transitions get the dramatic families; the extremes get the
+// quiet ones. FLAT belongs to noon and midnight because a flat sky is
+// what an overhead or absent sun looks like.
+// The transitions get the dramatic families; the extremes get the
+// quiet ones. FLAT and BREATH belong to noon and midnight because a
+// flat or near-flat sky is what an overhead or absent sun looks like.
+//
+// AND SHIFT BELONGS TO THE EXTREMES TOO, which the measurement made
+// obvious. SHIFT's whole purpose is to travel SIDEWAYS in hue while
+// HOLDING chroma — the Asia move, cyan to lime. Measured with SHIFT
+// in every pool it held its chroma 52% of the time at NOON and 40% at
+// MIDNIGHT, but 2% at MORNING and ZERO at DUSK: at a transition hour
+// it cannot do the one thing it exists to do. A family that fails its
+// own definition four times in five is in the wrong pool.
 const HOUR_FAMILIES = {
-  MORNING: ['WASH', 'SHIFT', 'WARM', 'BREATH'],
+  MORNING: ['WARM', 'WASH', 'CUT'],
   NOON: ['WASH', 'SHIFT', 'FLAT', 'BREATH'],
-  GOLDEN: ['WARM', 'WASH', 'CUT', 'BREATH'],
-  DUSK: ['CUT', 'WARM', 'WASH', 'BREATH'],
-  NIGHT: ['SHIFT', 'CUT', 'BREATH'],
+  DUSK: ['WARM', 'CUT', 'WASH'],
+  MIDNIGHT: ['SHIFT', 'CUT', 'FLAT', 'BREATH'],
 };
 
 function fnv(str) {
@@ -1158,7 +1260,7 @@ function rollSky(role, seed, attempt, groundHexIn) {
   const H = HOURS[role] || HOURS.NOON;
   const famName = R.pick(HOUR_FAMILIES[role] || HOUR_FAMILIES.NOON);
   const F = FAMILIES[famName];
-  const zL = R.span(H.zenith.L), zh = R.span(H.zenith.h);
+  const zL = R.span(H.zenith.L), zh = rollHue(R, H.zenith.h);
   const ok = G.FF.oklab;
   // The share of the achievable maximum, then clamped to the hour's
   // absolute band. `clippedC` with an impossible ask returns the
@@ -1189,7 +1291,22 @@ function rollSky(role, seed, attempt, groundHexIn) {
   // achievable maximum moves with it, so 131 of 500 rolls ended up
   // asking for chroma the screen could not show. Evaluating at the
   // final value is the only way the fraction means what it says.
-  const hFrac = zFrac * R.span(F.mC);
+  const mC = R.span(F.mC);
+  const hFrac = zFrac * mC;
+  // AND IT IS CLAMPED IN ABSOLUTE TERMS, not only as a fraction.
+  //
+  // `mC` is a share of the ACHIEVABLE MAXIMUM, and the achievable
+  // maximum varies enormously with hue — about 0.108 at a cyan and
+  // 0.139 a few degrees away. While every zenith was blue that never
+  // mattered; with the arcs opened full-circle the two ends can sit
+  // in very differently sized gamuts, so a family declaring mC 0.30
+  // to 0.60 — "a WASH LOSES chroma" — could hand back a horizon
+  // MORE saturated than its zenith. Measured: a NOON WASH at cyan
+  // gained 0.0006, which U5a caught.
+  //
+  // A family that says it loses chroma must lose it in the colour,
+  // not merely in the bookkeeping.
+  const absCap = mC < 1 ? mC : null;
   // The budget owns the entry count and the dither together; FLAT is
   // the one family that overrides it, because one colour is what FLAT
   // MEANS rather than a way of spending a budget.
@@ -1389,7 +1506,7 @@ function rollSky(role, seed, attempt, groundHexIn) {
     id: 'gen-' + role.toLowerCase() + '-' + fnv(seed).toString(36).slice(0, 6),
     name: role + ' / ' + famName,
     role, family: famName, generated: true,
-    sun: (SUN_BY_ROLE[role] === undefined ? 268 : SUN_BY_ROLE[role]),
+    sun: sunFor(role),
     entries: n,
     budget: budgetName,
     crossfade: xfade,
@@ -1410,7 +1527,12 @@ function rollSky(role, seed, attempt, groundHexIn) {
     nodes: n === 1
       ? [{ i: 0, L: zL, C: zC, h: zh }]
       : [{ i: 0, L: zL, C: zC, h: zh },
-        { i: n - 1, L: hLv, C: chromaAt(hLv, hh, hFrac), h: hh }],
+        { i: n - 1, L: hLv, h: hh,
+          C: (function () {
+            const want = chromaAt(hLv, hh, hFrac);
+            const zC = chromaAt(zL, zh, zFrac);
+            return absCap === null ? want : Math.min(want, zC * absCap);
+          })() }],
   });
   // TWO PASSES, and the second is the one that matters. The clearance
   // has to be measured against the ground AS IT WILL APPEAR — the
@@ -1439,7 +1561,18 @@ function rollSky(role, seed, attempt, groundHexIn) {
   const hL = clearGround(hL0, gL);
   return hL === hL0 ? provisional : withPath(mk(hL));
 }
-const SUN_BY_ROLE = { MORNING: 236, NOON: 268, GOLDEN: 292, DUSK: 300, NIGHT: 262 };
+// DERIVED FROM ONE ANCHOR, exactly as palette.js does it — the two
+// tables used to disagree (by bearing morning mirrored dusk, by sky
+// lightness it mirrored golden) because nothing related them.
+// ONE TABLE, ASKED FOR — not a second copy. palette.js owns the hour
+// bearings; this module reads them. Two parallel tables is exactly
+// how the old five drifted into disagreeing about what MORNING was,
+// and writing the same derivation twice would have rebuilt the fault
+// while fixing it.
+function sunFor(role) {
+  const T = G.FF.palette && G.FF.palette.TIMES && G.FF.palette.TIMES[role];
+  return T ? ((T.sunDeg % 360) + 360) % 360 : 268;
+}
 
 // ---- THE GATES -------------------------------------------------------
 // A rolled sky is judged by the same laws an authored one is. The
@@ -1538,7 +1671,7 @@ function litGround(spec, groundHex) {
   return pal.applyColumnTo(groundHex, columnFor(spec, referenceAmbient()));
 }
 
-const ROLE_NAMES = ['MORNING', 'NOON', 'GOLDEN', 'DUSK', 'NIGHT'];
+const ROLE_NAMES = ['MORNING', 'NOON', 'DUSK', 'MIDNIGHT'];
 // 'ANY' is what the game actually does — the cup's day-walk chooses
 // the hour, nobody picks it — so auditioning a roll without choosing
 // the hour is the honest mirror of a race.
@@ -1701,19 +1834,25 @@ define({ id: 'noon', name: 'Noon (classic)', role: 'NOON', sun: 268,
   floor: 0.92, entries: 24, field: 0.16, spread: 1.15, dither: 2, bandPx: 20,
   column: { lift: 0, mL: 1, mS: 1, tint: null, tintK: 0 },
   nodes: [{ i: 0, L: 0.55, C: 0.145, h: 258 }, { i: 23, L: 0.98, C: 0.012, h: 246 }] });
-define({ id: 'morning', name: 'Morning (classic)', role: 'MORNING', sun: 236,
+define({ id: 'blue-noon', name: 'Blue noon', role: 'NOON', sun: 268,
   floor: 0.92, entries: 24, field: 0.16, spread: 1.15, dither: 2, bandPx: 20,
-  column: { lift: 0.02, mL: 0.97, mS: 1.02, tint: '#c9b48c', tintK: 0.12 },
+  column: { lift: 0, mL: 1, mS: 1, tint: null, tintK: 0 },
   nodes: [{ i: 0, L: 0.50, C: 0.150, h: 262 }, { i: 23, L: 0.97, C: 0.014, h: 252 }] });
-define({ id: 'golden', name: 'Golden (classic)', role: 'GOLDEN', sun: 292,
+// The warm low-sun classic. It WAS 'golden', which was never a time
+// of day; the low warm light it describes is what MORNING now is.
+define({ id: 'morning', name: 'Morning (classic)', role: 'MORNING', sun: 218,
   floor: 0.92, entries: 24, field: 0.16, spread: 1.15, dither: 2, bandPx: 20,
-  column: { lift: 0, mL: 0.88, mS: 1.14, tint: '#b8763a', tintK: 0.26 },
+  // MATCHES TIMES.MORNING exactly. A classic sky's authored column
+  // OVERRIDES the hour table, so a pale warm tint here reintroduced
+  // the very fault the hour table had just been corrected for — a
+  // neutral lifted ABOVE noon while mL said 0.88.
+  column: { lift: 0, mL: 0.88, mS: 1.14, tint: '#8a5f34', tintK: 0.24 },
   nodes: [{ i: 0, L: 0.44, C: 0.140, h: 264 }, { i: 23, L: 0.96, C: 0.030, h: 318 }] });
-define({ id: 'dusk', name: 'Dusk (classic)', role: 'DUSK', sun: 300,
+define({ id: 'dusk', name: 'Dusk (classic)', role: 'DUSK', sun: 318,
   floor: 0.92, entries: 24, field: 0.16, spread: 1.15, dither: 2, bandPx: 20,
-  column: { lift: 0, mL: 0.70, mS: 1.30, tint: '#5b3466', tintK: 0.34 },
+  column: { lift: 0, mL: 0.84, mS: 1.20, tint: '#7d3c28', tintK: 0.30 },
   nodes: [{ i: 0, L: 0.38, C: 0.155, h: 288 }, { i: 23, L: 0.94, C: 0.026, h: 348 }] });
-define({ id: 'night', name: 'Night (classic)', role: 'NIGHT', sun: 262,
+define({ id: 'midnight', name: 'Midnight (classic)', role: 'MIDNIGHT', sun: 268,
   floor: 0.92, entries: 22, field: 0.18, spread: 1.15, dither: 2, bandPx: 20,
   column: { lift: 0, mL: 0.5, mS: 1.45, tint: '#101c4e', tintK: 0.42 },
   nodes: [{ i: 0, L: 0.17, C: 0.095, h: 275 }, { i: 21, L: 0.62, C: 0.075, h: 268 }] });
@@ -1723,11 +1862,11 @@ define({ id: 'flat-cobalt', name: 'Flat cobalt (Out Run title)', role: 'NOON',
   sun: 268, floor: 1, entries: 1, field: 1, spread: 1, bandPx: 4,
   nodes: [{ i: 0, L: 0.47, C: 0.245, h: 285 }] });
 define({ id: 'asia-lime', name: 'Asia lime (Super Hang-On)', role: 'NOON',
-  sun: 272, floor: 0.5, entries: 16, burstPx: 34, spread: 1.1, dither: 2, bandPx: 5,
+  sun: 268, floor: 0.5, entries: 16, burstPx: 34, spread: 1.1, dither: 2, bandPx: 5,
   // The signature move: hue descends through green while chroma HOLDS.
   nodes: [{ i: 0, L: 0.82, C: 0.095, h: 175 }, { i: 15, L: 0.87, C: 0.155, h: 108 }] });
 define({ id: 'america-violet', name: 'America violet (Super Hang-On)',
-  role: 'DUSK', sun: 296, floor: 0.5, entries: 12, burstPx: 36, spread: 0.85,
+  role: 'DUSK', sun: 318, floor: 0.5, entries: 12, burstPx: 36, spread: 0.85,
   bandPx: 5,
   // Non-monotone by construction: pinned nodes make it cut and dip.
   // 0.235, not 0.250: the gamut at this lightness and hue tops out at
@@ -1739,14 +1878,18 @@ define({ id: 'america-violet', name: 'America violet (Super Hang-On)',
     { i: 4, L: 0.52, C: 0.150, h: 275 }, { i: 7, L: 0.80, C: 0.055, h: 258 },
     { i: 8, L: 0.60, C: 0.120, h: 268 }, { i: 11, L: 0.96, C: 0.014, h: 255 }] });
 define({ id: 'hangon-violet', name: 'Violet to cream (Hang-On title)',
-  role: 'GOLDEN', sun: 288, floor: 0.5, entries: 18, burstPx: 40, spread: 1.2,
+  role: 'DUSK', sun: 318, floor: 0.5, entries: 18, burstPx: 40, spread: 1.2,
   dither: 2, bandPx: 5,
   nodes: [{ i: 0, L: 0.52, C: 0.150, h: 292 }, { i: 17, L: 0.92, C: 0.030, h: 350 }] });
-define({ id: 'africa-pale', name: 'Pale aqua (Africa)', role: 'MORNING',
-  sun: 244, floor: 0.5, entries: 8, burstPx: 26, spread: 1.0, bandPx: 5,
+// FILED BY ITS OWN NUMBERS: zenith L 0.86 with a lift of 0.12 —
+// bright and almost flat, which is NOON in the cardinal-point day.
+// It sat under MORNING when morning meant "bright and blue"; morning
+// now means a low sun and a big climb.
+define({ id: 'africa-pale', name: 'Pale aqua (Africa)', role: 'NOON',
+  sun: 218, floor: 0.5, entries: 8, burstPx: 26, spread: 1.0, bandPx: 5,
   nodes: [{ i: 0, L: 0.86, C: 0.062, h: 190 }, { i: 7, L: 0.98, C: 0.010, h: 190 }] });
-define({ id: 'night-indigo', name: 'Indigo night', role: 'NIGHT',
-  sun: 262, floor: 0.5, entries: 12, burstPx: 32, spread: 1.1, dither: 2, bandPx: 5,
+define({ id: 'night-indigo', name: 'Indigo night', role: 'MIDNIGHT',
+  sun: 268, floor: 0.5, entries: 12, burstPx: 32, spread: 1.1, dither: 2, bandPx: 5,
   nodes: [{ i: 0, L: 0.20, C: 0.105, h: 278 }, { i: 11, L: 0.46, C: 0.085, h: 265 }] });
 
 const SPEC_IDS = Object.keys(SPECS);
@@ -1776,7 +1919,7 @@ const api = {
   rows, rowsUncached, floorOf, floorRow,
   ambient, columnFor, referenceAmbient, skyForSeed,
   toneCount, fieldShare, bandStats,
-  rollSky, generate, gateReport, collisionShare, melonMarks,
+  rollSky, generate, gateReport, collisionShare, melonMarks, sunFor, rollHue,
   randomiseColour, randomiseDistribution, randomiseBudget,
   BUDGETS, BUDGET_NAMES, roleForSeed, ROLE_NAMES,
   groundHex, stageForSeed, shortArc, fnv,

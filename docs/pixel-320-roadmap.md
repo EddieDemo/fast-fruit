@@ -3217,3 +3217,271 @@ floored to the same scale fails AH1a.
 
 STILL OPEN: a fresh device capture, to confirm the cells now read as
 even. Everything above is arithmetic.
+
+## Phase 7.16 — the chroma widened, against Out Run (2026-08-21)
+
+Eddie, from the Out Run title screen: can we roll that blue, and how
+do I make it commoner?
+
+Measured off the screenshot it is #4245ef — L 0.511, C 0.246, h 273 —
+which is EIGHTY-NINE PERCENT of everything sRGB can show at that
+lightness and hue. Only NOON could reach it: MORNING was blocked by
+an absolute cap of 0.22, GOLDEN by a hue arc stopping two degrees
+short at 275.
+
+### TWO LEVERS, doing different jobs
+
+REACH is the absolute cap. Raised: MORNING 0.22 -> 0.27, GOLDEN 0.24
+-> 0.28, NOON 0.28 -> 0.30, DUSK 0.30 -> 0.32, NIGHT 0.17 -> 0.20,
+and GOLDEN's hue arc widened to 270-302. The Out Run blue is now
+reachable at MORNING, NOON and GOLDEN — deltaE 0.004, 0.001, 0.002 —
+and correctly NOT at DUSK or NIGHT, whose LIGHTNESS regions exclude
+it. Widening until every hour could make every colour would retire
+the hours.
+
+FREQUENCY is the chroma share FLOOR. It sat at 0.42, so half of every
+hour's rolls came out below 68% of the gamut, muted by construction.
+Raised to 0.56-0.58. Measured:
+
+  before   median share 0.66-0.71   vivid (85%+ of gamut) 16%
+  after    median share 0.73-0.79   vivid 27%
+
+The whole distribution moved rather than its tail extending, which is
+the difference between "possible" and "the game feels like this".
+
+NOTHING ELSE MOVED: reachability of the reference set holds at 0.104
+worst, 491 of 500 still generate, zero nodes over-ask for chroma, and
+the worst collision is 24.2% against a 25% ceiling.
+
+This is the second widening and, like the first, it is against a
+MEASURED TARGET rather than a preference — reference art sitting
+where our ranges did not reach.
+
+### THREE MUTATIONS SURVIVED, all the same fault
+
+AI1 sampled 3000 rolls per hour and asked whether any landed within
+deltaE 0.05 of the target. Putting MORNING's cap back to 0.22 leaves
+a roll 0.026 SHORT IN CHROMA — inside the tolerance — so the mutation
+survived. THIRD TIME this pattern has appeared in this project, and
+the fix is the same each time: a sampled check and an ANALYTIC one
+fail in different ways, so both are needed. AI1b now asserts the
+ranges themselves.
+
+AI2 pooled all five hours, so one hour reverting hid behind four that
+had not. Now measured PER HOUR.
+
+And even per-hour it could not catch the floor reverting, because the
+OLD floor already produced 22% vivid at MORNING — comfortably above
+any bar loose enough not to be flaky. AI2b therefore asserts the
+NUMBER, as a BAND with both ends stated: below 0.55 the hour is muted
+by construction, above 0.62 every sky shouts and the generator has no
+dynamic range. Mutation-tested in both directions.
+
+Suite: verify-px-render AI1-AI3b.
+
+Proof: docs/phase716-chroma.png — 32 rolls after the widening.
+
+## Phase 7.17 — THE FOUR CARDINAL HOURS (Eddie's ruling, 2026-08-21)
+
+MORNING / NOON / GOLDEN / DUSK / NIGHT became
+MORNING / NOON / DUSK / MIDNIGHT.
+
+### Why the five were wrong
+
+THE SUN BARELY MOVED. The bearings spanned 236 to 300 — SIXTY-FOUR
+DEGREES across an entire day, with overhead at ~270. NIGHT sat at
+262, eight degrees from noon, lighting every melon from above.
+
+THE TWO TABLES DISAGREED. By bearing, MORNING (-32) mirrored DUSK
+(+32). By sky lightness, MORNING overlapped GOLDEN by 0.91 and DUSK
+by 0.17. Two files, opposite opinions about what MORNING is, drifting
+unnoticed because nothing related them. When asked which was
+morning's twin I answered GOLDEN with DUSK printed at +32 on the next
+line of my own output — Eddie caught it.
+
+AND THREE HOURS WERE NEAR-DUPLICATES. MORNING/NOON overlapped 1.00 on
+lightness and 1.00 on lift; MORNING/GOLDEN 0.91 and 0.83. Hue was
+doing almost all the work, which is exactly why opening the hue arcs
+had to wait for this.
+
+GOLDEN was never a time of day — it is a QUALITY of light that
+happens twice — and naming it as a slot is what hid the duplication.
+
+### The structure is the point
+
+  MORNING   sun low, one side      overhead - 50   TRANSITION
+  NOON      overhead               overhead        EXTREME
+  DUSK      sun low, other side    overhead + 50   TRANSITION
+  MIDNIGHT  skylight, from above   overhead        EXTREME
+
+Extremes are flat (lift 0.14-0.28 and 0.08-0.20); transitions climb
+(0.34-0.52, shared, because they are mirrors). THE LIFT WAS
+BACKWARDS BEFORE — noon and morning climbed MORE than golden and dusk
+did. You barely see a gradient looking up at midday; a sunset is
+enormous contrast top to bottom. That signature survives hue
+rotation, which is what makes the queued hue widening possible.
+
+BEARINGS ARE DERIVED FROM ONE ANCHOR and sky.js READS palette.js
+rather than keeping a copy. There were also two SUN_OVERHEAD
+constants, 268 and 270 — the same fault in miniature.
+
+### TWO CORRECTIONS TO THE LITERAL ASTRONOMY, both caught by checks
+
+MIDNIGHT IS NOT "THE SUN BELOW". At overhead+180 every melon is lit
+FROM UNDERNEATH — the fault Eddie caught on device at 5.3. At
+midnight there is no sun: the light is moonlight and skylight, both
+from above. sunDeg is the direction light ARRIVES from.
+
+THE TRANSITIONS STOP SHORT OF THE HORIZON. At +/-90 the vertical
+component is 0.03 — grazing, terminator down the middle, degenerate.
+Measured against the real shading law, 72 gives -0.195, 60 gives
+-0.332, and 50 is the first to clear the -0.4 the law demands while
+staying strongly sidelit (-0.557 horizontal). A LOW sun, not a sun ON
+the horizon.
+
+### What the rename exposed
+
+SHIFT WAS IN THE WRONG POOL. It exists to travel SIDEWAYS in hue
+while HOLDING chroma. Measured across all four hours: it held 52% at
+NOON and 40% at MIDNIGHT, 2% at MORNING and ZERO at DUSK. A family
+that fails its own definition four times in five is misfiled. Moved
+to the extremes; the hold rate went 20% -> 41%.
+
+AFRICA-PALE IS UNREACHABLE BY HUE (zenith 190, cyan) and is NAMED in
+NOT_ROLLABLE beside america-violet rather than absorbed by widening a
+bar. asia-lime's 175 is the same story. Every zenith the generator
+can roll lies in 235-320 because the arcs were generalised from a
+reference set of blue title screens — which is the next job.
+
+It was also RE-FILED BY ITS OWN NUMBERS: zenith L 0.86 with a lift of
+0.12 is bright and almost flat, which is NOON now that MORNING means
+a low sun. And NOON's lower bound moved 0.50 -> 0.46 because
+flat-cobalt, the Out Run title sky, measures 0.47 — a reference
+sitting outside its own hour is the fault AA1 exists to catch.
+
+### And what it exposed in the CHECKS
+
+FIVE HARD-CODED THE SIZE OF THE DAY. Four checks said "of 500" (five
+hours x 100) and one said `=== 5`, so a PERFECTLY EVEN four-way split
+of 750 each failed H7, and 398 of 400 failed U2. A literal that
+encodes the size of the thing being measured fails the moment that
+thing is changed on purpose. All derived now.
+
+TWO HAD GONE VACUOUS. AI1a tested for 'NIGHT', which no longer
+exists, so it passed by asking about nothing — and named DUSK as
+excluded when DUSK now reaches the target. K2d3 asserted on a `null`
+that means "this hour could not be measured".
+
+AND A BLANKET RENAME IS NOT A REFACTOR. Replacing GOLDEN with DUSK
+left DUSK duplicated in five lists, so G7a silently tested three
+hours while reporting four.
+
+A CHECK THAT WAS RIGHT WHILE ITS PROBE WAS WRONG: N1 found ONE shadow
+column and looked like a rake regression. The law was fine — measured,
+morning rakes 1.28x to the right and dusk 1.11x to the left, mirrored,
+against noon's 0.03. The probe's caster sat 900 above ground, sized
+for a day that never left the zenith, and threw its edge clean off
+the sampled span.
+
+Suite: verify-px-render H0-H0e, plus a dozen re-derived. Mutation-tested
+— midnight below the horizon fails H0b, transitions at 20 degrees fail
+H0a, a backwards lift fails H0d, and sky.js keeping its own bearing
+fails H0c.
+
+Proof: docs/phase717-hours.png — one row per hour.
+
+### NEXT, in order (agreed)
+
+  1. OPEN THE HUE ARCS full-circle with a per-hour centre and spread,
+     now that the hours are separated on structure rather than hue.
+     Targets measured off Super Hang-On: a RED zenith at 33 degrees
+     (America 8), gold horizons at 89 and 105, cyan zeniths at 176.
+  2. The HORIZON BAND as a proper layer — ground / sea / sea-then-
+     ground. It is 34% of every frame and currently a placeholder.
+  3. LAYER ARCHITECTURE with z, driving parallax rate AND atmospheric
+     haze from one number.
+  4. DISTANT HILLS — a 1D heightfield, the first real test of z.
+  5. CLOUDS — its own project; none of the sky's vocabulary transfers.
+
+  Also parked: the floor/burst share wants an orientation-aware
+  ruling (a burst is 25% of a landscape frame and 6% of a portrait
+  one), alongside the camera zoom law.
+
+## Phase 7.18 — THE HUE ARCS OPEN FULL-CIRCLE (2026-08-21)
+
+Eddie: the generator makes almost nothing but blues and purples.
+
+He was right, and measured: every zenith it could roll lay between
+235 and 320 degrees — blue through violet to magenta — and over 2000
+rolls there were ZERO warm zeniths. Warmth appeared only at the
+horizon, 8% of the time, and only when a WARM family happened to wrap
+past 360.
+
+THAT WAS SAMPLE BIAS, NOT LAW. The arcs were generalised from a
+reference set of blue title screens, and I then defended them with a
+physical argument about atmosphere — reasoning backwards from a
+conclusion. Eddie's answer stands: this is a game with exaggerated
+palettes, and unreal skies are meant to be possible.
+
+Super Hang-On disagreed too. America Stage 8 has a RED zenith at hue
+33 fading to gold at 89; Stage G is redder at 28; the ending art runs
+lilac 316 to yellow 105; Asia Stage 6 is cyan at 176. FIVE OF SIX sat
+outside our arcs — and so did TWO OF OUR OWN reference skies,
+asia-lime's zenith at 175 and africa-pale's at 190, which AA1 had
+been passing by approaching from somewhere else entirely.
+
+### A centre and a reach, not a window
+
+`h: { c, reach, k }` — hue = c +/- reach * u^k for uniform u. The
+whole circle is available at every hour; `k` above 1 keeps most rolls
+near the centre while the tail reaches everywhere. What distinguishes
+an hour is now which hues are LIKELY, not which exist.
+
+  MORNING   c 350   rose and gold, cooler than sunset
+  NOON      c 264   blue
+  DUSK      c  28   red and orange (America Stage 8 measures 33)
+  MIDNIGHT  c 274   indigo
+
+That only works because Phase 7.17 separated the hours on LIFT and
+structure first. Opening the hue before that would have collapsed
+morning, noon and golden into one hour with three names.
+
+Measured: warm zeniths 0% -> 33%. All eight eighths of the circle
+reached. Generation held at 495 of 500. asia-lime went 0.104 ->
+0.055 and africa-pale 0.271 -> 0.046, so AFRICA-PALE CAME OUT OF
+NOT_ROLLABLE — an exception that was honest to name is better still
+to remove, and the list shrinking is the evidence the widening did
+what it claimed.
+
+### A FAMILY THAT SAYS IT LOSES CHROMA MUST LOSE IT IN THE COLOUR
+
+`mC` is a share of the ACHIEVABLE MAXIMUM, and that maximum varies
+enormously with hue — about 0.108 at a cyan, 0.139 a few degrees
+away. While every zenith was blue this never mattered. With the
+circle open the two ends can sit in very differently sized gamuts,
+and a WASH declaring mC 0.30-0.60 handed back a horizon MORE
+saturated than its zenith. U5a caught it at +0.0006.
+
+The horizon chroma is now clamped in ABSOLUTE terms as well as
+fractional: 0 of 375 washes gain chroma, worst change -0.033.
+
+### AND A CHECK THAT COULD NOT SEE THE POINT OF THE CHANGE
+
+Centring NOON on RED instead of blue SURVIVED the first version of
+this section. Everything asserted was about REACH — warm zeniths
+happen, the circle is covered, the references are reachable — and all
+of that stays true when an hour is pointed at the wrong colour. The
+hours being CHARACTERISED was the entire justification for opening
+the arcs, and nothing measured it.
+
+AJ2 now measures the circular mean of 600 rolls per hour against the
+centre that hour declares. It also catches the clustering being
+removed, which would make every hour uniform and identical.
+
+Suite: verify-px-render AJ1-AJ4. Mutation-tested — a narrowed reach
+fails AA1/AI1, an un-clamped wash fails U5a/AJ4, a mis-centred hour
+fails AJ2a, uniform hue fails AJ2, and a sunrise warmer than sunset
+fails AJ2b.
+
+Proof: docs/phase718-hue.png — SKYBOX ONLY (Eddie: proof sheets
+should not include the floor), one row per hour.

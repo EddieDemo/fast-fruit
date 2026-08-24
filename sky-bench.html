@@ -210,7 +210,7 @@
       <label><span>hour</span>
         <select id="rRole">
           <option>MORNING</option><option selected>NOON</option>
-          <option>GOLDEN</option><option>DUSK</option><option>NIGHT</option>
+          <option>DUSK</option><option>MIDNIGHT</option>
           <option value="ALL">— all five —</option>
         </select>
       </label>
@@ -308,7 +308,7 @@
         <select id="srole">
           <option value="ANY">any hour</option>
           <option>MORNING</option><option>NOON</option>
-          <option>GOLDEN</option><option>DUSK</option><option>NIGHT</option></select>
+          <option>DUSK</option><option>MIDNIGHT</option></select>
       </label>
       <label><span>randomise</span>
         <button id="rollBtn">colour</button>
@@ -534,7 +534,7 @@ function rollSheet() {
   var n = +$('rN').value, prefix = $('rSeed').value || 't';
   $('rNv').textContent = n;
   var ground = SKY.groundHex(kit);
-  var roles = role === 'ALL' ? ['MORNING', 'NOON', 'GOLDEN', 'DUSK', 'NIGHT'] : [role];
+  var roles = role === 'ALL' ? ['MORNING', 'NOON', 'DUSK', 'MIDNIGHT'] : [role];
   var items = [];
   for (var i = 0; i < n; i++) {
     var rl = roles[i % roles.length], seed = prefix + i;
@@ -603,7 +603,7 @@ function rollSheet() {
   // they have to hold together as a set.
   var day = $('daySheet');
   day.innerHTML = '';
-  ['MORNING', 'NOON', 'GOLDEN', 'DUSK', 'NIGHT'].forEach(function (rl) {
+  ['MORNING', 'NOON', 'DUSK', 'MIDNIGHT'].forEach(function (rl) {
     var d2 = document.createElement('div');
     d2.className = 'tile';
     var cv = document.createElement('canvas');
