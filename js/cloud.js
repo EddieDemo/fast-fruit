@@ -51,7 +51,15 @@ const P = {
   tau: 0.55,      // material split, same ruled number as smoke
   mix: 0.35,      // shadow partner: effective lit pulled toward the sky entry
   litMix: 0.12,   // lit face: white pulled toward the sky's band-centre entry
-  parallax: 0.15, // world-x scroll rate (quantized to even px at draw)
+  parallax: 0,    // RULED 0 (Eddie, 2026-08-24): clouds are PINNED,
+                  // like the sky they live in — at the fiction's
+                  // distances the honest rate is indistinguishable
+                  // from zero. The 0.15 default was an authored guess
+                  // that quietly declared them a mid-distance layer;
+                  // the device falsified it at speed. The dial stays
+                  // for taste tests; any future nonzero rate belongs
+                  // to the layer-architecture z, which will own
+                  // parallax and haze together.
   band: 0.78,     // cloud band height as a share of the SCALE ANCHOR
   anchor: 90,     // register sky height (px in the 320-wide register)
                   // that the tuning was authored against. Bubble and
