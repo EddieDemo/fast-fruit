@@ -750,8 +750,9 @@ function createRenderer(canvas) {
         // ---- CLOUDS (Rig S2, 2026-08-24) ----
         // Painted over the sky rows, under the grid and terrain. The
         // layer builds ONCE per (sky, hour) into a periodic strip and
-        // blits it here; it clips itself at the sky floor, so a floor
-        // at 0% reveals the whole towering shape. Parallax and its
+        // blits it here, WHOLE — nothing clips a cloud (amended
+        // ruling in cloud.js); flat bases arrive by occlusion when
+        // the core ground layer is drawn in front. Parallax and its
         // even-pixel quantization live in cloud.js with the reason.
         if (window.FF.cloud) window.FF.cloud.draw(ctx, cam.x, width, height, spec);
       } else {

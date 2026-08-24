@@ -25,11 +25,19 @@
 //
 // The sky's own rulings carry over: clouds are PINNED vertically,
 // scroll in world-x at a parallax rate (quantized to EVEN pixels so
-// the shadow checkerboard never anti-aligns with the sky's), are
-// generated WHOLE and clipped by the sky floor at draw time, and do
+// the shadow checkerboard never anti-aligns with the sky's), and do
 // NOT pass through the light column — the hour reaches them through
 // the sky palette they are mapped from, and through the sun bearing
 // (palette.sunDeg), exactly once each.
+//
+// AMENDED RULING (Eddie, 2026-08-24): clouds render WHOLE — nothing
+// clips them. The old "horizon clips at draw time" wording imagined a
+// real edge of the world; the sky FLOOR is a palette boundary, not
+// ground, and clipping against a line that owns no object guillotined
+// clouds mid-air. Flat bases will return the honest way when the core
+// ground layer exists: by OCCLUSION — ground drawn in front, clouds
+// tucked behind — with zero changes here. This layer does not know
+// clipping exists.
 //
 // Deterministic throughout: FNV-1a + mulberry32 on lattice integers,
 // no Math.random, no Date. file:// compatible, zero dependencies.
@@ -62,6 +70,7 @@ const P = {
   crownLo: 0.0, crownHi: 0.5,  // crenellation crown bias
   dilBase: 0.34, dilSlope: 0.50, fuse: 0.6, // base fusion / crown starvation
   covAmp: 0.58,   // coverage amplitude (composition)
+  gateCut: 0.45,  // coverage below this spawns nothing (kills debris)
   lean: 0.16,     // wind shear
   warpLam: 2.4, warpAmp: 0.42, // ONE low-frequency warp octave
   litHex: '#f6f4ed',
@@ -90,6 +99,7 @@ const SCHEMA = [
   { key: 'dilSlope', label: 'crown starve', min: 0, max: 1.2, step: 0.02 },
   { key: 'fuse', label: 'painter fuse', min: 0, max: 1.2, step: 0.05 },
   { key: 'covAmp', label: 'coverage amp', min: 0, max: 1.2, step: 0.02 },
+  { key: 'gateCut', label: 'gap cutoff', min: 0, max: 0.9, step: 0.05 },
   { key: 'lean', label: 'wind lean', min: -0.5, max: 0.5, step: 0.02 },
   { key: 'warpLam', label: 'warp wavelength', min: 1, max: 6, step: 0.1 },
   { key: 'warpAmp', label: 'warp amount', min: 0, max: 1.2, step: 0.02 },
@@ -165,7 +175,17 @@ function circlesFor(seedStr, skyH, floorY) {
   const covn = (x) => gnoise(x / covLam, 0.5, covSeed);
   const envr = (px, by) => {
     const hp = -by / bandH;
-    const gate = Math.min(1, Math.max(0, (covn(px) + 0.10) / 0.30));
+    let gate = Math.min(1, Math.max(0, (covn(px) + 0.10) / 0.30));
+    // HARD CUTOFF: below it, a circle DIES — return zero, not a
+    // zeroed gate. The envelope's (0.35 + 0.65*gate) floor means a
+    // zeroed gate still spawns at 35% size, and the additive coverage
+    // subtraction then whittles those to 2-6px stubs that pass the
+    // r >= 1 survival test: the ball-field debris, traced circle by
+    // circle (large octave, weak columns) once clouds drew whole.
+    // Two earlier fixes missed because both acted above this floor.
+    // Above the cutoff the ramp is untouched: crown satellites and
+    // bank-fringe dots (wanted) survive. Tunable: composition.
+    if (gate < P.gateCut) return 0;
     const ceil = 0.30 + 0.95 * gate;
     const top = Math.min(1, Math.max(0, 1 - (hp - ceil) / 0.30));
     // BAND-TOP FADE: only the HORIZON may clip a cloud (standing
@@ -177,7 +197,12 @@ function circlesFor(seedStr, skyH, floorY) {
   };
   const dil = (by) => {
     let h = -by / bandH;
-    h = h < -0.4 ? -0.4 : h > 1.2 ? 1.2 : h;
+    // Clamped at BASE level from below (h >= 0): the ramp used to keep
+    // growing under the base (h to -0.4), which RESURRECTED circles
+    // that coverage had starved — invisible while the floor clip hid
+    // the underside, a debris field of floating balls the moment it
+    // stopped. A gap the coverage opened stays a gap at every height.
+    h = h < 0 ? 0 : h > 1.2 ? 1.2 : h;
     return C * (P.dilBase - P.dilSlope * h);
   };
   const octave = (cw, ch, oseed, rmin, rmax) => {
@@ -210,19 +235,28 @@ function circlesFor(seedStr, skyH, floorY) {
   const smallRaw = octave(1.3 * Cs, Cs, (seed ^ 0xA5) >>> 0, P.r2min * Cs, P.r2max * Cs);
   const small = [];
   for (const [px, py, r] of smallRaw) {
-    let dmin = Infinity;
+    // ATTACHED, not merely NEAR. The field model's crenellation window
+    // acted per-pixel on |F|, so a small bubble could never detach; the
+    // painter port turned it into centre proximity, and a small within
+    // win*C of a host's boundary but OUTSIDE it floated free — the
+    // ball-field debris, orbiting hosts that sat below the screen.
+    // The window still bounds how far inside the host a small may sink
+    // (buried is invisible, skip the paint); the new signed condition
+    // requires genuine overlap on the outside.
+    let dSigned = Infinity;
     for (const [qx, qy, qr] of largeAlive) {
-      const d = Math.abs(Math.hypot(px - qx, py - qy) - qr);
-      if (d < dmin) dmin = d;
+      const d = Math.hypot(px - qx, py - qy) - qr;
+      if (d < dSigned) dSigned = d;
     }
-    if (dmin > P.win * C) continue;
+    if (dSigned > 0.4 * r) continue;      // detached: dies
+    if (dSigned < -P.win * C) continue;   // buried: pointless
     const h = -py / bandH;   // band-local: py here is `by`
     const crown = smoother((h - P.crownLo) / Math.max(1e-6, P.crownHi - P.crownLo));
     const r2 = r * crown;
     if (r2 >= 0.6) small.push([px, py, r2]);
   }
   const circles = [];
-  const push = (px, by, rd) => {
+  const push = (px, by, rd, tag) => {
     // shear (wind at MASS level) + warp applied to whole centres —
     // all in band space, so warp and shear are floor-independent too.
     const lamw = P.warpLam * C, A = P.warpAmp * C;
@@ -232,14 +266,14 @@ function circlesFor(seedStr, skyH, floorY) {
     let cx = sx - wx;
     const cy = baseY + by - wy;   // the ONLY translation to the buffer
     cx = ((cx % P.stripW) + P.stripW) % P.stripW;   // periodic strip
-    circles.push([cx, cy, rd]);
+    circles.push([cx, cy, rd, tag]);
     // wrap duplicates so circles crossing the seam tile cleanly
-    if (cx < rd) circles.push([cx + P.stripW, cy, rd]);
-    if (cx > P.stripW - rd) circles.push([cx - P.stripW, cy, rd]);
+    if (cx < rd) circles.push([cx + P.stripW, cy, rd, tag]);
+    if (cx > P.stripW - rd) circles.push([cx - P.stripW, cy, rd, tag]);
   };
-  for (const [px, py, rd] of largeAlive) push(px, py, rd);
+  for (const [px, py, rd] of largeAlive) push(px, py, rd, 'L');
   for (const [px, py, r] of small) {
-    if (r >= 1) push(px, py, r);   // crenellation keeps its raw radius
+    if (r >= 1) push(px, py, r, 'S');   // crenellation keeps its raw radius
   }
   circles.sort((a, b) => a[1] - b[1]);  // top first: lower puffs in front
   stats.circles += circles.length;
@@ -383,7 +417,9 @@ function strip(spec, seedStr, skyH) {
   if (pal && pal.registerTone) pal.registerTone('cloud', litEffHex);
   const lit = hexToRgb(litEffHex);
   const rgba = new Uint8ClampedArray(w * skyH * 4);
-  for (let y = 0; y < Math.min(h, floorY); y++) {
+  // WHOLE, unclipped (amended ruling above): every generated pixel is
+  // painted; flat bases arrive by occlusion when the ground layer does.
+  for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const code = codes[y * w + x];
       if (!code) continue;
