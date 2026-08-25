@@ -255,7 +255,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-25d';
+const BUILD = '2026-08-25e';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -271,6 +271,18 @@ const CONFIG = {
     tapMs: 150,        // max press duration to read as a tap
     tapDriftPx: 6,     // max drift (CSS px) to read as a tap
     upBlend: 0,        // 0 = pure contact normal, 1 = world-up
+  },
+  // ---- PUMP BAND (hop prototype phase 2, ruled 2026-08-25) ----
+  // The top of flare travel crosses e=1: a self-exciting bouncer the
+  // hop seeds. Sub-band travel is BIT-IDENTICAL to the passive curve;
+  // flag off, the whole curve is. Resilience SATURATES (Eddie's
+  // ruling: never 100% protected): judgment clamps e at bounceMax,
+  // so pumped landings are charged as if at max passive flare —
+  // which is what builds the exponential brake and the cliff.
+  pump: {
+    eMax: 1.25,        // restitution at full flare-up
+    bandStart: 0.8,    // flare axis where the >1 band begins
+    bufferTicks: 12,   // ~100ms: a mid-air tap waits for touchdown
   }, ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
 

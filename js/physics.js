@@ -271,7 +271,11 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
 // factor — with the same standing caveat as ever: exact at fixed
 // trajectory (a different e would also have bounced differently).
 function makeCertificate(m, state, tick, sev, T, isPlayer, clPairE, clTicks) {
-  const e = damage.bodyRestitution(m);
+  // Judgment saturation here too: the counterfactual ratios divide by
+  // (1 - e^2), which explodes and flips sign in the pump band. The
+  // certificate judges at the capped e — the same resilience the
+  // charge used. No-op below the band.
+  const e = Math.min(damage.bodyRestitution(m), CONFIG.bounceMax);
   // Counterfactual: the same dissipated energy re-judged at full
   // flare. severity ~ (1 - e^2), so the ratio is exact.
   const eMax = CONFIG.bounceMax;
@@ -659,8 +663,16 @@ function stepBody(m, inp, terrain, dt, sink) {
   // Consumed at step START so the grounding test reads LAST tick's
   // truth (airTicks, stored normal) — deterministic within a run;
   // excluded from ghosts and mp until ruled a phase.
-  if (CONFIG.hopProto && inp && inp.hopEligible && inp.hopPending) {
-    inp.hopPending = 0;
+  if (CONFIG.hopProto && inp && inp.hopEligible
+    && (inp.hopPending || inp.hopBuffer)) {
+    // BUFFERED HOP (pump ruling): a tap while airborne beyond coyote
+    // WAITS briefly for touchdown instead of evaporating — input
+    // hospitality, ~100ms, so pre-landing taps land the pump instead
+    // of feeling dropped. A fresh tap refills the buffer.
+    if (inp.hopPending) {
+      inp.hopPending = 0;
+      inp.hopBuffer = (CONFIG.pump && CONFIG.pump.bufferTicks) || 12;
+    }
     const H = CONFIG.hop;
     const groundedNow = (m.airTicks || 0) <= (H.coyoteTicks || 0);
     if (m.alive && groundedNow && (m.hopNx || m.hopNy)) {
@@ -674,6 +686,9 @@ function stepBody(m, inp, terrain, dt, sink) {
       m.hopFxY = m.y - d.ny * rEff;
       m.hopFxKx = d.kx; m.hopFxKy = d.ky;
       m.hopFxNx = d.nx; m.hopFxNy = d.ny;
+      inp.hopBuffer = 0;
+    } else if (inp.hopBuffer > 0) {
+      inp.hopBuffer--;
     }
   }
 
@@ -810,7 +825,14 @@ function stepBody(m, inp, terrain, dt, sink) {
 
       const omegaPre = m.omega; // spin AT approach: the certificate's spin term
       const applied = resolveContact(m, contact, invM, invI);
-      const ev = damage.dissipated(applied.vn, applied.kn, applied.e);
+      // JUDGMENT SATURATES (pump ruling, 2026-08-25): dissipation's
+      // (1 - e^2) goes NEGATIVE past e=1 — unclamped, pumping would
+      // HEAL. Resilience caps at the passive max: a pumped landing is
+      // charged as if at bounceMax, which is what builds the
+      // per-bounce toll and the cliff. Bit-safe when e <= bounceMax
+      // (min is a no-op), so the passive game is untouched.
+      const ev = damage.dissipated(applied.vn, applied.kn,
+        Math.min(applied.e, CONFIG.bounceMax));
       // The law charges the tick's TOTAL: every contact's dissipation
       // adds (a wedge landing's two walls both count — under the old
       // max a 35-degree vee read at barely half its honest energy).

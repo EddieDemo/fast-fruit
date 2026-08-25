@@ -242,7 +242,19 @@ function resetCluster(m) {
 // lerps to dead rubber. Piecewise linear; pinned arithmetic.
 function bounceToRestitution(axis) {
   const n = CONFIG.restitution;
-  if (axis >= 0) return n + (CONFIG.bounceMax - n) * axis;
+  if (axis >= 0) {
+    const base = n + (CONFIG.bounceMax - n) * axis;
+    // THE PUMP BAND (2026-08-25): above bandStart the passive curve
+    // is OVERLAID, lerping continuously from its own value at the
+    // band edge up to eMax at full deflection — the melon actively
+    // pumping at contact. Below the band, and with the flag off,
+    // this function is bit-identical to the passive law.
+    if (CONFIG.hopProto && CONFIG.pump && axis > CONFIG.pump.bandStart) {
+      const u = (axis - CONFIG.pump.bandStart) / (1 - CONFIG.pump.bandStart);
+      return base + (CONFIG.pump.eMax - CONFIG.bounceMax) * u;
+    }
+    return base;
+  }
   return n + n * axis; // axis in [-1,0): lerp toward 0
 }
 
@@ -252,6 +264,20 @@ function bounceToRestitution(axis) {
 // far more teachable than a binary would/wouldn't.
 function restitutionToBounce(e) {
   const n = CONFIG.restitution;
+  // Pump-band inverse first. SUBTLETY (caught by verify-pump A6):
+  // the band runs from passive(bandStart) to eMax — NOT from
+  // bounceMax — because the overlay adds to the still-rising passive
+  // curve. Every e above the BAND EDGE is reached in-band, including
+  // values below bounceMax that the passive curve now never reaches.
+  if (CONFIG.hopProto && CONFIG.pump) {
+    const bs = CONFIG.pump.bandStart;
+    const eEdge = n + (CONFIG.bounceMax - n) * bs;
+    if (e > eEdge) {
+      const slope = (CONFIG.bounceMax - n)
+        + (CONFIG.pump.eMax - CONFIG.bounceMax) / (1 - bs);
+      return Math.min(1, bs + (e - eEdge) / slope);
+    }
+  }
   if (e >= n) {
     const span = CONFIG.bounceMax - n;
     return span <= 0 ? 0 : Math.min(1, (e - n) / span);
