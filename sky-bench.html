@@ -377,16 +377,14 @@
       <label><span>crossfade</span>
         <input type="range" id="pXfade" min="0" max="100" step="5" />
         <span id="pXfadev" class="dim"></span></label>
-      <label><span>checker</span>
-        <input type="range" id="pChecker" min="0" max="100" step="5" />
-        <span id="pCheckerv" class="dim"></span></label>
+      <!-- (checker slider retired with the checkerboard ruling, 2026-08-25) -->
       <div class="dim">
         CROSSFADE spends a share of each band fading into the next, with
         a duty cycle that RAMPS — A holds while B flickers, then the
         other way round. That is how the references get sixteen
         apparent steps out of four colours; the older `dither` is a
         fixed flicker at the boundary only. CHECKER renders the middle
-        of each fade as a 1-pixel checkerboard ACROSS the row instead
+        (checkerboard retired 2026-08-25; fades are the row-interleave)
         of solid rows — the horizontal dimension the model did not have.
       </div>
       <div class="dim">
@@ -487,14 +485,6 @@ function paint(cv, spc, w, h, groundKit) {
   for (var i = 0; i < rws.length; i++) {
     g.fillStyle = rws[i].hex;
     g.fillRect(0, rws[i].y, w, rws[i].h);
-    if (rws[i].checker) {
-      // ONE fillRect per band, via a 2x2 pattern — see js/renderer.js
-      // for why (per-pixel measured 5648 calls a frame against ~25).
-      var pat = checkerPat(g, rws[i].hex, rws[i].checker.second,
-        rws[i].checker.cell || 1);
-      g.fillStyle = pat;
-      g.fillRect(0, rws[i].y, w, rws[i].h);
-    }
   }
   if (groundKit) {
     var hz = SKY.floorRow(h, spc);
@@ -505,18 +495,7 @@ function paint(cv, spc, w, h, groundKit) {
 // The ground AS IT WILL APPEAR: the terrain's own tone, recoloured by
 // this sky's light column. A bench showing the raw base would be
 // lying about the composition it exists to judge.
-var patCache = {};
-function checkerPat(ctx, a, b, cell) {
-  var key = a + '|' + b + '|' + cell;
-  if (patCache[key]) return patCache[key];
-  var c = document.createElement('canvas');
-  c.width = cell * 2; c.height = cell * 2;
-  var g2 = c.getContext('2d');
-  g2.fillStyle = a; g2.fillRect(0, 0, cell * 2, cell * 2);
-  g2.fillStyle = b; g2.fillRect(cell, 0, cell, cell); g2.fillRect(0, cell, cell, cell);
-  patCache[key] = ctx.createPattern(c, 'repeat');
-  return patCache[key];
-}
+// (checkerPat retired with the checkerboard ruling, 2026-08-25.)
 
 function litGround(spc, hex) {
   return FF.palette.applyColumnTo(hex, SKY.columnFor(spc, SKY.referenceAmbient()));
@@ -643,7 +622,6 @@ function sync() {
   $('pFloor').value = Math.round(SKY.floorOf(spec) * 100);
   $('pDither').value = spec.dither || 0;
   $('pXfade').value = Math.round((spec.crossfade || 0) * 100);
-  $('pChecker').value = Math.round((spec.checkerFade || 0) * 100);
   $('pWeights').value = (spec.weights || []).join(',');
   renderNodes();
 }
@@ -674,8 +652,6 @@ function redraw() {
   $('pDitherv').textContent = spec.dither ? (spec.dither + ' row') : 'off';
   $('pXfadev').textContent = spec.crossfade
     ? Math.round(spec.crossfade * 100) + '% of each band' : 'off';
-  $('pCheckerv').textContent = spec.checkerFade
-    ? Math.round(spec.checkerFade * 100) + '% of each fade' : 'off';
   measures();
   drawMegaDrive(H);
   gates();
@@ -705,18 +681,9 @@ function drawMegaDrive(H) {
   // flat on the hardware. That is a real constraint on designing a sky
   // for the VDP, so it is COUNTED and reported rather than quietly
   // rendered as a solid band.
-  var chkTotal = 0, chkLost = 0;
   for (var i = 0; i < rws.length; i++) {
-    var a = MD.snap(rws[i].hex, mode);
-    g.fillStyle = a;
+    g.fillStyle = MD.snap(rws[i].hex, mode);
     g.fillRect(0, rws[i].y, 320, rws[i].h);
-    if (rws[i].checker) {
-      chkTotal++;
-      var b2 = MD.snap(rws[i].checker.second, mode);
-      if (b2 === a) { chkLost++; continue; }
-      g.fillStyle = checkerPat(g, a, b2, rws[i].checker.cell || 1);
-      g.fillRect(0, rws[i].y, 320, rws[i].h);
-    }
   }
   var gd = $('mdGround'), g2 = gd.getContext('2d');
   gd.width = 320; gd.height = H;
@@ -741,10 +708,6 @@ function drawMegaDrive(H) {
       col.lost ? 'warn' : 'good') +
     row('shift', 'mean deltaE ' + dr.mean.toFixed(3)
       + '  worst ' + dr.worst.toFixed(3), '') +
-    row('checkerboards', chkTotal
-      ? (chkTotal + ' rows, ' + chkLost + ' collapse to flat on the VDP'
-        + (chkLost ? ' \u2014 both colours snap to one entry' : ''))
-      : 'none', chkLost ? 'warn' : 'good') +
     row('merged', col.merged.length
       ? col.merged.slice(0, 6).map(function (m) {
         return '#' + m[0] + '+#' + m[1];
@@ -1197,7 +1160,6 @@ $('pSpread').addEventListener('input', function () { spec.spread = +this.value /
 $('pFloor').addEventListener('input', function () { spec.floor = +this.value / 100; redraw(); });
 $('pDither').addEventListener('input', function () { spec.dither = +this.value; redraw(); });
 $('pXfade').addEventListener('input', function () { spec.crossfade = +this.value / 100; redraw(); });
-$('pChecker').addEventListener('input', function () { spec.checkerFade = +this.value / 100; redraw(); });
 ['zoom', 'bufh'].forEach(function (k) { $(k).addEventListener('input', redraw); });
 $('gOn').addEventListener('change', redraw);
 $('gKit').addEventListener('change', redraw);

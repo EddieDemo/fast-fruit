@@ -5,27 +5,7 @@
 // Keyed by the pair and the cell size, because a sky reuses the same
 // few pairs down its whole burst and a race reuses them every frame.
 const patCache = new Map();
-function checkerPattern(ctx, a, b, cell) {
-  if (!ctx || typeof ctx.createPattern !== 'function'
-    || typeof document === 'undefined') return null;
-  const key = a + '|' + b + '|' + cell;
-  const hit = patCache.get(key);
-  if (hit !== undefined) return hit;
-  let pat = null;
-  try {
-    const c = document.createElement('canvas');
-    c.width = cell * 2; c.height = cell * 2;
-    const g = c.getContext('2d');
-    g.fillStyle = a;
-    g.fillRect(0, 0, cell * 2, cell * 2);
-    g.fillStyle = b;
-    g.fillRect(cell, 0, cell, cell);
-    g.fillRect(0, cell, cell, cell);
-    pat = ctx.createPattern(c, 'repeat');
-  } catch (e) { pat = null; }
-  patCache.set(key, pat);
-  return pat;
-}
+// (checkerPattern retired with the checkerboard ruling, 2026-08-25.)
 // ============================================================
 // RENDERER — draws the world from state. Reads everything, writes
 // only presentation state (camera, fx decay). Never touches the sim.
@@ -704,45 +684,10 @@ function createRenderer(canvas) {
         const rowsOut = window.FF.sky.rows(height, spec);
         for (let i = 0; i < rowsOut.length; i++) {
           const rw = rowsOut[i];
+          // (Checkerboard overlay retired with the ruling, 2026-08-25:
+          // rows are solid; the crossfade is the row-interleave.)
           ctx.fillStyle = rw.hex;
           ctx.fillRect(0, rw.y, width, rw.h);
-          // A CHECKERED ROW dithers ACROSS the row, and is painted with
-          // a 2x2 PATTERN rather than cell by cell.
-          //
-          // Per-pixel rectangles measured 5648 fillRect calls a frame
-          // on a WEAVE sky against ~25 for a plain one — 225x, every
-          // frame, because rows() caches the SOLVE but the BLIT
-          // happens regardless. That is the same shape as the Phase 6
-          // performance crisis, and it would have been felt on a
-          // phone.
-          //
-          // A pattern anchored at the origin tiles into exactly the
-          // checkerboard the per-pixel version drew: it repeats every
-          // two rows, so a multi-row band comes out offset per row for
-          // free, and the whole band is ONE fillRect.
-          //
-          // Optional by design — a consumer that ignores `checker`
-          // paints the modal colour, which is what the old model
-          // produced.
-          if (rw.checker) {
-            const pat = checkerPattern(ctx, rw.hex, rw.checker.second,
-              rw.checker.cell || 1);
-            if (pat) {
-              ctx.fillStyle = pat;
-              ctx.fillRect(0, rw.y, width, rw.h);
-            } else {
-              // No pattern support (a headless shim): fall back to the
-              // honest slow path rather than silently painting flat.
-              const cell = rw.checker.cell || 1;
-              ctx.fillStyle = rw.checker.second;
-              for (let yy = 0; yy < rw.h; yy++) {
-                const off = (((rw.y + yy) / cell) | 0) & 1 ? cell : 0;
-                for (let x = off; x < width; x += cell * 2) {
-                  ctx.fillRect(x, rw.y + yy, cell, 1);
-                }
-              }
-            }
-          }
         }
         // ---- CLOUDS (Rig S2, 2026-08-24) ----
         // Painted over the sky rows, under the grid and terrain. The
@@ -1315,10 +1260,18 @@ function createRenderer(canvas) {
     const roster = [];
     for (const pl of state.players) roster.push(pl.melon);
     for (const b of state.bots) roster.push(b.melon);
-    roster.sort((a, b) => b.x - a.x);
-    const placeOf = new Map();
-    for (let rank = 0; rank < roster.length; rank++) placeOf.set(roster[rank], rank + 1);
-    for (const d of drawList) d.place = placeOf.get(d.melon);
+    if (state.session && window.FF.session) {
+      // OPEN SESSION: the tags rank by the event's METRIC (current
+      // personal best), not by track position — Ski Jump's '1st' is
+      // whoever holds the longest jump right now. The chassis owns
+      // the ranking; this site only reads it.
+      for (const d of drawList) d.place = window.FF.session.rankOf(state, d.melon);
+    } else {
+      roster.sort((a, b) => b.x - a.x);
+      const placeOf = new Map();
+      for (let rank = 0; rank < roster.length; rank++) placeOf.set(roster[rank], rank + 1);
+      for (const d of drawList) d.place = placeOf.get(d.melon);
+    }
 
     // Nameplate crowding: the screen-space x of every OTHER label this
     // frame, so a plate can ask whether it has elbow room before it
@@ -2873,24 +2826,28 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // biased AGAINST the hop's tangential kick.
   function spawnDust(x, y, tick, kx, ky, nx, ny) {
     const balls = [];
-    const n = 3 + (Math.random() * 3 | 0);
+    // Beefed up 2026-08-25 (Eddie: too subtle, hard to see): roughly
+    // double the puff count, wider spread, larger bubbles, longer
+    // life, stronger kick-up along the normal. Same material, same
+    // rig, same light — just MORE of it.
+    const n = 7 + (Math.random() * 4 | 0);
     // Reaction bias: unit vector opposite the kick, scaled by how
     // hard the cone actually kicked (a plain vertical hop has kx=0
     // and puffs symmetrically).
     const kMag = Math.hypot(kx, ky);
     const bx = kMag > 1e-6 ? -kx / kMag : 0;
     const by = kMag > 1e-6 ? -ky / kMag : 0;
-    const bias = Math.min(46, kMag * 0.10);
+    const bias = Math.min(70, kMag * 0.16);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const dist = Math.pow(Math.random(), 0.7) * 14;
+      const dist = Math.pow(Math.random(), 0.7) * 22;
       balls.push({
         dx: Math.cos(ang) * dist,
         dy: Math.sin(ang) * dist * 0.6,
-        r: 4 + Math.pow(Math.random(), 1.6) * 9,
-        vx: Math.cos(ang) * (8 + Math.random() * 16) + bx * bias + nx * 6,
-        vy: Math.sin(ang) * (6 + Math.random() * 10) + by * bias + ny * (14 + Math.random() * 10),
-        life: 0.32 + Math.random() * 0.22,
+        r: 6 + Math.pow(Math.random(), 1.4) * 13,
+        vx: Math.cos(ang) * (12 + Math.random() * 22) + bx * bias + nx * 9,
+        vy: Math.sin(ang) * (8 + Math.random() * 14) + by * bias + ny * (22 + Math.random() * 14),
+        life: 0.45 + Math.random() * 0.3,
       });
     }
     puffs.push({ x, y, born: tick, balls });

@@ -219,7 +219,12 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     // field (v + w x r) at the instant of death.
     debris.spawnFromBody(m, state, tick, bodyIndex);
     m.alive = false;
-    m.respawnAtTick = tick + CONFIG.respawnDelayTicks;
+    // THE CONVEYOR (session chassis, 2026-08-25): an open session may
+    // override HOW SOON a dead body returns — Ski Jump's whole loop is
+    // die, respawn, go again. Placement law unchanged; no session, no
+    // change (the default is the config's own number).
+    m.respawnAtTick = tick + ((state.session && !state.session.over)
+      ? state.session.respawnDelayTicks : CONFIG.respawnDelayTicks);
     // THE DEATH REMEMBERS ITS STRAND (stage 5): the projection foot's
     // owning poly at the moment of death, so the respawn walk can run
     // on the strand the body actually died on (strand.js).
@@ -359,6 +364,43 @@ function reviveIfDue(m, state, tick) {
   // A state without a spine (bare suite worlds) keeps the body's y.
   const laws = window.FF.terrainLaws;
   const maxG = laws && laws.G_GRIND !== undefined ? laws.G_GRIND : 0.5;
+  // THE CONVEYOR ANCHOR (session fix, 2026-08-25): an open session
+  // respawns at its ANCHOR (the start line, by the Ski Jump ruling
+  // "instantly respawn back at the start") — the walk-back law is for
+  // races, where dying somewhere means resuming near it. A session
+  // with no anchor set keeps the race law.
+  const sess = (state.session && !state.session.over) ? state.session : null;
+  if (sess && sess.respawnXs) {
+    // THE CONVEYOR (re-fixed 2026-08-25): every body returns to ITS
+    // OWN captured grid position — x and y both — with the standard
+    // drop above it. No projection at revive time: the first version
+    // ring-searched around the DEATH y and planted bodies inside the
+    // floor; the second staggered by slot but still projected. The
+    // grid positions were granted by the grid law at session start
+    // and cannot be wrong later, because session terrain never
+    // changes. Staggering is inherited from the grid itself.
+    // PROTECTION AUDIT, recorded: protectTick zeroes SEVERITY only —
+    // a damage shield, not a physics ghost; arrivals must simply not
+    // overlap, and distinct grid slots guarantee they do not.
+    let slot = 0;
+    for (let i = 0; i < state.players.length; i++) {
+      if (state.players[i].melon === m) { slot = i; break; }
+    }
+    for (let i = 0; i < state.bots.length; i++) {
+      if (state.bots[i].melon === m) { slot = state.players.length + i; break; }
+    }
+    m.x = sess.respawnXs[slot] !== undefined ? sess.respawnXs[slot] : sess.respawnX;
+    m.alive = true;
+    m.y = (sess.respawnYs && sess.respawnYs[slot] !== undefined
+      ? sess.respawnYs[slot] : m.y) - RESPAWN_DROP;
+    m.vx = 0; m.vy = 0; m.omega = 0;
+    m.airTicks = 0;
+    m.flightTicks = 0;
+    m.lastFlightTicks = 0;
+    m.lastFallPx = 0;
+    m.protectTick = tick + CONFIG.spawnProtectTicks;
+    return;
+  }
   const walked = (state.spine && state.spine.respawnPointBehind)
     ? state.spine.respawnPointBehind(m, maxG) : null;
   let wy = null;
@@ -396,6 +438,8 @@ function reviveIfDue(m, state, tick) {
   m.chainIndex = 0;
   m.lastFlightTicks = 0;
   m.lastFallPx = 0;
+  m.skiMarkX = null;      // first-impact x of the last REAL flight
+  m.skiMarkSeq = 0;       // bumps once per recorded mark
   m.protectTick = tick + CONFIG.spawnProtectTicks;
 }
 
@@ -896,6 +940,15 @@ function stepBody(m, inp, terrain, dt, sink) {
     m.lastFlightTicks = m.flightTicks || 0;
     // Fall height in px: apex to the ground we just met.
     m.lastFallPx = Math.max(0, m.y - (m.flightApexY === undefined ? m.y : m.flightApexY));
+    // THE MARK (Ski Jump ruling, 2026-08-25): the FIRST impact point
+    // of a real flight — recorded here, before severity, so a fatal
+    // landing still marks (death IS the scoring event). A real
+    // flight is >= 30 ticks (~0.25s): rolling bumps never mark.
+    // Unconditional breadcrumb, hitNx precedent; adapters read it.
+    if ((m.flightTicks || 0) >= 30) {
+      m.skiMarkX = m.x;
+      m.skiMarkSeq = (m.skiMarkSeq || 0) + 1;
+    }
   }
   if (sumE > 0) {
     // hitSeverity is the tick's TOTAL severity now (2026-08-13): the

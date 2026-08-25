@@ -75,6 +75,10 @@ let provider = providers[modeName] || providers['Track 1'];
 // inherit exhibition settings by accident.
 function respawnRace(opts) {
   const exhibition = !!(opts && opts.endless);
+  // An OPEN SESSION (party chassis): unreachable laps and no ghost
+  // like the exhibition, but the player keeps their own melon and the
+  // grid ceremony runs — everyone starts together, then loops freely.
+  const session = !!(opts && opts.session);
   window.FF.debris.reset(); // wreckage persists per race, not across them
   provider.reset();
   provider.update(SPAWN.x - KEEP_BEHIND - 800, SPAWN.x + GEN_AHEAD);
@@ -277,7 +281,8 @@ function respawnRace(opts) {
   // An unreachable lap target is the whole trick: finishedTick is
   // never set, so every downstream rule (finish screen, career write,
   // ghost save) stays correct without knowing this race is different.
-  race.laps = def ? (exhibition ? Number.MAX_SAFE_INTEGER : def.laps) : 0;
+  race.laps = (exhibition || session) ? Number.MAX_SAFE_INTEGER
+    : (def ? def.laps : 0);
   race.lapIndex = 0;
   race.lapStartTick = state.tick;
   race.splits.length = 0;
@@ -288,6 +293,10 @@ function respawnRace(opts) {
 
   // The exhibition must never record: it is a track-mode race, so the
   // recorder would happily bank an autopilot lap as the player's.
+  if (session) {
+    // A session is not a race: nothing banked, nothing replayed.
+    if (window.FF.ghost.stopRecording) window.FF.ghost.stopRecording();
+  }
   if (exhibition) {
     if (window.FF.ghost.stopRecording) window.FF.ghost.stopRecording();
     // Scenery does not line up on a grid and count itself down.
@@ -419,6 +428,40 @@ window.addEventListener('keydown', (e) => {
 });
 initDebugPanel(state);
 const renderer = createRenderer(canvas);
+// ---- OPEN-SESSION ENTRY (party chassis, 2026-08-25) --------------
+// An event module hands over its provider and session config; this is
+// the ONLY door — it owns provider switching and the race rebuild so
+// event modules never touch main's internals.
+window.FF.startSession = function (name, providerObj, sessionOpts, extras) {
+  providers[name] = providerObj;
+  modeName = name;
+  provider = providerObj;
+  respawnRace({ session: true });
+  const s = window.FF.session.begin(state, sessionOpts);
+  // THE CONVEYOR RETURNS YOU TO YOUR OWN GRID SLOT (re-fixed
+  // 2026-08-25, second device finding): the first anchor projected a
+  // landing surface at revive time using the DEATH y as the reference
+  // — and project() is a ring search around that point, so a
+  // reference deep in the run-out picked wrong faces and planted
+  // bodies inside the floor. No projection at revive time at all:
+  // capture every body's ACTUAL granted grid position now, at session
+  // start, and hand each body exactly its own spot back. "Back at the
+  // start" means YOUR start.
+  const bodies0 = [state.players[0].melon].concat(state.bots.map((b) => b.melon));
+  s.respawnX = SPAWN.x;                       // legacy fallback
+  s.respawnXs = bodies0.map((m) => m.x);
+  s.respawnYs = bodies0.map((m) => m.y);
+  if (extras) Object.assign(s, extras);
+  return s;
+};
+window.FF.endSessionToDaily = function () {
+  if (state.session) state.session = null;
+  modeName = (window.FF.dailyTrackName && window.FF.dailyTrackName()) || 'Track 1';
+  provider = providers[modeName];
+  respawnRace();
+};
+
+window.FF._state = state;   // read-only presentation handle (results overlays)
 const hud = createHud(state);
 // Boot into the menu: the grid sits assembled behind the panel. After
 // the renderer, so the menu's rotating preview can draw immediately.
@@ -608,6 +651,7 @@ function frame(now) {
         state.players[i].input.rawBounce = ins[i].b;
       }
       step(state, stepDt);
+      if (window.FF.session) window.FF.session.update(state);
       checkLapCrossings();
       observeTick();   // netplay had no observer at all before this
       ls.prune(next);
@@ -641,6 +685,9 @@ function frame(now) {
         gridTick();
         if (window.FF.autopilot) window.FF.autopilot.drive(state);
         step(state, stepDt);
+        // The open-session chassis ticks WITH the sim — same fixed
+        // step, same determinism stream; inert when no session runs.
+        if (window.FF.session) window.FF.session.update(state);
         checkLapCrossings();
         observeTick();
         accumulator -= stepDt;

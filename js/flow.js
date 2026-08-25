@@ -1194,7 +1194,10 @@ function buildMenu() {
   const resumeBtn = el('button', 'ff-btn', 'RESUME');
   const cupBtn = el('button', 'ff-btn',
     'DAILY CUP \u00b7 ' + ((window.FF.cup && window.FF.cup.LEGS) || 3) + ' RACES');
-  const race = el('button', 'ff-btn ff-secondary', "PRACTICE TODAY'S TRACK");
+  // PARTY CUP replaces practice (doorway swap, ruled 2026-08-25:
+  // practice-mode machinery stays dormant behind it; full removal is
+  // its own future commit with the flow suite bracketing it).
+  const race = el('button', 'ff-btn ff-secondary', 'PARTY CUP \u00b7 3 EVENTS');
   const foot = el('div', 'ff-foot');
   foot.appendChild(resumeBtn);
   foot.appendChild(cupBtn);
@@ -1356,9 +1359,14 @@ function buildMenu() {
   // PRACTICE: leg 1, no record, freely retried.
   race.addEventListener('click', () => {
     fromMenuOrRetry = true;
+    // practiceMode stays true for a party cup: it is the flag that
+    // keeps the RACE finish machinery from writing race records, and
+    // a session never reaches that machinery anyway (no finish line).
+    // Party rewards go through the party cup's own completion doors.
     practiceMode = true;
     if (window.FF.cup) window.FF.cup.abandon();
     if (window.FF.exhibition) window.FF.exhibition.stop();
+    if (window.FF.partycup) { window.FF.partycup.begin(); return; }
     // Select TODAY'S leg-1 track at press time (2026-08-17). The old
     // path just respawned whatever main.js resolved at page load —
     // which silently raced YESTERDAY'S daily after midnight without a

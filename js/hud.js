@@ -52,6 +52,27 @@ function createHud(state) {
     const m = state.melon;
 
     const race = state.race;
+    if (state.session && window.FF.session) {
+      // OPEN SESSION: the clock counts DOWN, and 'best' is your best
+      // score in the event's own units. Same HUD, other direction.
+      const left = window.FF.session.ticksLeft(state);
+      elTime.textContent = left === null ? fmtTicks(state.tick - state.raceStartTick)
+        : fmtTicks(left);
+      elLap.textContent = 'party';
+      elLast.textContent = '—';
+      elBest.textContent = window.FF.session.formatBest(state, m);
+      const dist0 = Math.max(0, state.spine.progressOf(m) / 100);
+      elDist.textContent = dist0 < 1000 ? `${dist0.toFixed(1)} m`
+        : `${(dist0 / 1000).toFixed(2)} km`;
+      const speed0 = Math.hypot(m.vx, m.vy);
+      elSpeed.textContent = `${(speed0 / 100).toFixed(1)} m/s`;
+      elSpin.textContent = `${m.omega.toFixed(1)} rad/s`;
+      const t0 = state.telemetry;
+      elImpact.textContent = t0.lastImpactVn === null ? '—'
+        : `${(t0.lastImpactVn / 100).toFixed(1)} m/s @ ${t0.lastImpactAngleDeg.toFixed(0)}°`;
+      elBot.textContent = '—';
+      return;
+    }
     const endTick = race.finishedTick !== null ? race.finishedTick : state.tick;
     elTime.textContent = fmtTicks(endTick - state.raceStartTick);
 

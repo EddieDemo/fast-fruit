@@ -87,9 +87,12 @@ function bandsFrom(rows, opts) {
     // rows at scale 7 must be 200. Geometry is not optional; the row
     // extends the current band and is COUNTED so the caller knows how
     // much was inferred rather than seen.
-    // A DITHERED ROW IS DATA, NOT DAMAGE. Two colours at a roughly
-    // even split is a hardware dither; the row is kept, both colours
-    // are recorded, and it is never mistaken for a HUD box.
+    // A DITHERED ROW IS RECOGNISED, THEN COLLAPSED (amended with the
+    // checkerboard ruling, 2026-08-25). Recognition still matters —
+    // without it a hardware-dithered reference row's low agreement
+    // would misclassify it as HUD occlusion and punch a hole in the
+    // band. But the engine no longer represents an x-dithered row, so
+    // the transcription is the MODAL colour, stated solid.
     const dithered = r.second && r.split !== undefined
       && r.split >= 0.35 && r.split <= 0.65;
     if (!dithered && r.agree !== undefined && r.agree < minAgree) {
@@ -99,15 +102,11 @@ function bandsFrom(rows, opts) {
       continue;
     }
     const c = rgb(r.hex);
-    // A dithered row is its own kind of band: it must not merge into
-    // a solid neighbour that happens to share its modal colour.
-    const key = dithered ? r.hex + '/' + r.second : r.hex;
+    const key = r.hex;   // modal-only since the checkerboard ruling
     const startNew = prev === null || chanMax(c, prev) > tol
       || key !== (out.length ? out[out.length - 1].key : null);
     if (startNew) {
       out.push({ y0: y, y1: y, rows: [r.hex], key,
-        dithered: !!dithered, second: dithered ? r.second : undefined,
-        split: dithered ? r.split : undefined,
         agree: r.agree === undefined ? 1 : r.agree });
       prev = c;
     } else {
@@ -313,15 +312,10 @@ function rip(rows, opts) {
         (bands[bands.length - 1].dropped || 0) + raw[i].px;
       continue;
     }
-    const dith = raw[i].dithered
-      ? { second: cl.palette[cl.index[i]] === hex ? raw[i].second : raw[i].second,
-        split: raw[i].split }
-      : null;
     const last = bands[bands.length - 1];
-    if (last && last.hex === hex && !last.dither === !dith
-      && (!dith || last.dither.second === dith.second)) {
+    if (last && last.hex === hex) {
       last.px += px;
-    } else bands.push({ hex, px, dither: dith });
+    } else bands.push({ hex, px });
   }
   const palette = [];
   const sequence = [];
@@ -333,11 +327,7 @@ function rip(rows, opts) {
   for (const b of bands) {
     const k = add(b.hex);
     sequence.push(k);
-    // A dithered band's SECOND colour is a palette entry too — it is
-    // on screen just as much as the first.
-    if (b.dither) b.dither.index = add(b.dither.second);
   }
-  const dithered = bands.filter((b) => b.dither);
   // THE COMPRESSION RATIO, because the residual rewards doing nothing.
   // A rip that keeps nearly every run as its own colour will always
   // rebuild well — it is echoing its input. Measured on the Europe
@@ -361,8 +351,6 @@ function rip(rows, opts) {
     compression,
     // Below this, the residual is not evidence of a good rip.
     compressed: compression <= 0.7,
-    ditherBands: dithered.length,
-    ditherPx: dithered.reduce((a, b) => a + b.px, 0),
     occludedRows: raw.occluded || 0,
     depth: depthFit(palette),
     shape: shapeOf(bands),
@@ -454,8 +442,12 @@ function shapeOf(bands) {
 //
 // This also marks the limit of the residual honestly. It is a
 // ROW-BASED score: it measures the vertical structure exactly and
-// cannot see horizontal structure at all. `ditherBands` and
-// `ditherPx` report that separately rather than letting a perfect
+// cannot see horizontal structure at all. (The ditherBands/ditherPx
+// report retired with the checkerboard ruling, 2026-08-25 — dithered
+// reference rows collapse to modal at transcription; residual() still
+// excludes them from scoring, as a stated measurement rule, since the
+// engine no longer represents them.) The old note continued: rather
+// than letting a perfect
 // residual imply the rip captured everything.
 function rebuildRows(bands, scale, height) {
   const out = [];

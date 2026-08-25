@@ -344,7 +344,6 @@ function fromRip(rip, opts) {
     nodes,
     sequence: seq,
     widths: bands.map((b) => b.px),
-    checker: bands.map((b) => (b.dither ? b.dither.index : -1)),
     ripped: true, total,
   };
 }
@@ -593,22 +592,16 @@ function rowsUncached(height, spec) {
       const zone = Math.max(2, Math.round(w * xf));
       const solid = w - zone;
       if (solid > 0) { out.push({ y, h: solid, hex: pal[i] }); y += solid; }
-      // CHECKERED ROWS: the horizontal dimension the model never had.
-      // Every reference row we emit has been a solid band by
-      // construction, and two of the eight captures dither ACROSS the
-      // row instead — 1-pixel cells, 50/50, offset one column per
-      // row. `checkerFade` is the share of crossfade rows rendered
-      // that way rather than solid, and it is centred on the middle
-      // of the fade, where a 50/50 mix is what the eye wants.
-      const cf = Math.max(0, Math.min(1, spec.checkerFade || 0));
+      // CHECKERBOARD RETIRED (Eddie's ruling, 2026-08-25): the
+      // per-pixel checker cells that two of the eight captures used
+      // are gone from the whole engine — they read as transparency
+      // wherever anything overlapped them (the cloud-shadow lesson),
+      // and the ruling is that skies do not dither in x. Crossfade
+      // rows are ALWAYS the solid row-interleave now: full-width
+      // rows alternating by duty, the same fade done in one
+      // dimension only.
       for (let k = 0; k < zone; k++) {
-        const duty = zone <= 1 ? 1 : (k + 0.5) / zone;
-        const rec = { y, h: 1, hex: crossfadeRow(k, zone) ? pal[i + 1] : pal[i] };
-        if (cf > 0 && Math.abs(duty - 0.5) <= cf / 2) {
-          rec.hex = pal[i];
-          rec.checker = { second: pal[i + 1], cell: spec.checkerCell || 1 };
-        }
-        out.push(rec);
+        out.push({ y, h: 1, hex: crossfadeRow(k, zone) ? pal[i + 1] : pal[i] });
         y += 1;
       }
       continue;
@@ -643,7 +636,9 @@ function rowsUncached(height, spec) {
 function statedRows(height, spec, pal, hz) {
   const out = [];
   const seq = spec.sequence, w = spec.widths;
-  const chk = spec.checker || [];
+  // (The rip format's per-band checker channel retired with the
+  // checkerboard ruling, 2026-08-25 — a stated band is its modal
+  // entry, which is exactly what a checker-blind consumer always got.)
   const total = w.reduce((a, b) => a + b, 0) || 1;
   let y = 0;
   for (let i = 0; i < seq.length && y < height; i++) {
@@ -653,14 +648,6 @@ function statedRows(height, spec, pal, hz) {
     const h = Math.min(px, height - y);
     if (h <= 0) break;
     const rec = { y, h, hex: pal[seq[i]] || pal[0] };
-    if (chk[i] >= 0 && pal[chk[i]]) {
-      // HORIZONTAL DITHER: the band alternates two entries ACROSS the
-      // row. rows() has only ever described vertical structure, so
-      // this is carried as an OPTIONAL field — a consumer that does
-      // not understand it paints `hex` and gets the modal colour,
-      // which is exactly what the old model would have produced.
-      rec.checker = { second: pal[chk[i]], cell: spec.checkerCell || 1 };
-    }
     out.push(rec);
     y += h;
   }
@@ -674,7 +661,6 @@ function register(out) {
   if (G.FF.palette && G.FF.palette.registerTone) {
     for (let i = 0; i < out.length; i++) {
       G.FF.palette.registerTone('sky', out[i].hex);
-      if (out[i].checker) G.FF.palette.registerTone('sky', out[i].checker.second);
     }
   }
 }
@@ -814,7 +800,7 @@ function bandStats(spec, height) {
   // modal colour. Checkerboards were then added to the GENERATOR and
   // this measure was never revisited, so the tool told the truth in
   // one half and not the other. The two now agree.
-  const key = (r) => (r.checker ? r.hex + '/' + r.checker.second : r.hex);
+  const key = (r) => r.hex;   // checkerboard retired 2026-08-25
   const runs = [];
   let total = 0, run = 0, prev = null;
   for (const r of rs) {
@@ -1080,15 +1066,16 @@ const FAMILIES = {
 // The entry count lives here and NOWHERE ELSE. It used to sit on the
 // family as well, and two authorities for one number is exactly what
 // this project keeps deleting.
+// (WEAVE — 'few colours, checkerboarded across the row' — retired
+// with the checkerboard ruling, 2026-08-25. Its entry range folds
+// into FADE's neighbourhood; the x-dimension it existed for is gone.)
 const BUDGETS = {
   LADDER: { reads: 'many colours, no dither — spend the palette',
-    entries: [17, 26], crossfade: [0, 0], checkerFade: [0, 0] },
+    entries: [17, 26], crossfade: [0, 0] },
   STEPPED: { reads: 'a middle course — some steps, a light fade',
-    entries: [11, 17], crossfade: [0.15, 0.45], checkerFade: [0, 0.25] },
-  FADE: { reads: 'few colours, crossfaded — spend the dither',
-    entries: [4, 9], crossfade: [0.7, 1], checkerFade: [0.15, 0.5] },
-  WEAVE: { reads: 'few colours, checkerboarded across the row',
-    entries: [5, 11], crossfade: [0.45, 0.85], checkerFade: [0.55, 1] },
+    entries: [11, 17], crossfade: [0.15, 0.45] },
+  FADE: { reads: 'few colours, crossfaded — spend the row-interleave',
+    entries: [4, 9], crossfade: [0.7, 1] },
 };
 const BUDGET_NAMES = Object.keys(BUDGETS);
 
@@ -1315,7 +1302,6 @@ function rollSky(role, seed, attempt, groundHexIn) {
   const BG = BUDGETS[budgetName];
   const n = F.fixedEntries || Math.round(B.span(BG.entries));
   const xfade = F.fixedEntries ? 0 : Math.round(B.span(BG.crossfade) * 100) / 100;
-  const ckfade = F.fixedEntries ? 0 : Math.round(B.span(BG.checkerFade) * 100) / 100;
   // THE RHYTHM ROLLS INDEPENDENTLY OF THE COLOUR, which is the whole
   // reason the two stages were kept from consulting each other: a
   // track can draw a hue-shifting palette and a clustered rhythm
@@ -1510,7 +1496,6 @@ function rollSky(role, seed, attempt, groundHexIn) {
     entries: n,
     budget: budgetName,
     crossfade: xfade,
-    checkerFade: ckfade,
     // THE FLOOR IS ROLLED AGAIN (Eddie, 2026-08-20), between 40% and
     // 90%. It left the HOUR table because where the sky meets the
     // ground is composition rather than time of day — that ruling
@@ -1744,7 +1729,6 @@ function randomiseBudget(spec, role, seed) {
   const prev = entriesOf(spec);
   out.entries = rolled.entries;
   out.crossfade = rolled.crossfade;
-  out.checkerFade = rolled.checkerFade;
   out.budget = rolled.budget;
   // Changing the entry count must not collapse the author's nodes —
   // the same law the entries slider obeys, for the same reason.

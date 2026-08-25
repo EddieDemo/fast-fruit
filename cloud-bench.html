@@ -120,15 +120,7 @@ function drawSkyRows(ctx, W, H, spec) {
   for (const rw of FF.sky.rows(H, spec)) {
     ctx.fillStyle = rw.hex;
     ctx.fillRect(0, rw.y, W, rw.h);
-    if (rw.checker) {
-      const cell = rw.checker.cell || 1;
-      ctx.fillStyle = rw.checker.second;
-      for (let yy = rw.y; yy < rw.y + rw.h && yy < H; yy++) {
-        for (let x = 0; x < W; x++) {
-          if (((x / cell | 0) & 1) === ((yy / cell | 0) & 1)) ctx.fillRect(x, yy, 1, 1);
-        }
-      }
-    }
+    // (checker overlay retired with the ruling, 2026-08-25)
   }
 }
 
