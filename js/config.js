@@ -255,9 +255,23 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-24h';
+const BUILD = '2026-08-25c';
 
-const CONFIG = { ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
+const CONFIG = {
+  // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
+  // Coulomb push-off: normal impulse + friction-cone-capped tangential
+  // from contact-point slip (spin AND travel), consuming spin by its
+  // torque. Player only; bots never hop; excluded from ghosts and mp
+  // frames until ruled a real phase. All dials are prototype dials.
+  hopProto: true,
+  hop: {
+    mag: 620,          // normal launch, delta-v px/s
+    mu: 0.9,           // friction cone cap (tangential <= mu * normal)
+    coyoteTicks: 17,   // ~140ms at 120Hz: grounded-recently window
+    tapMs: 150,        // max press duration to read as a tap
+    tapDriftPx: 6,     // max drift (CSS px) to read as a tap
+    upBlend: 0,        // 0 = pure contact normal, 1 = world-up
+  }, ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
 
 function applyPreset(name) {

@@ -16,12 +16,17 @@
 //    exact, headless, no canvas needed. verify-cloud-rig C-checks
 //    prove the two quantizations agree on the same sphere.
 //
-// 3. SHADOW COLOUR IS A PALETTE MAP, NOT A SAMPLE. Every STATED sky
-//    entry S gets one law-derived partner D = lit white pulled toward
-//    S by P.mix, registered as a 'cloud' tone. A shadow pixel looks
-//    up D from the sky entry behind it — including the checkerboard:
-//    where the sky dithers S1/S2, the shadow dithers D1/D2 in the
-//    same cell grid. No averaged in-between colours exist.
+// 3. ONE SHADOW TONE PER CLOUD (re-ruled 2026-08-24, superseding the
+//    per-pixel palette map). The shadow face is a single law-derived
+//    partner: the hour-lit white pulled toward the STATED sky entry
+//    at the cloud band's centre by P.mix, registered as a 'cloud'
+//    tone — melon parity: one lit face, one shadow tone, like every
+//    other body in the game. The earlier per-pixel map dithered the
+//    shadow in the sky's own checker cells, and a texture that
+//    continues the background's texture at the same frequency and
+//    phase reads as TRANSPARENCY, not shade (Eddie's device call).
+//    The sky still anchors the shadow through the partner derivation;
+//    it just does so once per sky, not once per pixel.
 //
 // The sky's own rulings carry over: clouds are PINNED vertically,
 // scroll in world-x at a parallax rate (quantized to EVEN pixels so
@@ -63,7 +68,13 @@ const P = {
                   // to the layer-architecture z, which will own
                   // parallax and haze together.
   band: 0.78,     // cloud band height as a share of the SCALE ANCHOR
-  anchor: 90,     // register sky height (px in the 320-wide register)
+  anchor: 45,     // RULED 50% (Eddie, 2026-08-24, settled after
+                  // seeing 25% on the sheet: 90 -> 45 -> 22.5 -> back
+                  // to 45). The whole cloud — bubbles, band, radii,
+                  // mass width — derives from this one dial. Original
+                  // 90 = register sky height (px in the 320 register).
+                  // The hidden floors found during the halvings (min-C
+                  // clamp, absolute covLam) stay fixed regardless.
                   // that the tuning was authored against. Bubble and
                   // band sizes derive from THIS, never from the
                   // buffer: an object with identity must not scale
@@ -92,7 +103,7 @@ const SCHEMA = [
   { key: 'mix', label: 'shadow mix', min: 0, max: 1, step: 0.05 },
   { key: 'parallax', label: 'parallax', min: 0, max: 1, step: 0.05 },
   { key: 'band', label: 'band height', min: 0.3, max: 1.2, step: 0.02 },
-  { key: 'anchor', label: 'scale anchor', min: 40, max: 200, step: 2 },
+  { key: 'anchor', label: 'scale anchor', min: 10, max: 200, step: 0.5 },
   { key: 'below', label: 'base below floor', min: 0, max: 1, step: 0.05 },
   { key: 'cellK', label: 'bubble cell', min: 0.3, max: 1.2, step: 0.02 },
   { key: 'ax', label: 'cell stretch x', min: 0.6, max: 2.2, step: 0.05 },
@@ -171,7 +182,12 @@ function circlesFor(seedStr, skyH, floorY) {
   // decides where clouds sit and where the horizon clips them; the
   // anchor decides how big a bubble is, everywhere, always.
   const bandH = P.band * P.anchor;
-  const C = Math.max(16, P.cellK * bandH);
+  // The old min-C clamp of 16 was a degenerate-cell guard that would
+  // have silently BLOCKED the 25% ruling (cellK*bandH ~ 10.5 at
+  // anchor 22.5, quietly inflating bubbles 52%) — a hidden floor
+  // encoding the scale it was written at. Lowered to the true
+  // degeneracy line; radii of 5-6px are legitimate pixel art.
+  const C = Math.max(6, P.cellK * bandH);
   const baseY = floorY + P.below * bandH;
   // BAND-LOCAL COORDINATES. Everything below works in `by` = height
   // relative to the BASE LINE (negative above it), and only the final
@@ -180,7 +196,11 @@ function circlesFor(seedStr, skyH, floorY) {
   // DIFFERENT cells — new clouds, not the same clouds moved. A
   // cloud's identity now lives entirely in the band: same seed, same
   // clouds, any floor, any buffer.
-  const covLam = 140 + 70 * mulberry(fnvW(fnvW(2166136261, seed), 0x99));
+  // Coverage wavelength (mass WIDTH) is anchor-relative: it was the
+  // one absolute-pixel term left, and halving the anchor without it
+  // would have made half-height pancakes at full width. 140+70 px at
+  // the original anchor of 90 = 1.556+0.778 anchors.
+  const covLam = P.anchor * (1.556 + 0.778 * mulberry(fnvW(fnvW(2166136261, seed), 0x99)));
   const covSeed = (seed ^ 0x77) >>> 0;
   const covn = (x) => gnoise(x / covLam, 0.5, covSeed);
   const envr = (px, by) => {
@@ -407,15 +427,11 @@ function strip(spec, seedStr, skyH) {
   if (SH && pal && pal.sunDeg) { save = SH.P.sunBearingDeg; SH.P.sunBearingDeg = pal.sunDeg(); }
   const { w, h, codes } = buildCodes(seedStr, skyH, floorY);
   if (save !== null) SH.P.sunBearingDeg = save;
-  // Per-row sky entries (modal + checker second) for the shadow map.
+  // Per-row modal sky entries — needed only to read the entry behind
+  // the band centre, which seeds the ONE shadow partner (ruling 3).
   const rowHex = new Array(skyH).fill(null);
-  const rowSecond = new Array(skyH).fill(null);
-  const rowCell = new Array(skyH).fill(1);
   for (const rw of rowsOut) {
-    for (let y = rw.y; y < rw.y + rw.h && y < skyH; y++) {
-      rowHex[y] = rw.hex;
-      if (rw.checker) { rowSecond[y] = rw.checker.second; rowCell[y] = rw.checker.cell || 1; }
-    }
+    for (let y = rw.y; y < rw.y + rw.h && y < skyH; y++) rowHex[y] = rw.hex;
   }
   const hexToRgb = (hex) => {
     const n = parseInt(hex.slice(1), 16);
@@ -433,6 +449,10 @@ function strip(spec, seedStr, skyH) {
   const litEffHex = (pal && pal.lit) ? pal.lit(inkLit) : inkLit;
   if (pal && pal.registerTone) pal.registerTone('cloud', litEffHex);
   const lit = hexToRgb(litEffHex);
+  const bandMidY = Math.max(0, Math.min(skyH - 1,
+    Math.round(floorY - 0.5 * P.band * P.anchor)));
+  const shadowHex = partnerOf(rowHex[bandMidY] || litEffHex, litEffHex);
+  const shadow = hexToRgb(shadowHex);
   const rgba = new Uint8ClampedArray(w * skyH * 4);
   // WHOLE, unclipped (amended ruling above): every generated pixel is
   // painted; flat bases arrive by occlusion when the ground layer does.
@@ -441,20 +461,11 @@ function strip(spec, seedStr, skyH) {
       const code = codes[y * w + x];
       if (!code) continue;
       const i4 = (y * w + x) * 4;
-      let col = lit;
-      if (code === 2) {
-        let hexS = rowHex[y] || P.litHex;
-        if (rowSecond[y]) {
-          const cell = rowCell[y];
-          const sec = ((Math.floor(x / cell) & 1) === (Math.floor(y / cell) & 1));
-          if (sec) hexS = rowSecond[y];
-        }
-        col = hexToRgb(partnerOf(hexS, litEffHex));
-      }
+      const col = code === 2 ? shadow : lit;
       rgba[i4] = col[0]; rgba[i4 + 1] = col[1]; rgba[i4 + 2] = col[2]; rgba[i4 + 3] = 255;
     }
   }
-  return { w, h: skyH, rgba, floorY, lit: litEffHex };
+  return { w, h: skyH, rgba, floorY, lit: litEffHex, shadow: shadowHex };
 }
 
 // ---- Draw (renderer-facing; caches the built strip as a canvas) ----
@@ -482,10 +493,11 @@ function draw(ctx, camX, width, height, spec) {
     cv.getContext('2d').putImageData(new ImageData(st.rgba, st.w, st.h), 0, 0);
     cacheCanvas = cv; cacheKey = key;
   }
-  // Parallax offset quantized to EVEN pixels: the shadow checkerboard
-  // was decided against the sky's cells at build time, and the sky is
-  // pinned — an odd offset would anti-align them.
-  const off = ((Math.round(camX * P.parallax / 2) * 2) % P.stripW + P.stripW) % P.stripW;
+  // Parallax offset (integer px). The old even-pixel quantization
+  // existed to keep the shadow's dither phase-locked to the sky's;
+  // the dither retired with the one-shadow-tone ruling, and the
+  // rate is 0 besides.
+  const off = ((Math.round(camX * P.parallax) % P.stripW) + P.stripW) % P.stripW;
   ctx.drawImage(cacheCanvas, -off, 0);
   if (off + width > P.stripW) ctx.drawImage(cacheCanvas, P.stripW - off, 0);
 }

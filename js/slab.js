@@ -169,11 +169,22 @@ function buildWorld(polys) {
   const fs0 = new Float64Array(nF), fs1 = new Float64Array(nF);
   const fpi = new Int32Array(nF);
   const fdn = new Uint8Array(nF);
+  // THE OUTLINE CONTRACT (2026-08-24): every face knows its slab and
+  // whether that slab is the wall sentinel — so LIGHT can consult the
+  // same solid the contact solver does. fpi stays projection's (top
+  // faces only); fsi/fwall are for occlusion, decoded from the
+  // canonical key so they cannot drift from the sort.
+  const fsi = new Int32Array(nF);
+  const fwall = new Uint8Array(nF);
+  const wallById = new Map();
+  for (const sl of slabs) wallById.set(sl.id, sl.isWall ? 1 : 0);
   for (let i = 0; i < nF; i++) {
     fax[i] = F[i].ax; fay[i] = F[i].ay; fbx[i] = F[i].bx; fby[i] = F[i].by;
     fs0[i] = F[i].s0; fs1[i] = F[i].s1;
     fpi[i] = F[i].pi === undefined ? -1 : F[i].pi;
     fdn[i] = F[i].dn ? 1 : 0;
+    fsi[i] = Math.floor(F[i].k / 4 / 1048576);
+    fwall[i] = wallById.get(fsi[i]) || 0;
   }
 
   // Spatial hash: cell -> face index list.
@@ -198,7 +209,36 @@ function buildWorld(polys) {
   const PROJ = []; // projection's own candidate buffer
 
   return {
-    slabs, faceCount: nF, fax, fay, fbx, fby, fs0, fs1,
+    slabs, faceCount: nF, fax, fay, fbx, fby, fs0, fs1, fsi, fwall,
+    // ---- OCCLUSION (the outline contract, 2026-08-24) -----------
+    // Does the segment (ox,oy)->(ex,ey) cross ANY face of any slab
+    // other than ownId (and never the wall sentinel)? This is the
+    // shadow probe's question, answered against the SAME solid the
+    // contact solver resolves against: top, bottom and caps — the
+    // whole outline. The old probe marched the crown polylines only,
+    // so a platform cast the shadow of a zero-thickness sheet and
+    // the bottom-corner extension was missing (Eddie's snip,
+    // 2026-08-24). Canonical index order; pure; deterministic.
+    occludes(ox, oy, ex, ey, ownId) {
+      const rx = ex - ox, ry = ey - oy;
+      for (let i = 0; i < nF; i++) {
+        if (fwall[i] || fsi[i] === ownId) continue;
+        const sx = fbx[i] - fax[i], sy = fby[i] - fay[i];
+        const den = rx * sy - ry * sx;
+        if (den === 0) continue;
+        const t = ((fax[i] - ox) * sy - (fay[i] - oy) * sx) / den;
+        if (t < 0 || t > 1) continue;
+        const u = ((fax[i] - ox) * ry - (fay[i] - oy) * rx) / den;
+        if (u >= 0 && u <= 1) return true;
+      }
+      return false;
+    },
+    // own resolution: the renderer knows the STRAND a point belongs
+    // to; the slab whose top IS that array is the one to skip.
+    slabIdForTop(topRef) {
+      for (const sl of slabs) if (sl.top === topRef) return sl.id;
+      return -1;
+    },
     // ---- PROJECTION (stage 3): the geometric oracle -------------
     // The closest RIDING-SURFACE point to (x, y): expanding-ring
     // hash query over annotated TOP faces, fixed expansion schedule

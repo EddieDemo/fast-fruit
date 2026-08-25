@@ -79,6 +79,10 @@ function initInput(state, canvas) {
     // input combination.
     const mag = Math.hypot(ax, ay);
     if (mag > 1) { ax /= mag; ay /= mag; }
+    // The live local player's input object is the only hop-eligible
+    // one — bots' input objects never carry the mark, so the sim's
+    // hop branch can never fire for them.
+    state.input.hopEligible = true;
     state.input.rawAxis = ax;
     state.input.rawBounce = ay;
   }
@@ -94,6 +98,11 @@ function initInput(state, canvas) {
     const p = pointers.get(e.pointerId);
     if (!p) return;
     p.x = e.clientX; p.y = e.clientY;
+    // Tap discrimination (hop prototype): remember the FARTHEST the
+    // touch ever strayed, not just where it ended — a circle back to
+    // the anchor is a stir, not a tap.
+    const dev = Math.hypot(p.x - p.x0, p.y - p.y0);
+    if (dev > (p.maxDev || 0)) p.maxDev = dev;
     recompute();
   });
 
@@ -102,6 +111,18 @@ function initInput(state, canvas) {
     if (p) {
       pointers.delete(e.pointerId);
       p.tUp = performance.now();
+      // ---- HOP TAP (prototype, 2026-08-25) ----
+      // A tap is a stick with zero deflection held for no time —
+      // semantically EMPTY under the anywhere-is-a-stick law, so the
+      // empty gesture gets the hop. Recognised here, at thumb-up
+      // (the stated latency trade); the sim consumes the pending
+      // count deterministically at its next step.
+      const C = window.FF.CONFIG;
+      if (C && C.hopProto && C.hop
+        && (p.tUp - p.t0) <= C.hop.tapMs
+        && (p.maxDev || 0) <= C.hop.tapDriftPx) {
+        state.input.hopPending = (state.input.hopPending || 0) + 1;
+      }
       fading.push(p);
       recompute();
     }
@@ -142,6 +163,19 @@ function initInput(state, canvas) {
       dismissHint();
       keys.add(e.code);
       recompute();
+    }
+    // HOP (prototype): Space. Fires on key-DOWN — the thumb-up
+    // latency is a touch-discrimination cost the keyboard doesn't
+    // pay. One hop per press (e.repeat filtered: OS key-repeat is
+    // not player intent; the no-cooldown ruling is about taps).
+    if (e.code === 'Space' && !e.repeat) {
+      const C = window.FF.CONFIG;
+      if (C && C.hopProto) {
+        dismissHint();
+        state.input.hopEligible = true;
+        state.input.hopPending = (state.input.hopPending || 0) + 1;
+        e.preventDefault();   // keep the page from scrolling/clicking
+      }
     }
   });
   window.addEventListener('keyup', (e) => {

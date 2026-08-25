@@ -595,12 +595,74 @@ function resolveMelonPair(A, B, period) {
 // never write player-facing telemetry or visual squash.
 // Grounded-ness lives ON the body (m.grounded) so each body's motor
 // sees its own contact status.
+// ---- THE HOP (prototype, 2026-08-25, Eddie's spec) ----
+// Coulomb push-off, PURE: given the body's state and the stored
+// contact normal, return the delta-v and delta-omega of one hop.
+// Normal launch along the (up-blended) contact normal; tangential
+// impulse opposes the CONTACT-POINT SLIP (spin and travel both live
+// in it), capped by the friction cone mu*Jn, and its torque CONSUMES
+// spin — no free energy: lateral kick is paid for in rotation.
+// Exported for verify-hop; the suite pins the signs (a melon
+// spinning to roll +x kicks +x and loses spin).
+function hopImpulse(m, H) {
+  let nx = m.hopNx || 0, ny = m.hopNy || 0;
+  const nl = Math.hypot(nx, ny);
+  if (nl < 1e-9) { nx = 0; ny = -1; } else { nx /= nl; ny /= nl; }
+  if (H.upBlend > 0) {
+    nx = nx * (1 - H.upBlend);
+    ny = ny * (1 - H.upBlend) - H.upBlend;
+    const l2 = Math.hypot(nx, ny) || 1;
+    nx /= l2; ny /= l2;
+  }
+  // Normal impulse, expressed as delta-v (the dial's units).
+  const dvnX = nx * H.mag, dvnY = ny * H.mag;
+  const Jn = H.mag / m.invM;
+  // Contact point: one effective radius into the surface. The lever
+  // approximation (r along -n) matches the solver's convention for a
+  // resting body; a prototype does not need the egg's exact support.
+  const r = (m.a + m.b) / 2;
+  // Tangent and contact-point slip: t = perp(n); slip = v.t + omega*(r x t term).
+  const tx = -ny, ty = nx;
+  const rxT = (-nx * r) * ty - (-ny * r) * tx;   // r x t (z), = -r
+  // Contact-point slip along t, from the solver's own convention
+  // (v_p = v + (-omega*r_y, +omega*r_x)): s = v.t + omega*(r x t).
+  // (The first cut carried a stray -1 here; verify-hop B1/B2/B6
+  // pinned the roll-direction and spin-consumption signs and caught
+  // it before the thumb ever felt an inverted hop.)
+  const slip = m.vx * tx + m.vy * ty + m.omega * rxT;
+  // The impulse that would ZERO the slip at the point, capped by the cone.
+  const kT = m.invM + rxT * rxT * m.invI;
+  let Jt = kT > 1e-12 ? -slip / kT : 0;
+  const cap = H.mu * Math.abs(Jn);
+  if (Jt > cap) Jt = cap;
+  if (Jt < -cap) Jt = -cap;
+  return {
+    dvx: dvnX + Jt * tx * m.invM,
+    dvy: dvnY + Jt * ty * m.invM,
+    domega: Jt * rxT * m.invI,
+  };
+}
+
 function stepBody(m, inp, terrain, dt, sink) {
   const invM = m.invM;
   const invI = m.invI;
   // The slab world, once per body step: the motor reads strand dir
   // from it and the collision phase queries it.
   const world = slab.worldFor(terrain);
+
+  // ---- 0.5 THE HOP (prototype; player only, flag-gated) ----
+  // Consumed at step START so the grounding test reads LAST tick's
+  // truth (airTicks, stored normal) — deterministic within a run;
+  // excluded from ghosts and mp until ruled a phase.
+  if (CONFIG.hopProto && inp && inp.hopEligible && inp.hopPending) {
+    inp.hopPending = 0;
+    const H = CONFIG.hop;
+    const groundedNow = (m.airTicks || 0) <= (H.coyoteTicks || 0);
+    if (m.alive && groundedNow && (m.hopNx || m.hopNy)) {
+      const d = hopImpulse(m, H);
+      m.vx += d.dvx; m.vy += d.dvy; m.omega += d.domega;
+    }
+  }
 
   // ---- 1. Input smoothing (ease torqueAxis toward rawAxis) ----
   const ease = Math.min(1, CONFIG.inputResponse * dt);
@@ -723,6 +785,15 @@ function stepBody(m, inp, terrain, dt, sink) {
       else ellipseVsSegment(m, A, B, contact);
       if (!contact.hit) continue;
       grounded = true;
+      // HOP PROTOTYPE: remember what we last stood on. Accumulated
+      // per tick (a gully sums both walls, pointing out of the
+      // notch), normalized at hop time. Flag-guarded so the
+      // flag-off sim writes not one new field (bit-parity).
+      if (CONFIG.hopProto && inp && inp.hopEligible) {
+        if (m.airTicks !== 0) { m.hopNx = 0; m.hopNy = 0; }
+        m.hopNx = (m.hopNx || 0) + contact.nx;
+        m.hopNy = (m.hopNy || 0) + contact.ny;
+      }
 
       const omegaPre = m.omega; // spin AT approach: the certificate's spin term
       const applied = resolveContact(m, contact, invM, invI);
@@ -1239,5 +1310,6 @@ function resolveContact(m, c, invM, invI) {
 // spin rates the contact-point term (w x r) turns any approximation
 // of the contact geometry into large vn error, squared by the energy
 // law (field-logged 2026-08-11, EP1 exact at w=0, chaos at w=15-37).
-Object.assign(window.FF, { step, stepBodyClone: (m, inp, terrain, dt) => stepBody(m, inp, terrain, dt, null) });
+Object.assign(window.FF, { step, stepBodyClone: (m, inp, terrain, dt) => stepBody(m, inp, terrain, dt, null),
+  _hopImpulse: hopImpulse });
 })();

@@ -266,28 +266,23 @@ function createRenderer(canvas) {
   // column shaded below a shallow depth. A visible face should be
   // darkened by other casters, not by the ground it is part of.
   function shadowedAt(terrain, wx, wy, ray, own) {
+    // THE OUTLINE CONTRACT (2026-08-24): the occluder set is the SLAB
+    // SOLID — top, bottom, caps — the same faces the contact solver
+    // resolves against, via slab.js. The old march tested the crown
+    // polylines only: a platform cast the shadow of a zero-thickness
+    // sheet, and the bottom-corner extension Eddie circled was
+    // missing. One shape, three consumers: what you hit, what you
+    // see, and what blocks the light are provably the same solid.
+    const S = window.FF.slab;
+    if (!S) return false;
     const d = ray || sunRayDir();
-    // March the ray from just above the point out to SHADOW_REACH,
-    // testing each terrain segment for a true crossing.
     const ox = wx + d.x * (ROOF_MARGIN / -d.y);
     const oy = wy - ROOF_MARGIN;
     const ex = wx + d.x * (SHADOW_REACH / -d.y);
     const ey = wy - SHADOW_REACH;
-    for (const strand of terrain) {
-      if (strand.isWall || (own && strand === own)) continue;
-      for (let i = 1; i < strand.length; i++) {
-        const a0 = strand[i - 1], b0 = strand[i];
-        // Segment/segment intersection (ray o->e against a0->b0).
-        const r1x = ex - ox, r1y = ey - oy;
-        const s1x = b0.x - a0.x, s1y = b0.y - a0.y;
-        const den = r1x * s1y - r1y * s1x;
-        if (den === 0) continue;                 // parallel
-        const t = ((a0.x - ox) * s1y - (a0.y - oy) * s1x) / den;
-        const u = ((a0.x - ox) * r1y - (a0.y - oy) * r1x) / den;
-        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
-      }
-    }
-    return false;
+    const W = S.worldFor(terrain);
+    const ownId = own ? W.slabIdForTop(own) : -1;
+    return W.occludes(ox, oy, ex, ey, ownId);
   }
   let litVer = -1;
 
@@ -419,6 +414,7 @@ function createRenderer(canvas) {
     // pixels); the tail restores everything before the blit and the
     // UI-glass sticks. Menus and HUD are DOM — untouched by design.
     const px = !!window.FF.PIXELATE && typeof document !== 'undefined';
+    glassMap = null;   // per-frame; only the px blit below sets it
     pxMode = px;                       // sprite melons follow the mode
     // Time-slice: at most BAKE_PER_FRAME new sprite frames per
     // rendered frame. Anything else paints vector this tick and
@@ -755,6 +751,33 @@ function createRenderer(canvas) {
         // the core ground layer is drawn in front. Parallax and its
         // even-pixel quantization live in cloud.js with the reason.
         if (window.FF.cloud) window.FF.cloud.draw(ctx, cam.x, width, height, spec);
+        // ---- HORIZON PREVIEW (temp toggles, 2026-08-24) ----
+        // Drawn AFTER the clouds so the fill OCCLUDES them below the
+        // floor — the exact mechanism the future core ground layer
+        // will use to give clouds flat bases. Anchored to the sky
+        // floor for now (screen-space; inherits its resize drift),
+        // a stated stand-in until the horizon is world-anchored.
+        if ((window.FF.HORIZON_FILL || window.FF.HORIZON_LINE) && window.FF.sky) {
+          const hFloor = window.FF.sky.floorRow(height, spec);
+          const pal2 = window.FF.palette;
+          const gHex = (pal2 && pal2.groundTone) ? pal2.groundTone() : '#3a3a3a';
+          if (window.FF.HORIZON_FILL) {
+            const fillHex = (pal2 && pal2.lit) ? pal2.lit(gHex) : gHex;
+            if (pal2 && pal2.registerTone) pal2.registerTone('horizon', fillHex);
+            ctx.fillStyle = fillHex;
+            ctx.fillRect(0, hFloor, width, height - hFloor);
+          }
+          if (window.FF.HORIZON_LINE) {
+            // The edge: the ground tone taken a step down the ink
+            // law, through the same light — a drawn line, not a new
+            // colour language.
+            const lineHex = (pal2 && pal2.lit && window.FF.shading)
+              ? pal2.lit(window.FF.shading.inkColor(gHex, 'A1')) : '#1c241c';
+            if (pal2 && pal2.registerTone) pal2.registerTone('horizon', lineHex);
+            ctx.fillStyle = lineHex;
+            ctx.fillRect(0, hFloor, width, 1);
+          }
+        }
       } else {
         ctx.fillStyle = SKY_BASE;
         ctx.fillRect(0, 0, width, height);
@@ -1354,35 +1377,19 @@ function createRenderer(canvas) {
         const wy = surfY(state, dxw, dyw);
         if (wy !== null) {
           const baseY = toScreenY(wy) + 34 + Math.round(150 * zoom);
-          const nmCol = d.isPlayer ? '#00ff00' : nameColor(d.name); // sacred green lives HERE now
-          if (pxMode && window.FF.pxfont) {
-            // Phase 3.1: canvas text is mush at 320 — the bitmap
-            // font is the ONLY in-world text. Names register as
-            // legitimate tones so the honesty budget stays truthful.
-            const PF = window.FF.pxfont;
-            if (window.FF.palette) window.FF.palette.registerTone('names', nmCol);
-            PF.draw(ctx, d.name, sx - PF.measure(d.name, 1) / 2,
-              baseY - 5, 1, nmCol);
-            if (d.pilot && nameplateHasRoom(d, sx)) {
-              const sub = d.isPlayer ? '#6dac75' : '#5d7060'; // pre-composited
-              PF.draw(ctx, d.pilot, sx - PF.measure(d.pilot, 1) / 2,
-                baseY + 3, 1, sub);
-            }
-          } else {
-          ctx.font = '700 14px "Geist Mono", ui-monospace, monospace';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'alphabetic';
-          // Bots wear seeded BRIGHT name colors (the melons are all
-          // green now, so the names carry the color identity instead);
-          // the player's name keeps their sacred green.
-          ctx.fillStyle = nmCol;
-          ctx.fillText(d.name, sx, baseY);
-          if (d.pilot && nameplateHasRoom(d, sx)) {
-            ctx.font = '400 10px "Geist Mono", ui-monospace, monospace';
-            ctx.fillStyle = d.isPlayer ? 'rgba(140,220,150,0.78)' : 'rgba(150,180,155,0.62)';
-            ctx.fillText(d.pilot, sx, baseY + 13);
-          }
-          }
+          // GLASS NAMEPLATES (re-ruled 2026-08-24, same layer ruling
+          // as the position tags): the nameplate is broadcast
+          // telemetry, so it collects here and draws at device
+          // resolution after the blit. The seeded name colours and
+          // the player's sacred green survive the move — they carry
+          // colour identity — now on the HUD pill. Names no longer
+          // touch the register, so they no longer register tones:
+          // the honesty budget counts world pixels only.
+          const nmCol = d.isPlayer ? '#00ff00' : nameColor(d.name);
+          glassNames.push({
+            sx, y: baseY, name: d.name, isPlayer: d.isPlayer, col: nmCol,
+            pilot: (d.pilot && nameplateHasRoom(d, sx)) ? d.pilot : null,
+          });
         }
       }
       // ---- Cast shadow: TRUE projection. The rotated silhouette's
@@ -1575,9 +1582,11 @@ function createRenderer(canvas) {
         const ox = Math.floor((width - dw) / 2), oy = Math.floor((height - dh) / 2);
         ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
           ox, oy, dw, dh);
+        glassMap = { ox, oy, scale: pxScale };
       } else {
         ctx.drawImage(pxCanvas, 0, 0, pxCanvas.width, pxCanvas.height,
           0, 0, width, height);
+        glassMap = { ox: 0, oy: 0, scale: width / pxCanvas.width };
       }
       ctx.imageSmoothingEnabled = true;
       ctx.webkitImageSmoothingEnabled = true;
@@ -1585,8 +1594,118 @@ function createRenderer(canvas) {
       canvas.style.imageRendering = '';   // native mode: no CSS hint
     }
 
-    // The visible thumbstick sits on top of everything: it's UI glass.
+    // ---- THE GLASS PASS ---- everything from here draws at device
+    // resolution, outside the light column: position tags, then the
+    // thumbstick on top of all.
+    drawGlassTags(ctx);
+    drawGlassNames(ctx);
     drawInputSticks(ctx);
+    glassTags = [];
+    glassNames = [];
+  }
+
+  function drawGlassNames(ctx) {
+    if (!glassNames.length || !window.FF.glass) return;
+    const T = window.FF.glass.TAG_STYLE;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const fName = `700 ${T.numPx}px "Geist Mono", ui-monospace, monospace`;
+    const fPilot = `400 ${T.sufPx}px "Geist Mono", ui-monospace, monospace`;
+    for (const nm of glassNames) {
+      ctx.font = fName;
+      const wName = ctx.measureText(nm.name).width;
+      let wPilot = 0;
+      if (nm.pilot) { ctx.font = fPilot; wPilot = ctx.measureText(nm.pilot).width; }
+      const w = Math.max(wName, wPilot) + T.padX * 2;
+      const lineH = T.numPx + 3;
+      const h = T.padY * 2 + T.numPx + (nm.pilot ? T.sufPx + 3 : 0);
+      const cx = glassX(nm.sx);
+      const y0 = Math.round(glassY(nm.y)) - T.numPx;
+      const x0 = Math.round(cx - w / 2);
+      const r = Math.min(h / 2, 10);
+      ctx.beginPath();
+      ctx.moveTo(x0 + r, y0);
+      ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r);
+      ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+      ctx.arcTo(x0, y0 + h, x0, y0, r);
+      ctx.arcTo(x0, y0, x0 + w, y0, r);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${T.bg[0]}, ${T.bg[1]}, ${T.bg[2]}, ${T.bgAlpha})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${T.border[0]}, ${T.border[1]}, ${T.border[2]})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.font = fName;
+      ctx.fillStyle = nm.col;
+      ctx.fillText(nm.name, cx, y0 + T.padY + T.numPx - 2);
+      if (nm.pilot) {
+        ctx.font = fPilot;
+        ctx.fillStyle = nm.isPlayer ? 'rgba(140,220,150,0.85)' : 'rgba(160,190,165,0.75)';
+        ctx.fillText(nm.pilot, cx, y0 + T.padY + lineH + T.sufPx - 2);
+      }
+    }
+    ctx.restore();
+  }
+
+  // Register/world-pass coords -> CSS px for the glass pass. glassMap
+  // is nulled at the START of every frame and set ONLY by the px-mode
+  // blit — so its presence IS the mode flag. (The first ship of this
+  // referenced render()'s local `px` from closure scope: a
+  // ReferenceError node --check cannot see. Third instance of that
+  // lesson; the map now carries its own truth.)
+  let glassMap = null;
+  function glassX(x) { return glassMap ? glassMap.ox + x * glassMap.scale : x; }
+  function glassY(y) { return glassMap ? glassMap.oy + y * glassMap.scale : y; }
+
+  function drawGlassTags(ctx) {
+    if (!glassTags.length || !window.FF.glass) return;
+    const T = window.FF.glass.TAG_STYLE;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    const fNum = `700 ${T.numPx}px "Geist Mono", ui-monospace, monospace`;
+    const fSuf = `600 ${T.sufPx}px "Geist Mono", ui-monospace, monospace`;
+    for (const t of glassTags) {
+      const num = String(t.n);
+      const suf = t.n % 100 >= 11 && t.n % 100 <= 13 ? 'th'
+        : ['th', 'st', 'nd', 'rd'][t.n % 10] || 'th';
+      ctx.font = fNum;
+      const wNum = ctx.measureText(num).width;
+      ctx.font = fSuf;
+      const wSuf = ctx.measureText(suf).width;
+      const wText = wNum + 1 + wSuf;
+      const w = wText + T.padX * 2;
+      const h = T.numPx + T.padY * 2;
+      const cx = glassX(t.sx);
+      const cy = glassY(t.sy) - (glassMap ? glassMap.scale : 1) * 12 - T.liftPx;
+      const x0 = Math.round(cx - w / 2), y0 = Math.round(cy - h);
+      // The HUD pill, verbatim family: dark olive fill, hairline
+      // border, full radius.
+      ctx.beginPath();
+      const r = h / 2;
+      ctx.moveTo(x0 + r, y0);
+      ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r);
+      ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+      ctx.arcTo(x0, y0 + h, x0, y0, r);
+      ctx.arcTo(x0, y0, x0 + w, y0, r);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${T.bg[0]}, ${T.bg[1]}, ${T.bg[2]}, ${T.bgAlpha})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${T.border[0]}, ${T.border[1]}, ${T.border[2]})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      const ty = y0 + h - T.padY - 2;
+      ctx.fillStyle = `rgb(${T.text[0]}, ${T.text[1]}, ${T.text[2]})`;
+      ctx.font = fNum;
+      ctx.fillText(num, x0 + T.padX, ty);
+      ctx.font = fSuf;
+      // The shoulder convention survives the move to glass.
+      ctx.fillText(suf, x0 + T.padX + wNum + 1, ty - 3);
+    }
+    ctx.restore();
   }
 
   // The splat predictor now lives in js/pilot.js — sim-tier and
@@ -1816,10 +1935,63 @@ function createRenderer(canvas) {
     UP_TINT: '127, 220, 102',   // bouncy: the game's green family
     DOWN_TINT: '255, 122, 82',  // dead rubber: ember
   };
+  // STICK THEME STATE (2026-08-24): one theme for the control layer,
+  // chosen by the world's luminance under the stick footprint —
+  // sampled from the REGISTER buffer (a few dozen pixels, at most
+  // ~2.5x/second, never per frame), switched with hysteresis
+  // (glass.stickThemeNext) and crossfaded, so a dappled cloud field
+  // cannot strobe the control. Self-contrast (the under-strokes) is
+  // what guarantees legibility; this switch only picks comfort.
+  const stickGlass = { theme: 'LIGHT', blend: 0, lastSample: 0 };
+  function sampleStickLum(s, now) {
+    if (now - stickGlass.lastSample < 400) return;
+    stickGlass.lastSample = now;
+    const m = glassMap;   // set only in px mode; vector stays LIGHT
+    if (!m || !pxCanvas || !window.FF.glass) return;
+    const rx = Math.round((s.x0 - m.ox) / m.scale);
+    const ry = Math.round((s.y0 - m.oy) / m.scale);
+    const R = Math.ceil(64 / m.scale);
+    const x0 = Math.max(0, rx - R), y0 = Math.max(0, ry - R);
+    const w = Math.min(pxCanvas.width - x0, 2 * R);
+    const h = Math.min(pxCanvas.height - y0, 2 * R);
+    if (w <= 0 || h <= 0) return;
+    const data = pxCanvas.getContext('2d').getImageData(x0, y0, w, h).data;
+    let sum = 0, n2 = 0;
+    const step = Math.max(1, Math.floor((w * h) / 48));   // <= ~48 samples
+    for (let i = 0; i < w * h; i += step) {
+      sum += window.FF.glass.relLuminance(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+      n2++;
+    }
+    if (n2) stickGlass.theme = window.FF.glass.stickThemeNext(stickGlass.theme, sum / n2);
+  }
   function drawInputSticks(ctx) {
     if (!window.FF.getInputSticks) return;
-    const sticks = window.FF.getInputSticks(performance.now());
+    const now = performance.now();
+    const sticks = window.FF.getInputSticks(now);
     if (!sticks.length) return;
+    if (sticks[0]) sampleStickLum(sticks[0], now);
+    // Crossfade toward the chosen theme (~200ms), so a switch is a
+    // fade, not a pop.
+    const target = stickGlass.theme === 'DARK' ? 1 : 0;
+    stickGlass.blend += Math.sign(target - stickGlass.blend) * Math.min(0.09,
+      Math.abs(target - stickGlass.blend));
+    const GT = (window.FF.glass && window.FF.glass.STICK_THEMES)
+      || { LIGHT: { main: [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
+    const k = stickGlass.blend;
+    const mixc = (a, b) => Math.round(a + (b - a) * k);
+    const MAIN = [0, 1, 2].map((i) => mixc(GT.LIGHT.main[i], GT.DARK.main[i]));
+    const mainS = (a) => `rgba(${MAIN[0]}, ${MAIN[1]}, ${MAIN[2]}, ${a})`;
+    // DYNAMIC MAX-CONTRAST (Eddie's ruling, 2026-08-24, superseding
+    // the self-contrast duo after seeing it): the ORIGINAL single-
+    // stroke visual, with the stroke colour flipped light/dark by the
+    // sampled world luminance — the switch picks whichever variant
+    // contrasts more with what is behind. STATED TRADE, on record:
+    // near the switch thresholds the guaranteed ratio is weak (a
+    // structural 3:1 against arbitrary pixels is not achievable with
+    // a single adaptive tone); the hysteresis band makes lingering
+    // there rare rather than impossible. verify-hud-glass C-family
+    // holds what IS promised: the switch always selects the higher-
+    // contrast variant of the two.
     ctx.save();
     // Client (CSS px) coordinates -> device pixels.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1831,20 +2003,20 @@ function createRenderer(canvas) {
       if (A <= 0) continue;
       const { R, DZ, NUB } = STICK_UI;
       const cx = s.x0, cy = s.y0;
-      // Ring.
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.16 * A})`;
+      // Ring. (Original alphas and widths, themed colour.)
+      ctx.strokeStyle = mainS(0.16 * A);
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(cx, cy, R, 0, Math.PI * 2);
       ctx.stroke();
       // Deadzone: the null region, so the neutral is learnable.
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.10 * A})`;
+      ctx.strokeStyle = mainS(0.10 * A);
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(cx, cy, R * DZ, 0, Math.PI * 2);
       ctx.stroke();
       // Horizontal guide: the spin axis AND the flare-neutral line.
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 * A})`;
+      ctx.strokeStyle = mainS(0.12 * A);
       ctx.beginPath();
       ctx.moveTo(cx - R, cy); ctx.lineTo(cx - R * DZ, cy);
       ctx.moveTo(cx + R * DZ, cy); ctx.lineTo(cx + R, cy);
@@ -1868,8 +2040,8 @@ function createRenderer(canvas) {
       let dx = s.dx, dy = s.dy;
       const d = Math.hypot(dx, dy);
       if (d > R) { dx *= R / d; dy *= R / d; }
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.35 * A})`;
-      ctx.fillStyle = `rgba(255, 255, 255, ${0.20 * A})`;
+      ctx.strokeStyle = mainS(0.35 * A);
+      ctx.fillStyle = mainS(0.20 * A);
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(cx + dx, cy + dy, NUB, 0, Math.PI * 2);
@@ -1974,7 +2146,21 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   const PLACE_YOU = [57, 255, 95];
   const PLACE_SUF = [127, 163, 131];
 
+  // GLASS TAGS (re-ruled 2026-08-24): the ordinal is broadcast
+  // telemetry, not a world object — no stadium hangs "3rd" over an
+  // athlete. drawPlace therefore COLLECTS the anchor (in the current
+  // pass's coordinates) and the glass pass draws the pill at device
+  // resolution after the blit: crisp at any DPR, steady while the
+  // world does its chunky thing underneath, outside the light column
+  // like all glass. The old in-register pixel ordinals occluded world
+  // pixels as if they were objects — the exact mislabelling.
+  let glassTags = [];
+  let glassNames = [];
   function drawPlace(ctx, sx, sy, n, zoom, isPlayer) {
+    glassTags.push({ sx, sy, n, isPlayer });
+    return;
+  }
+  function drawPlaceLegacy(ctx, sx, sy, n, zoom, isPlayer) {
     // Ordinal, drawn as TWO pieces so the numeral keeps its full size
     // and the suffix rides small on its shoulder — the number is what
     // you read at a glance mid-race; the suffix only has to be
@@ -2600,7 +2786,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // SPHERE under the one rig — see drawPuffs for the S1 notes.
   // The pigment is a neutral near-white; every displayed tone derives
   // from it through the ink law + light column, never directly.
-  const SMOKE_BASE = '#e2e2e2';
+  // THE CANONICAL WHITE (re-ruled 2026-08-24, on corrected fiction):
+  // these are not exhaust — they are MAGICAL SPAWN PUFFS, masking a
+  // melon's arrival from nowhere; the same substance family as the
+  // clouds, so the same pigment, from the same declaration. The old
+  // private grey '#e2e2e2' dated from the exhaust reading.
+  const SMOKE_BASE = RIG.WHITE_HEX;
   const SMOKE_TAU = 0.55;
   const puffs = [];
   let puffPrevAlive = [];
@@ -2670,7 +2861,13 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       if (pal && pal.registerTone) pal.registerTone('smoke', hex);
       return hex;
     };
-    const baseFill = reg(L(RIG.inkColor(SMOKE_BASE, RIG.P.baseFillSlot)));
+    // SHADES DOWNWARD (2026-08-24, forced by the canonical white and
+    // caught by D2): at pigment 246 the upward ink slots clamp on the
+    // law's L* ceiling — base and highlight collapsed into ONE tone
+    // and the terminator split painted nothing. A spawn puff is the
+    // clouds' substance, so it shades the clouds' way: LIT FACE = the
+    // canonical white itself (slot A2), body a step BELOW it (A1).
+    const baseFill = reg(L(RIG.inkColor(SMOKE_BASE, 'A1')));
     // MATERIAL RULING (Eddie, 2026-08-24, from smoke-rig-proof.png):
     // smoke splits ONCE, at SMOKE_TAU — the shadow band is off and the
     // highlight threshold is the material's own, not the melon taus.
@@ -2681,7 +2878,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // therefore drive melons only; the sun sliders drive everything.
     const bandDraw = [{
       inv: false,
-      fill: reg(L(RIG.inkColor(SMOKE_BASE, RIG.P.highlightFillSlot))),
+      fill: reg(L(RIG.inkColor(SMOKE_BASE, 'A2'))),
       iso: RIG.sphereContour(SMOKE_TAU, 24),
     }];
     for (let p = puffs.length - 1; p >= 0; p--) {
