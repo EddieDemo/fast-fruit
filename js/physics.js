@@ -640,6 +640,11 @@ function hopImpulse(m, H) {
     dvx: dvnX + Jt * tx * m.invM,
     dvy: dvnY + Jt * ty * m.invM,
     domega: Jt * rxT * m.invI,
+    // Presentation extras (fx breadcrumbs; the sim reads none of
+    // these): the tangential kick alone, and the push-off normal —
+    // the dust sprays OPPOSITE the kick, because that is where the
+    // ground's equal-opposite share of the momentum went.
+    kx: Jt * tx * m.invM, ky: Jt * ty * m.invM, nx, ny,
   };
 }
 
@@ -661,6 +666,14 @@ function stepBody(m, inp, terrain, dt, sink) {
     if (m.alive && groundedNow && (m.hopNx || m.hopNy)) {
       const d = hopImpulse(m, H);
       m.vx += d.dvx; m.vy += d.dvy; m.omega += d.domega;
+      // fx breadcrumbs (divergence license, like hitNx): where the
+      // hop pushed off, and the tangential kick to react against.
+      const rEff = (m.a + m.b) / 2;
+      m.hopFxSeq = (m.hopFxSeq || 0) + 1;
+      m.hopFxX = m.x - d.nx * rEff;
+      m.hopFxY = m.y - d.ny * rEff;
+      m.hopFxKx = d.kx; m.hopFxKy = d.ky;
+      m.hopFxNx = d.nx; m.hopFxNy = d.ny;
     }
   }
 

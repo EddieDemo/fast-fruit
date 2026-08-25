@@ -415,6 +415,7 @@ function createRenderer(canvas) {
     // UI-glass sticks. Menus and HUD are DOM — untouched by design.
     const px = !!window.FF.PIXELATE && typeof document !== 'undefined';
     glassMap = null;   // per-frame; only the px blit below sets it
+    frameCounter++;    // the glass layer's once-per-frame guard
     pxMode = px;                       // sprite melons follow the mode
     // Time-slice: at most BAKE_PER_FRAME new sprite frames per
     // rendered frame. Anything else paints vector this tick and
@@ -1599,6 +1600,7 @@ function createRenderer(canvas) {
     // thumbstick on top of all.
     drawGlassTags(ctx);
     drawGlassNames(ctx);
+    drawTapRipples(ctx);
     drawInputSticks(ctx);
     glassTags = [];
     glassNames = [];
@@ -1943,6 +1945,52 @@ function createRenderer(canvas) {
   // cannot strobe the control. Self-contrast (the under-strokes) is
   // what guarantees legibility; this switch only picks comfort.
   const stickGlass = { theme: 'LIGHT', blend: 0, lastSample: 0 };
+  // The stick's CURRENT crossfaded colour — shared by the stick and
+  // the tap ripples so they read as one control language. Blend
+  // advance is guarded to once per frame (ripples can outlive
+  // sticks, so either caller may be first).
+  let frameCounter = 0;
+  let stickThemeFrame = -1;
+  let stickThemeCache = [246, 246, 246];
+  function stickThemeMain() {
+    const f = frameCounter;
+    if (f === stickThemeFrame) return stickThemeCache;
+    stickThemeFrame = f;
+    const target = stickGlass.theme === 'DARK' ? 1 : 0;
+    stickGlass.blend += Math.sign(target - stickGlass.blend) * Math.min(0.09,
+      Math.abs(target - stickGlass.blend));
+    const GT = (window.FF.glass && window.FF.glass.STICK_THEMES)
+      || { LIGHT: { main: [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
+    const k = stickGlass.blend;
+    const mixc = (a, b) => Math.round(a + (b - a) * k);
+    stickThemeCache = [0, 1, 2].map((i) => mixc(GT.LIGHT.main[i], GT.DARK.main[i]));
+    return stickThemeCache;
+  }
+
+  function drawTapRipples(ctx) {
+    if (!window.FF.getTapRipples) return;
+    const now = performance.now();
+    const taps = window.FF.getTapRipples(now);
+    if (!taps.length) return;
+    const MAIN = stickThemeMain();
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineWidth = 1.5;                       // the stick ring's width
+    for (const tp of taps) {
+      // Two staggered pulses, expanding and fading over ~350ms.
+      for (const delay of [0, 120]) {
+        const age = now - tp.t - delay;
+        if (age < 0 || age > 350) continue;
+        const u = age / 350;
+        const a = (1 - u) * 0.5;
+        ctx.strokeStyle = `rgba(${MAIN[0]}, ${MAIN[1]}, ${MAIN[2]}, ${a})`;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 8 + u * 34, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
   function sampleStickLum(s, now) {
     if (now - stickGlass.lastSample < 400) return;
     stickGlass.lastSample = now;
@@ -1975,11 +2023,7 @@ function createRenderer(canvas) {
     const target = stickGlass.theme === 'DARK' ? 1 : 0;
     stickGlass.blend += Math.sign(target - stickGlass.blend) * Math.min(0.09,
       Math.abs(target - stickGlass.blend));
-    const GT = (window.FF.glass && window.FF.glass.STICK_THEMES)
-      || { LIGHT: { main: [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
-    const k = stickGlass.blend;
-    const mixc = (a, b) => Math.round(a + (b - a) * k);
-    const MAIN = [0, 1, 2].map((i) => mixc(GT.LIGHT.main[i], GT.DARK.main[i]));
+    const MAIN = stickThemeMain();
     const mainS = (a) => `rgba(${MAIN[0]}, ${MAIN[1]}, ${MAIN[2]}, ${a})`;
     // DYNAMIC MAX-CONTRAST (Eddie's ruling, 2026-08-24, superseding
     // the self-contrast duo after seeing it): the ORIGINAL single-
@@ -2796,6 +2840,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   const puffs = [];
   let puffPrevAlive = [];
 
+  let hopFxPrevSeq = [];
   function trackRespawns(state) {
     const bodies = [];
     for (const pl of state.players) bodies.push(pl.melon);
@@ -2806,8 +2851,50 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         spawnPuff(m.x, m.y, state.tick);
       }
       puffPrevAlive[i] = m.alive;
+      // ---- HOP DUST (prototype fx, 2026-08-25) ----
+      // The Coulomb push-off's reaction made visible: the same
+      // canonical-white material as spawn smoke and clouds, smaller,
+      // kicked up from the contact point OPPOSITE the tangential
+      // kick — the ground's share of the momentum. Read from the
+      // sim's breadcrumbs; the sim never reads back.
+      const seq = m.hopFxSeq || 0;
+      if (seq !== (hopFxPrevSeq[i] || 0)) {
+        hopFxPrevSeq[i] = seq;
+        spawnDust(m.hopFxX, m.hopFxY, state.tick,
+          m.hopFxKx || 0, m.hopFxKy || 0, m.hopFxNx || 0, m.hopFxNy || -1);
+      }
     }
     if (puffPrevAlive.length > bodies.length) puffPrevAlive.length = bodies.length;
+  }
+
+  // Dust: a small directional puff into the SAME list drawPuffs
+  // renders — one material, one rig, one light, three sizes (cloud,
+  // spawn puff, dust). Velocity: outward + along the surface normal,
+  // biased AGAINST the hop's tangential kick.
+  function spawnDust(x, y, tick, kx, ky, nx, ny) {
+    const balls = [];
+    const n = 3 + (Math.random() * 3 | 0);
+    // Reaction bias: unit vector opposite the kick, scaled by how
+    // hard the cone actually kicked (a plain vertical hop has kx=0
+    // and puffs symmetrically).
+    const kMag = Math.hypot(kx, ky);
+    const bx = kMag > 1e-6 ? -kx / kMag : 0;
+    const by = kMag > 1e-6 ? -ky / kMag : 0;
+    const bias = Math.min(46, kMag * 0.10);
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = Math.pow(Math.random(), 0.7) * 14;
+      balls.push({
+        dx: Math.cos(ang) * dist,
+        dy: Math.sin(ang) * dist * 0.6,
+        r: 4 + Math.pow(Math.random(), 1.6) * 9,
+        vx: Math.cos(ang) * (8 + Math.random() * 16) + bx * bias + nx * 6,
+        vy: Math.sin(ang) * (6 + Math.random() * 10) + by * bias + ny * (14 + Math.random() * 10),
+        life: 0.32 + Math.random() * 0.22,
+      });
+    }
+    puffs.push({ x, y, born: tick, balls });
+    if (puffs.length > 24) puffs.shift();
   }
 
   function spawnPuff(x, y, tick) {

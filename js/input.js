@@ -122,6 +122,11 @@ function initInput(state, canvas) {
         && (p.tUp - p.t0) <= C.hop.tapMs
         && (p.maxDev || 0) <= C.hop.tapDriftPx) {
         state.input.hopPending = (state.input.hopPending || 0) + 1;
+        // Ripple: fires on RECOGNITION, not on hop success — it is
+        // the input layer saying "heard you", which also masks the
+        // thumb-up latency. Success feedback is the dust's job.
+        tapFx.push({ x: p.x, y: p.y, t: p.tUp });
+        if (tapFx.length > 8) tapFx.shift();
       }
       fading.push(p);
       recompute();
@@ -136,6 +141,15 @@ function initInput(state, canvas) {
     keys.clear();
     recompute();
   });
+
+  // ---- Tap ripples (presentation; renderer-facing) ----
+  const tapFx = [];
+  window.FF.getTapRipples = (now) => {
+    for (let i = tapFx.length - 1; i >= 0; i--) {
+      if (now - tapFx[i].t > 400) tapFx.splice(i, 1);
+    }
+    return tapFx;
+  };
 
   // ---- Keyboard (desktop dev convenience) ----
   const keys = new Set();
