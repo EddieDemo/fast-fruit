@@ -132,43 +132,10 @@ const VIEW_W_M = 16.2;
 const VIEW_H_MIN_M = 7.5;   // escape hatch only: see the zoom law
 const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
 
-// Bot palette: each melon its own bright shade (player stays pure green).
-// Indexed by spawn order, so a bot keeps its color for the whole race.
-const BOT_PALETTE = [
-  // Eleven greens, L*-NORMALIZED into [54, 74]: every bot guarantees
-  // >=20 L* of highlight headroom, so the constant-contrast solver in
-  // litColor can hit its full delta on all of them (the old palette
-  // had L*93 pale limes with nowhere brighter to go — measured as the
-  // "subtle on some melons" complaint). Hues span the green family
-  // 78-164deg; the player's pure #00ff00 stays sacred and out-brights
-  // them all.
-  '#90c710', '#6bb31a', '#56c516', '#37a01c', '#1bc01b', '#24a93f',
-  '#17ce54', '#25965a', '#20b378', '#22a07e', '#608e24',
-];
-if (window.FF && window.FF.palette) window.FF.palette.register('bots', BOT_PALETTE); // Phase 0.1
-
 
 // Reused per-frame list of interpolated body poses (no per-frame GC).
 const drawList = [];
 
-// Canonical racer color by body index (players in slot order, then
-// bots) — shared with the debris system so every melon's pulp wears
-// its own green. Presentation-only; the sim never reads colors.
-window.FF.racerColor = function (state, bodyIndex) {
-  const np = state.players.length;
-  if (bodyIndex < np) {
-    const pb = state.players[bodyIndex] && state.players[bodyIndex].melon;
-    return (pb && pb.bodyColor) || PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
-  }
-  const body = state.bots[bodyIndex - np] && state.bots[bodyIndex - np].melon;
-  // Bots carry their seeded pigment (state.js, via the anchor band);
-  // the legacy palette survives only as a headless/boot fallback.
-  if (body && body.bodyColor) return body.bodyColor;
-  return BOT_PALETTE[(bodyIndex - np) % BOT_PALETTE.length];
-};
-
-// Canonical player-slot colors: every peer agrees on who wears what.
-const PLAYER_PALETTE = ['#00ff00', '#ff2d2d', '#2d8cff', '#ffd22d'];
 
 function createRenderer(canvas) {
   const baseCtx = canvas.getContext('2d');
@@ -1226,7 +1193,7 @@ function createRenderer(canvas) {
         x: gp.x + (gm.x - gp.x) * alpha,
         y: gp.y + (gm.y - gp.y) * alpha,
         angle: gp.angle + (gm.angle - gp.angle) * alpha,
-        color: PLAYER_PALETTE[i % PLAYER_PALETTE.length],
+        color: window.FF.palette.PLAYER_SLOTS[i % window.FF.palette.PLAYER_SLOTS.length],
         squash: gm, // remote players are simulated locally: real strain
         name: gm.name,
         pilot: gm.pilot,
@@ -1241,7 +1208,7 @@ function createRenderer(canvas) {
         // light marble bands); the player's body wears the palette
         // green their persistent melon's seed picked — Gerald's green
         // is Gerald's. Identity lives in the nameplate now.
-        color: state.melon.bodyColor || PLAYER_PALETTE[state.localSlot % PLAYER_PALETTE.length],
+        color: state.melon.bodyColor || window.FF.palette.PLAYER_SLOTS[state.localSlot % window.FF.palette.PLAYER_SLOTS.length],
         squash: state.melon, isPlayer: true,
         name: state.melon.name,
         pilot: state.melon.pilot,

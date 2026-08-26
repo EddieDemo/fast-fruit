@@ -63,10 +63,11 @@ function engage(gameState, opts) {
   state.sinceTick = (gameState && gameState.tick) || 0;
   // Remember whose wheel we took, so it can be handed back centred.
   state.driven = gameState || null;
-  // Stop the hands from reaching the wheel: pointers are cleared so a
-  // tap on RETRY can't also steer, and the visible stick vanishes
-  // because there is nothing to draw.
-  if (window.FF.setInputEnabled) window.FF.setInputEnabled(false);
+  // Stop the hands from reaching the wheel — by ANNOUNCEMENT (step
+  // 6b, 2026-08-26u): the autopilot states what happened, and
+  // input.js gates itself as a subscriber. The old direct call was a
+  // modes->presentation reach the ledger carried since the tiers.
+  if (window.FF.events) window.FF.events.emit('autopilot', { engaged: true });
   // Freeze the ghost at the flag.
   if (window.FF.ghost && window.FF.ghost.stopRecording) window.FF.ghost.stopRecording();
   return true;
@@ -91,7 +92,7 @@ function disengage() {
     gs.input.bounceAxis = 0;
   }
   state.driven = null;
-  if (window.FF.setInputEnabled) window.FF.setInputEnabled(true);
+  if (window.FF.events) window.FF.events.emit('autopilot', { engaged: false });
   return true;
 }
 

@@ -56,8 +56,12 @@ let cup = null;   // { leg, legRows: [][], points: {key: n}, handledOver }
 function begin() {
   // ONE CUP SEED, per-leg derivation: three games, three hills, three
   // skies — different from each other, deterministic per cup.
+  const M0 = window.FF.melon;
   cup = { leg: 0, legRows: [], points: {},
-    eventIds: [], seed: (Math.random() * 0x7fffffff) | 0 };
+    eventIds: [], seed: (Math.random() * 0x7fffffff) | 0,
+    // The reveal card animates the WHOLE party's earnings (the race
+    // cup's own xpStart pattern): snapshot before a single leg banks.
+    xpStart: (M0 && M0.pilotXp) ? M0.pilotXp() : null };
   startLeg();
 }
 
@@ -131,6 +135,11 @@ function onLegOver(st) {
       nextLabel: 'NEXT GAME',
       cupRows: cupRows(),
       onNext: () => startLeg(),
+      // THE PARTY ABANDON (2026-08-26s; the finish screen's quit was
+      // hidden behind this commit). Records nothing — not the games
+      // already played — mirroring the race cup's abandon law.
+      onAbandon: () => { abandonCup(); window.FF.flow.go('menu'); },
+      gamesRun: cup.leg,
     });
     return;
   }
@@ -146,7 +155,24 @@ function complete(st) {
   // player's place in the cup's own table, and XP_CUP on top of the
   // per-leg banks. Nothing party-specific is invented here.
   if (M && M.recordCup && mine) M.recordCup({ place: mine.place, points: mine.points });
-  if (M && M.addXp && window.FF.xp) M.addXp(window.FF.xp.XP_CUP);
+  // THE PRIZE IS TOLD, NOT JUST BANKED (2026-08-26s). The race cup
+  // queues an xp reveal card with a from/to snapshot so the bar
+  // animates the fact as it happened; the party walked the same
+  // addXp door but queued nothing, so completion paid silently. Same
+  // pattern, same doors: snapshot, bank, queue, settle level rolls.
+  if (M && M.addXp && window.FF.xp) {
+    const X = window.FF.xp;
+    const from = (typeof cup.xpStart === 'number') ? cup.xpStart
+      : (M.pilotXp ? M.pilotXp() : 0);
+    M.addXp(X.XP_CUP);
+    const to = M.pilotXp ? M.pilotXp() : from;
+    if (M.queueReward) {
+      M.queueReward({ kind: 'xp', from, to, added: to - from,
+        levelFrom: X.levelFor ? X.levelFor(from) : 1,
+        levelTo: X.levelFor ? X.levelFor(to) : 1 });
+      if (M.settleLevelRolls) M.settleLevelRolls();
+    }
+  }
   // THE FINAL IS THE SHARED SCREEN TOO (2026-08-26; the bespoke
   // overlay retired): CUP tab leads with the final table, PLACES
   // holds game 3, RUN IT BACK / MAIN MENU in the standard foot.
@@ -178,7 +204,13 @@ function ordWord(n) {
 // the latch. isOver stays on the leg contract for race-legs, whose
 // announcement ('race:over', when Wrong Way lands) arrives the same
 // way.
-function onSessionOver(payload, state) {
+// (payload, EVENT RECORD, state) — the bus's delivery order (fix
+// 2026-08-26r). This handler shipped reading the record as the state:
+// isOver() saw no .session and every session end was silently
+// ignored. The suites never caught it because the G-family drives
+// _test.onLegOver DIRECTLY — the bus leg of the chain was only ever
+// exercised on a device.
+function onSessionOver(payload, ev0, state) {
   if (!cup) return;
   const ev = EVENTS[cup.eventIds[cup.leg]];
   if (ev && ev.isOver(state)) onLegOver(state);
@@ -203,8 +235,20 @@ function bestsOf(key) {
 
 if (window.FF.events) window.FF.events.on('session:over', onSessionOver);
 
+// Abandon the running party cup: records NOTHING (the race cup's own
+// abandon law), tears the session world back to the daily through
+// THE lifecycle door. Safe to call with no cup (returns false).
+function abandonCup() {
+  if (!cup) return false;
+  cup = null;
+  window.FF.world.toDaily();
+  return true;
+}
+
 window.FF.partycup = {
   begin, registerEvent, LEGS, DUR_TICKS,
+  isRunning: () => !!cup,
+  abandon: abandonCup,
   _foldLeg: foldLeg, _finalTable: finalTable,
   // The functional-harness door (the if(false) lesson: text pins
   // cannot catch behavioural disabling; the suite drives these).

@@ -78,7 +78,7 @@ function step(state, dt) {
   for (let i = 0; i < state.players.length; i++) {
     const pl = state.players[i];
     if (pl.melon.alive) {
-      stepBody(pl.melon, pl.input, state.terrain, dt, i === state.localSlot ? state : null);
+      stepBody(pl.melon, pl.input, state.terrain, dt, i === state.localSlot ? state : null, state);
     }
   }
   for (let bi = 0; bi < state.bots.length; bi++) {
@@ -111,7 +111,7 @@ function step(state, dt) {
         b.input.rawAxis = 0;
         b.input.rawBounce = 0;
       }
-      stepBody(b.melon, b.input, state.terrain, dt, null);
+      stepBody(b.melon, b.input, state.terrain, dt, null, state);
     }
   }
 
@@ -438,10 +438,29 @@ function reviveIfDue(m, state, tick) {
   m.chainIndex = 0;
   m.lastFlightTicks = 0;
   m.lastFallPx = 0;
-  m.skiMarkX = null;      // first-impact x of the last REAL flight
-  m.skiMarkSeq = 0;       // bumps once per recorded mark
+  // Observer site: reset — observers declare their schema fields
+  // here, so every body carries them from birth (the declared-schema
+  // law, now extensible).
+  for (let oi = 0; oi < SIM_OBSERVERS.length; oi++) {
+    if (SIM_OBSERVERS[oi].reset) SIM_OBSERVERS[oi].reset(m, tick);
+  }
   m.protectTick = tick + CONFIG.spawnProtectTicks;
 }
+
+// SIM OBSERVERS (refactor step 5, 2026-08-26): the extension points
+// that end per-mode hand-edits of this file. A mode registers an
+// observer with any of the hooks below; the sim calls them at FIXED
+// SITES in REGISTRATION ORDER (script order is deterministic, so the
+// stream is too). Observers write DECLARED-SCHEMA breadcrumbs onto
+// bodies — the hitNx precedent, formalized — and never read anything
+// nondeterministic. Hooks:
+//   reset(m, tick)      — at the melon reset site: declare fields
+//   touchdown(m, state) — first contact after flight, BEFORE severity
+//                         (a fatal landing still runs it: death can
+//                         be the scoring event)
+const SIM_OBSERVERS = [];
+function registerSimObserver(o) { SIM_OBSERVERS.push(o); return o; }
+window.FF.registerSimObserver = registerSimObserver;
 
 // Reused list to avoid per-step allocation.
 const bodyList = [];
@@ -696,7 +715,7 @@ function hopImpulse(m, H) {
   };
 }
 
-function stepBody(m, inp, terrain, dt, sink) {
+function stepBody(m, inp, terrain, dt, sink, simState) {
   const invM = m.invM;
   const invI = m.invI;
   // The slab world, once per body step: the motor reads strand dir
@@ -940,14 +959,23 @@ function stepBody(m, inp, terrain, dt, sink) {
     m.lastFlightTicks = m.flightTicks || 0;
     // Fall height in px: apex to the ground we just met.
     m.lastFallPx = Math.max(0, m.y - (m.flightApexY === undefined ? m.y : m.flightApexY));
-    // THE MARK (Ski Jump ruling, 2026-08-25): the FIRST impact point
-    // of a real flight — recorded here, before severity, so a fatal
-    // landing still marks (death IS the scoring event). A real
-    // flight is >= 30 ticks (~0.25s): rolling bumps never mark.
-    // Unconditional breadcrumb, hitNx precedent; adapters read it.
-    if ((m.flightTicks || 0) >= 30) {
-      m.skiMarkX = m.x;
-      m.skiMarkSeq = (m.skiMarkSeq || 0) + 1;
+    // Observer site: touchdown, BEFORE severity (fatal landings
+    // still run — death can be the scoring event). The ski-jump mark
+    // lived here as a hand-edit from 2026-08-25 to 2026-08-26; it is
+    // now skijump.js's own registered observer, the first customer
+    // of the sites that end such hand-edits.
+    // THE WORLD, NOT THE SINK (fix 2026-08-26q). This line shipped
+    // reading `state` — a const declared thirty lines DOWN (the
+    // player-only telemetry alias of sink), so any landing with an
+    // observer registered threw a TDZ ReferenceError and killed the
+    // frame loop. The battery never saw it: the harness loads the sim
+    // tier only, and verify-skijump's SPY registrar replaces the real
+    // one — no suite ever ran real physics with a real observer. The
+    // `simState` guard is also the CLONE FENCE: stepBodyClone passes
+    // no world, so predictSplat's forecast landings can never fire
+    // observers and write predicted marks over real ones.
+    for (let oi = 0; oi < SIM_OBSERVERS.length; oi++) {
+      if (simState && SIM_OBSERVERS[oi].touchdown) SIM_OBSERVERS[oi].touchdown(m, simState);
     }
   }
   if (sumE > 0) {

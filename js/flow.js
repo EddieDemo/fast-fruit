@@ -25,6 +25,15 @@
 // ============================================================
 
 const flow = { state: 'boot' };
+// THE SHARED PRIVATES live in flow-lib.js (split commit 1,
+// 2026-08-26): IIFEs cannot share locals, so everything a screen
+// module will need is an explicit export. Destructured once here so
+// every call site below reads exactly as it did when these were
+// locals — the move-only guarantee.
+const { el, fmtTime, ordinal, ordinalSuffix, racerIdentity,
+        computeStandings, spinners, clearCanvas, startSpinners,
+        setSpinPaused, spinPaused, remeasureSpinners, pushSpecPortrait,
+        pushMelonPortrait } = window.FF.flowLib;
 let stateRef = null;
 let respawnFn = null;
 let netplayFn = null;   // () => true while a lockstep session is live
@@ -33,9 +42,7 @@ let providerFn = null;      // () => the live track provider, for fast-forward
 let lastResolved = null;    // the resolved finish times for this race
 let startLegFn = null;      // (trackName) => build a race on that track
 let rebuildFn = null;       // (trackName, botCount) => rebuild for a restore
-let practiceMode = true;    // true until a cup is started
 let finishHandledTick = null;
-let spinRAF = 0;
 
 // ---- Styles (scoped, injected) ----
 const CSS = `
@@ -525,124 +532,6 @@ canvas.ff-spin { width: 52px; height: 52px; flex: none; }
 // Moments of ACTION stay melon-only by design (the ticker, the death
 // overlay): "PULPED IN THE PACK — LIL SQUISH" is drama, and appending
 // a pilot to it deflates the joke. Moments of RECORD carry both.
-function racerIdentity(melonName, pilotName, isPlayer) {
-  const nm = el('div', 'ff-rname', melonName);
-  if (isPlayer) nm.appendChild(el('span', 'ff-you-tag', '  \u2014 YOU'));
-  if (pilotName) nm.appendChild(el('div', 'ff-rpilot', pilotName));
-  return nm;
-}
-
-// ---- THE AWARD FLOW ------------------------------------------------
-// TWO STEPS, because they are two different questions and answering
-// them on one screen would put seven melons and a decision on a 390px
-// phone.
-//
-//   1. THE CEREMONY — the same screen a first melon arrives on,
-//      showing the new melon and its stats, with a quiet LEAVE IT
-//      beside KEEP. Answerable from the new melon alone: you do not
-//      need to think about your other six to know whether a 6.1 kg
-//      runt interests you.
-//   2. THE RELEASE — only if they keep it AND the stable is full.
-//      Which of the six goes, with a confirm, because the released
-//      melon's career record dies with it and that is the part that
-//      is genuinely irreversible.
-//
-// The melon is already in the stable (or held aside, if full) before
-// any of this runs: the flow decides what to KEEP, never whether the
-// prize existed.
-function openAwardFlow(award, then) {
-  const go = then || (() => flow.go('menu'));
-  // Not full: it is already in the stable. Name it and go.
-  if (!award.full) {
-    namingAward = award.spec;
-    flow.openNaming('award', () => { namingAward = null; go(); });
-    return;
-  }
-  // Full: the ceremony first, then the release grid if they keep it.
-  namingAward = award.spec;
-  flow.openNaming('award', (kept) => {
-    namingAward = null;
-    if (kept === null) { go(); return; }   // left it
-    openRelease(award.spec, go);
-  }, { allowLeave: true });
-}
-
-// Step two: which of the six goes. Built fresh each time — it is a
-// rare screen and the stable it lists changes.
-let elRelease = null;
-function openRelease(spec, then) {
-  const go = then || (() => flow.go('menu'));
-  const M = window.FF.melon;
-  if (!elRelease) {
-    elRelease = el('div', 'ff-screen ff-release-screen');
-    const panel = el('div', 'ff-panel');
-    const head = el('div', 'ff-head');
-    head.appendChild(el('h1', 'ff-title', 'STABLE FULL'));
-    head.appendChild(el('p', 'ff-sub', 'choose one to release'));
-    panel.appendChild(head);
-    const body = el('div', 'ff-body');
-    const grid = el('div', 'ff-release-grid');
-    body.appendChild(grid);
-    panel.appendChild(body);
-    const foot = el('div', 'ff-foot');
-    const cancel = el('button', 'ff-btn ff-quiet', 'keep my six, discard the new one');
-    foot.appendChild(cancel);
-    panel.appendChild(foot);
-    elRelease.appendChild(panel);
-    document.body.appendChild(elRelease);
-    elRelease._grid = grid;
-    elRelease._cancel = cancel;
-  }
-  const grid = elRelease._grid;
-  grid.textContent = '';
-  spinners.length = 0;
-  M.stableList().forEach((m, i) => {
-    const d = M.deriveSpec(m);
-    const cell = el('button', 'ff-release-cell');
-    const cv = el('canvas', 'ff-spin');
-    cv.width = 160; cv.height = 160;
-    cell.appendChild(cv);
-    cell.appendChild(el('div', 'ff-rel-name', m.name || M.UNNAMED_NAME));
-    cell.appendChild(el('div', 'ff-rel-stat', d.kg.toFixed(1) + ' kg'));
-    const r = m.record || {};
-    cell.appendChild(el('div', 'ff-rel-rec',
-      (r.races || 0) + ' races  \u00b7  ' + (r.wins || 0) + ' wins'));
-    cell.addEventListener('click', () => {
-      // THE CONFIRM SAYS WHAT IS LOST. Not "are you sure" — what for.
-      confirmAsk({
-        title: 'RELEASE ' + (m.name || 'THIS MELON').toUpperCase() + '?',
-        body: 'Its career \u2014 ' + (r.races || 0) + ' races, ' + (r.wins || 0)
-          + ' wins \u2014 goes with it. This cannot be undone.',
-        cancel: 'KEEP IT',
-        confirm: 'RELEASE',
-        onConfirm: () => {
-          M.acceptAward(spec, i);
-          elRelease.style.display = 'none';
-          namingAward = spec;
-          flow.openNaming('award', () => { namingAward = null; go(); });
-        },
-      });
-    });
-    grid.appendChild(cell);
-    clearCanvas(cv);
-    const F = window.FF.FRUITS.watermelon || {};
-    const a = window.FF.CONFIG.semiMajor * d.scale;
-    spinners.push({ canvas: cv, angle: i * 0.7, a, b: a * 0.78,
-      color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon', rate: 0.4 });
-  });
-  elRelease._cancel.onclick = () => {
-    elRelease.style.display = 'none';
-    go();
-  };
-  elRelease.style.display = 'flex';
-  spinnersPaused = false;
-  startSpinners();
-}
-
-// Dev/test hook: the release screen is otherwise only reachable by
-// winning a seventh melon, which is days of play away.
-window.FF._openRelease = (spec) => openRelease(spec);
-
 // Dev hook: dress the active melon, until the customise screen exists.
 //   FF._dress('eye-googly', 'flag-fr')      apply, seeded placement
 //   FF._dress()                             strip it back to bare
@@ -869,124 +758,10 @@ window.FF._dress = (...ids) => {
   const spec = M.active();
   spec.decals = ids.length ? ids.map((id, i) => D.place(spec, id, i)) : null;
   M._save();
-  if (elMenu && elMenu._paintPortrait) elMenu._paintPortrait();
+  const ms = SCREENS.menu;
+  if (ms && ms.paintPortrait) ms.paintPortrait();
   return spec.decals;
 };
-
-function computeStandings(state, resolved) {
-  const rows = [];
-  const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
-  const startTick = state.raceStartTick || 0;
-  const push = (m, isPlayer) => rows.push({
-    name: m.name || (isPlayer ? 'YOU' : '???'),
-    // The PILOT: who drove this melon. The melon is the character;
-    // the pilot is the competitor, and a results table has to say
-    // both or it cannot tell you who actually beat you.
-    pilot: m.pilot || '',
-    // ...and the IDENTITY OF RECORD, which every downstream table
-    // keys on (state.racerKey). Computed once, here, so the cup and
-    // the resolver cannot disagree about who a row is.
-    key: window.FF.racerKey(m),
-    // Elapsed from the race start to THIS racer's own crossing. Null
-    // for anyone still out on track when the standings were captured
-    // — shown as a dash, because inventing a time for an unfinished
-    // racer would be the one dishonest number on the screen.
-    // A racer still on track when the flag fell has no stamp of its
-    // own; finishline.js fast-forwards the rest of the race on a
-    // clone and supplies the REAL time it would have set. Only a
-    // body that could not finish at all stays null — and it is
-    // marked DNF, which sorts LAST on time rather than first.
-    timeSec: (m.finishTick !== undefined && m.finishTick !== null)
-      ? (m.finishTick - startTick) / hz
-      : (resolved && resolved.byKey[window.FF.racerKey(m)] && !resolved.byKey[window.FF.racerKey(m)].dnf
-        ? resolved.byKey[window.FF.racerKey(m)].timeSec
-        : null),
-    dnf: !!(resolved && resolved.byKey[window.FF.racerKey(m)] && resolved.byKey[window.FF.racerKey(m)].dnf
-      && (m.finishTick === undefined || m.finishTick === null)),
-    fruit: m.fruit || 'watermelon',
-    color: m.bodyColor || '#37a01c',
-    patKey: m.patKey || m.name || 'x',
-    // THE OUTFIT IS PART OF WHAT A MELON LOOKS LIKE (ruled
-    // 2026-08-16): any surface that draws a melon draws its decals.
-    // Bots carry null today; the day bot decals ship, every table
-    // shows them for free.
-    decals: m.decals || null,
-    // The body's OWN physics mass, in kg: BASE_KG is the scale-1
-    // anchor and 1/(invM * CONFIG.mass) is the mass ratio the physics
-    // actually integrates. One law for player and bots — the card
-    // must never invent a number the collision didn't feel.
-    kg: m.invM ? window.FF.melon.BASE_KG / (m.invM * window.FF.CONFIG.mass) : null,
-    a: m.a, b: m.b,
-    x: m.x,
-    isPlayer,
-  });
-  for (const p of state.players) push(p.melon, p.melon === state.melon);
-  for (const b of state.bots) push(b.melon, false);
-  // AN OPEN SESSION RANKS BY ITS METRIC (party games, 2026-08-26):
-  // the chassis owns the ranking and the formatted best; the rows are
-  // the same rows — portraits, pilots, decals, taps — with the metric
-  // where the time would be. Resolution machinery (settle, projected
-  // times, DNF) is race-shaped and never runs here: a session's clock
-  // ending IS the resolution.
-  if (state.session && window.FF.session) {
-    const S = window.FF.session;
-    const bodies = [];
-    for (const p of state.players) bodies.push(p.melon);
-    for (const b of state.bots) bodies.push(b.melon);
-    for (let i = 0; i < rows.length; i++) {
-      rows[i].metricStr = S.formatBest(state, bodies[i]);
-      rows[i]._rank = state.session.rank[i] || rows.length;
-      rows[i].timeSec = null;
-      rows[i].dnf = false;
-    }
-    rows.sort((r, q) => r._rank - q._rank);
-    rows.forEach((r, i) => { r.pos = i + 1; });
-    return rows;
-  }
-  // PLACE FOLLOWS TIME. Ordering by distance-at-the-flag was the old
-  // rule, from before finish times existed for everyone: it put a
-  // melon five metres further along ahead of one running a faster
-  // pace, and then printed both their times underneath — a standing
-  // that visibly contradicted its own numbers.
-  //
-  // Now the finishing order IS the order of finish times: measured
-  // for anyone who crossed, projected for the rest (finishline.js).
-  // A racer with no time at all (DNF) sorts last, and distance is the
-  // final tiebreak so two identical times still order sensibly.
-  rows.sort((r, q) => {
-    const rt = (r.dnf || r.timeSec === null || r.timeSec === undefined) ? Infinity : r.timeSec;
-    const qt = (q.dnf || q.timeSec === null || q.timeSec === undefined) ? Infinity : q.timeSec;
-    if (rt !== qt) return rt - qt;
-    return q.x - r.x;
-  });
-  rows.forEach((r, i) => { r.pos = i + 1; });
-  return rows;
-}
-
-// mm:ss.s from the start line to this racer's own crossing.
-function fmtTime(sec) {
-  if (sec === null || sec === undefined) return '\u2014';
-  const m = Math.floor(sec / 60);
-  const s = sec - m * 60;
-  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
-}
-
-// A full ordinal ("3rd"). fillCup called this before it existed —
-// a ReferenceError inside the finish screen's enter(), which killed
-// the frame loop and left a black screen on NEXT RACE.
-function ordinal(n) {
-  return String(n) + ordinalSuffix(n);
-}
-
-// English ordinal suffix. 11/12/13 are the classic trap (eleventh,
-// not eleven-first), so the teens are special-cased before the
-// last-digit rule — a 12-racer field would have hit it.
-function ordinalSuffix(n) {
-  const t = n % 100;
-  if (t >= 11 && t <= 13) return 'th';
-  const d = n % 10;
-  return d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
-}
 
 // ---- THE COUNTDOWN CAPTION ----------------------------------------
 // A DOM overlay rather than canvas text: it inherits the type scale
@@ -1109,334 +884,8 @@ function confirmAsk(opts) {
 
 function confirmIsOpen() { return !!elConfirm && elConfirm.style.display !== 'none'; }
 
-// ---- DOM scaffolding ----
-let elMenu = null, elFinish = null;
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
-function buildMenu() {
-  elMenu = el('div', 'ff-screen ff-menu-screen');
-  const panel = el('div', 'ff-panel');
-  const head = el('div', 'ff-head');
-  const title = el('h1', 'ff-title', 'FAST FRUIT');
-  head.appendChild(title);
-  head.appendChild(el('p', 'ff-sub', 'pick your racer'));
-  panel.appendChild(head);
-  // THE HANDLE for developer tools: five taps here. Outside the play
-  // area, on a screen you choose to visit, mirroring the build-number
-  // convention every phone owner has already met.
-  if (window.FF.devtools) window.FF.devtools.arm(title);
-
-  // Two blocks so one media query can flip portrait-above-papers into
-  // portrait-beside-papers without touching the DOM.
-  const body = el('div', 'ff-menu-body');
-  const leftCol = el('div', 'ff-menu-left');
-  const rightCol = el('div', 'ff-menu-right');
-  const row = el('div', 'ff-melon-row');
-  const left = el('button', 'ff-arrow', '\u25C0');
-  const spin = el('canvas', 'ff-spin ff-portrait');
-  // Initial hint only: syncCanvasSize measures the real box every
-  // frame and resizes the backing store to match device pixels.
-  spin.width = 560; spin.height = 560;
-  const right = el('button', 'ff-arrow', '\u25B6');
-  row.appendChild(left); row.appendChild(spin); row.appendChild(right);
-  leftCol.appendChild(row);
-  // THE PORTRAIT IS THE DOOR (Eddie, 2026-08-15): tapping the melon
-  // opens the edit screen — rename and decals in one place. A big
-  // melon that opens the editor is a big target; the chip underneath
-  // is the discoverability, not the button.
-  const openEditor = () => {
-    if (window.FF.editor) window.FF.editor.open(() => flow.go('menu'));
-  };
-  spin.style.cursor = 'pointer';
-  spin.setAttribute('role', 'button');
-  spin.setAttribute('tabindex', '0');
-  spin.title = 'edit melon';
-  spin.addEventListener('click', openEditor);
-  spin.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(); }
-  });
-  const editChip = el('button', 'ff-edit-chip', '\u270E edit');
-  editChip.addEventListener('click', openEditor);
-  leftCol.appendChild(editChip);
-  const nameEl = el('div', 'ff-melon-name', '');
-  // THE SECOND DOOR — now into the EDITOR, where renaming lives with
-  // the rest of changing-your-melon (ruled 2026-08-15). The rename
-  // card itself is unchanged, one tap deeper; the pause-screen door
-  // and the pilot door below still open it directly.
-  nameEl.classList.add('ff-renamable');
-  nameEl.setAttribute('role', 'button');
-  nameEl.setAttribute('tabindex', '0');
-  nameEl.title = 'edit melon';
-  const openRename = openEditor;
-  nameEl.addEventListener('click', openRename);
-  nameEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRename(); }
-  });
-  leftCol.appendChild(nameEl);
-  // WHO IS DRIVING IT. The same melon-over-pilot relationship the
-  // standings use, on the screen where you pick the melon — and the
-  // second rename door, because a player who wants to be called
-  // something looks here first.
-  const releaseBtn = el('button', 'ff-release-link', 'release this melon');
-  releaseBtn.style.display = 'none';
-  const pilotEl = el('div', 'ff-melon-pilot ff-renamable', '');
-  pilotEl.setAttribute('role', 'button');
-  pilotEl.setAttribute('tabindex', '0');
-  pilotEl.title = 'rename yourself';
-  const openPilotRename = () => flow.openNaming('pilot');
-  pilotEl.addEventListener('click', openPilotRename);
-  pilotEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPilotRename(); }
-  });
-  leftCol.appendChild(pilotEl);
-  leftCol.appendChild(releaseBtn);
-  const statsEl = el('div', 'ff-stats');
-  rightCol.appendChild(statsEl);
-  // (Single table now — the CAREER sub-heading retired with the split.
-  // melon.career() is untouched and still feeds it.)
-  body.appendChild(leftCol);
-  body.appendChild(rightCol);
-  const bodyZone = el('div', 'ff-body');
-  bodyZone.appendChild(body);
-  panel.appendChild(bodyZone);
-
-  // THE HIERARCHY IS THE EXPLANATION. The cup is the day's event and
-  // the single race is how you learn it, so they are not peers: one
-  // primary button, one quiet secondary. The cup's label carries the
-  // SCALE of the commitment — four races is a real ask, and a player
-  // who discovers that in race three feels tricked.
-  // A half-finished run is the most urgent thing on this screen, so
-  // it takes the primary slot and pushes the cup down to secondary.
-  const resumeBtn = el('button', 'ff-btn', 'RESUME');
-  const cupBtn = el('button', 'ff-btn',
-    'DAILY CUP \u00b7 ' + ((window.FF.cup && window.FF.cup.LEGS) || 3) + ' RACES');
-  // PARTY CUP replaces practice (doorway swap, ruled 2026-08-25:
-  // practice-mode machinery stays dormant behind it; full removal is
-  // its own future commit with the flow suite bracketing it).
-  const race = el('button', 'ff-btn ff-secondary', 'PARTY CUP \u00b7 3 GAMES');
-  const foot = el('div', 'ff-foot');
-  foot.appendChild(resumeBtn);
-  foot.appendChild(cupBtn);
-  foot.appendChild(race);
-  const dayLine = el('div', 'ff-dayline', '');
-  foot.appendChild(dayLine);
-  // A run that expired while the player was away gets SAID, not
-  // silently removed: they left a race waiting and came back for it,
-  // and a button that simply isn't there reads as a fault in their
-  // memory or in the game. One dim line, shown once.
-  const expiredLine = el('div', 'ff-expired', '');
-  expiredLine.style.display = 'none';
-  foot.appendChild(expiredLine);
-  panel.appendChild(foot);
-  elMenu.appendChild(panel);
-  document.body.appendChild(elMenu);
-
-  const M = window.FF.melon;
-  // WHAT THE MENU SHOWS, and in what order. melon.js still computes
-  // the full card — every physical stat and the whole career record —
-  // and this is purely the menu's editorial choice about which of it
-  // earns space on the first screen (Eddie, 2026-08-12). A later
-  // "detailed info" view is then a different selection over the same
-  // data, not new plumbing: change this list, change the card.
-  //
-  // The NAME is deliberately absent: it sits under the portrait as a
-  // heading, not as a row in a table of statistics.
-  const MENU_ROWS = ['species', 'weight', 'races', 'wins', 'podiums', 'best'];
-
-  // One renderer for both halves: stats() and career() return the
-  // same row shape, so the card grows by adding rows in melon.js and
-  // never by editing the menu.
-  const renderRows = (box, rows) => {
-    box.textContent = '';
-    for (const r of rows) {
-      const line = el('div', 'ff-stat-row');
-      line.appendChild(el('span', 'k', r.label));
-      const v = el('span', 'v', r.value);
-      if (r.note) v.appendChild(el('small', null, r.note));
-      line.appendChild(v);
-      box.appendChild(line);
-    }
-  };
-  const fillStats = () => {
-    const design = window.FF.studio && window.FF.studio.design;
-    const fruit = (design && design.fruit) || 'watermelon';
-    // Both sources, indexed by key, then selected in the declared
-    // order. Unknown keys are skipped rather than rendered blank, so
-    // this list can name a row that a future species doesn't have.
-    const byKey = new Map();
-    for (const r of (M.stats ? M.stats(M.active().seed, fruit, M.active().wide) : [])) byKey.set(r.key, r);
-    for (const r of (M.career ? M.career() : [])) byKey.set(r.key, r);
-    const rows = [];
-    for (const k of MENU_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
-    renderRows(statsEl, rows);
-  };
-  const refresh = () => {
-    fillStats();
-    // The day's identity, and how you have done at it. This is what
-    // makes returning tomorrow feel like a fixture rather than a
-    // relaunch.
-    // A waiting run rewrites the menu's hierarchy.
-    const snap = window.FF.resume ? window.FF.resume.peek() : null;
-    // peek() clears an expired snapshot as a side effect and leaves a
-    // note behind; ask AFTER peeking, and only when nothing is
-    // waiting (a fresh run supersedes news about an old one).
-    if (elMenu._expiredLine) {
-      const why = (!snap && window.FF.resume && window.FF.resume.takeExpiry)
-        ? window.FF.resume.takeExpiry() : null;
-      // 'day' is the interesting case and the common one: a new daily
-      // landed while they were away. 'age' means the run simply sat
-      // too long. Neither is an error, so neither shouts.
-      elMenu._expiredLine.textContent = why === 'day'
-        ? "yesterday's run expired \u00b7 today's track is new"
-        : why === 'age' ? 'your unfinished run expired' : '';
-      elMenu._expiredLine.style.display = elMenu._expiredLine.textContent ? '' : 'none';
-    }
-    if (elMenu._resumeBtn) {
-      elMenu._resumeBtn.style.display = snap ? '' : 'none';
-      elMenu._cupBtn.classList.toggle('ff-secondary', !!snap);
-      if (snap) {
-        elMenu._resumeBtn.textContent = snap.cup
-          ? 'RESUME CUP \u00b7 RACE ' + Math.min(window.FF.cup.LEGS, (snap.cup.leg || 0) + 1)
-            + ' OF ' + window.FF.cup.LEGS
-          : 'RESUME PRACTICE';
-      }
-    }
-    if (window.FF.cup && window.FF.dailyTrackName) {
-      const day = window.FF.dailyTrackName().replace('Daily ', '');
-      const rec = window.FF.cup.dayRecord();
-      // The build stamp rides along: a screenshot of the menu now
-      // says which build produced everything else in the screenshot.
-      const build = window.FF.BUILD ? '  \u00b7  ' + window.FF.BUILD : '';
-      dayLine.textContent = (rec && rec.bestPoints !== null
-        ? day + '  \u00b7  best ' + rec.bestPoints + ' pts in ' + rec.attempts
-          + (rec.attempts === 1 ? ' try' : ' tries')
-        : day + '  \u00b7  not raced yet') + build;
-    }
-    const st = M._load();
-    const cur = M.active();
-    nameEl.textContent = (cur.name || M.UNNAMED_NAME || 'Unnamed Melon')
-      + (st.melons.length > 1 ? '  (' + (st.active + 1) + '/' + st.melons.length + ')' : '');
-    pilotEl.textContent = M.playerName ? M.playerName() : 'Player';
-    const many = st.melons.length > 1;
-    releaseBtn.style.display = many ? '' : 'none';
-    left.style.visibility = many ? 'visible' : 'hidden';
-    right.style.visibility = many ? 'visible' : 'hidden';
-  };
-  // THE PORTRAIT IS PART OF THE STATE, NOT PART OF THE ENTRANCE.
-  // It was pushed once in menu.enter() and never rebuilt, so cycling
-  // melons repainted the stats and the name while the picture kept
-  // showing the first melon — the one screen whose entire job is
-  // "look at your melon" was showing the wrong one. Rebuilding here
-  // means any future thing that changes the active melon repaints for
-  // free. The rotation angle carries over so the swap reads as a
-  // change of melon rather than a stutter.
-  const paintPortrait = () => {
-    const prev = spinners.length ? spinners[0].angle : 0;
-    spinners.length = 0;
-    clearCanvas(elMenu._spin);
-    pushMelonPortrait(elMenu._spin);
-    if (spinners.length) spinners[0].angle = prev;
-    spinnersPaused = false;
-    startSpinners();
-  };
-  elMenu._paintPortrait = paintPortrait;
-
-  const cycle = (d) => {
-    const st = M._load();
-    M.setActive((st.active + d + st.melons.length) % st.melons.length);
-    refresh();
-    paintPortrait();
-    // No respawn here any more: during the exhibition a respawn would
-    // restart the background race on every arrow press, and the real
-    // grid is rebuilt on RACE anyway.
-    if (!(window.FF.exhibition && window.FF.exhibition.running) && respawnFn) respawnFn();
-  };
-  left.addEventListener('click', () => cycle(-1));
-  right.addEventListener('click', () => cycle(1));
-  // RELEASE, from the start screen. Only offered when there is more
-  // than one melon — you must always have something to race — and it
-  // always confirms, because the career record is what is actually
-  // lost and that cannot be undone.
-  releaseBtn.addEventListener('click', () => {
-    const st = M._load();
-    const cur = M.active();
-    const r = cur.record || {};
-    confirmAsk({
-      title: 'RELEASE ' + (cur.name || 'THIS MELON').toUpperCase() + '?',
-      body: 'Its career \u2014 ' + (r.races || 0) + ' races, ' + (r.wins || 0)
-        + ' wins \u2014 goes with it. This cannot be undone.',
-      cancel: 'KEEP IT',
-      confirm: 'RELEASE',
-      onConfirm: () => {
-        if (M.deleteMelon(st.active)) refresh();
-      },
-    });
-  });
-  // PRACTICE: leg 1, no record, freely retried.
-  race.addEventListener('click', () => {
-    fromMenuOrRetry = true;
-    // practiceMode stays true for a party cup: it is the flag that
-    // keeps the RACE finish machinery from writing race records, and
-    // a session never reaches that machinery anyway (no finish line).
-    // Party rewards go through the party cup's own completion doors.
-    practiceMode = true;
-    if (window.FF.cup) window.FF.cup.abandon();
-    if (window.FF.exhibition) window.FF.exhibition.stop();
-    if (window.FF.partycup) { window.FF.partycup.begin(); return; }
-    // Select TODAY'S leg-1 track at press time (2026-08-17). The old
-    // path just respawned whatever main.js resolved at page load —
-    // which silently raced YESTERDAY'S daily after midnight without a
-    // reload, and pinned the dev random-track flag to one boot track.
-    // Same selection call a cup leg uses; fresh name each press.
-    if (startLegFn && window.FF.dailyTrackName) {
-      startLegFn(window.FF.dailyTrackName());
-    } else if (respawnFn) {
-      respawnFn();
-    }
-    flow.go('race');
-  });
-  // THE CUP: four legs, scored together.
-  cupBtn.addEventListener('click', () => {
-    if (!window.FF.cup || !startLegFn) return;
-    fromMenuOrRetry = true;
-    practiceMode = false;
-    if (window.FF.exhibition) window.FF.exhibition.stop();
-    window.FF.cup.begin();
-    startLegFn(window.FF.cup.trackForLeg(0));
-    flow.go('race');
-  });
-  elMenu._dayLine = dayLine;
-  elMenu._expiredLine = expiredLine;
-  elMenu._resumeBtn = resumeBtn;
-  elMenu._cupBtn = cupBtn;
-  resumeBtn.addEventListener('click', () => {
-    const R = window.FF.resume;
-    if (!R || !rebuildFn) return;
-    const snap = R.restore(stateRef, rebuildFn);
-    // Vanished or stale between the menu being drawn and this tap
-    // (the midnight case, if it turns over in that gap): refresh
-    // re-reads the store, hides the button and shows the note that
-    // restore's own peek() just left behind.
-    if (!snap) { refresh(); return; }
-    practiceMode = !!snap.practice;
-    fromMenuOrRetry = false;                  // mid-run: keep the records
-    if (window.FF.exhibition) window.FF.exhibition.stop();
-    // Never drop a returning player into a moving world.
-    flow.go('race');
-    flow.go('pause');
-  });
-  elMenu._refresh = refresh;
-  elMenu._spin = spin;
-  elMenu._stats = statsEl;
-}
 
 let elPause = null, elPauseBtn = null, elPixBtn = null;
-let elFinishNote = null, elFinishTitle = null;
 let fromMenuOrRetry = true; // set by the paths that BEGIN a race
 function buildPause() {
   elPause = el('div', 'ff-screen');
@@ -1534,8 +983,19 @@ function buildPause() {
     // ones, and a points table assembled from cherry-picked legs is
     // not a result. Unlimited ATTEMPTS were always the design; per-leg
     // retries are a different, weaker thing.
+    // THE PARTY OBEYS THE SAME LAW (2026-08-26s): restarting a
+    // single game would let a player re-roll a bad one and keep the
+    // good ones. begin() rebuilds from game 1 through the lifecycle
+    // door, which tears the live session down itself.
+    const PC = window.FF.partycup;
+    if (PC && PC.isRunning && PC.isRunning()) {
+      PC.begin();
+      fromMenuOrRetry = true;
+      flow.go('race');
+      return;
+    }
     const c = window.FF.cup;
-    if (!practiceMode && c && c.isRunning() && startLegFn) {
+    if (c && c.isRunning() && startLegFn) {
       if (window.FF.resume) window.FF.resume.clear();
       c.begin();
       startLegFn(c.trackForLeg(0));
@@ -1562,6 +1022,18 @@ function buildPause() {
     // handover matched both handlers at once and pasted `collectThen`
     // into this one, where it is not in scope: the console threw
     // ReferenceError and MAIN MENU stopped working from pause.
+    // MID-PARTY, MENU MEANS ABANDON (2026-08-26s). Before this
+    // branch existed the handler fell through to the race path:
+    // the party cup stayed alive in memory and respawnFn rebuilt a
+    // race under a live session. abandon() records nothing and
+    // tears back to the daily through the lifecycle door.
+    const PC2 = window.FF.partycup;
+    if (PC2 && PC2.isRunning && PC2.isRunning()) {
+      PC2.abandon();
+      fromMenuOrRetry = true;
+      flow.go('menu');
+      return;
+    }
     if (window.FF.resume) window.FF.resume.clear();
     if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
     if (respawnFn) respawnFn();
@@ -1633,339 +1105,6 @@ function buildPause() {
   });
 }
 
-function buildFinish() {
-  elFinish = el('div', 'ff-screen ff-finish-screen');
-  const panel = el('div', 'ff-panel');
-  const head = el('div', 'ff-head');
-  const finishTitle = el('h1', 'ff-title', 'FINISH');
-  head.appendChild(finishTitle);
-  // WHAT THIS RESULT COUNTED FOR. A practice race ends on the same
-  // screen as a cup race and records nothing — a player who notices
-  // their stats did not move will assume a bug, not a rule. Saying so
-  // costs one line and removes the doubt entirely.
-  const finishNote = el('p', 'ff-sub ff-finish-note', '');
-  head.appendChild(finishNote);
-  elFinishNote = finishNote;
-  elFinishTitle = finishTitle;
-  // Three tabs: the result, the race, and your run. PLACES leads
-  // because it answers the question everyone has at the flag; the
-  // other two are for the curious, and burying them behind a tap is
-  // what keeps the result page from becoming a spreadsheet.
-  const tabs = el('div', 'ff-tabs');
-  // A tab strip is not a row of buttons, and now that it no longer
-  // LOOKS like one it should not sound like one either: a screen
-  // reader announcing "four buttons" gives the same wrong impression
-  // the old styling gave the eye. role=tablist + aria-selected says
-  // "one choice, currently on this", which is what showTab maintains.
-  tabs.setAttribute('role', 'tablist');
-  const panes = {};
-  const tabBtns = {};
-  const rows = el('div', 'ff-rows');
-  const facts = el('div', 'ff-facts');
-  const summary = el('div', 'ff-summary');
-  const cupTable = el('div', 'ff-facts');
-  const paneDefs = [
-    ['cup', 'CUP', cupTable],
-    ['places', 'PLACES', rows],
-    ['race', 'RACE', facts],
-    ['you', 'YOU', summary],
-  ];
-  for (const [key, label, content] of paneDefs) {
-    const btn = el('button', 'ff-tab', label);
-    btn.setAttribute('role', 'tab');
-    btn.setAttribute('aria-selected', 'false');
-    btn.setAttribute('aria-controls', 'ff-pane-' + key);
-    btn.id = 'ff-tabbtn-' + key;
-    btn.addEventListener('click', () => showTab(key));
-    tabs.appendChild(btn);
-    tabBtns[key] = btn;
-    const pane = el('div', 'ff-pane');
-    pane.id = 'ff-pane-' + key;
-    pane.setAttribute('role', 'tabpanel');
-    pane.setAttribute('aria-labelledby', 'ff-tabbtn-' + key);
-    pane.appendChild(content);
-    panes[key] = pane;
-  }
-  head.appendChild(tabs);
-  panel.appendChild(head);
-  const bodyZone = el('div', 'ff-body');
-  for (const [key] of paneDefs) bodyZone.appendChild(panes[key]);
-  panel.appendChild(bodyZone);
-  const retry = el('button', 'ff-btn', 'RETRY');
-  const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
-  elFinish._retry = retry;
-  const btns = el('div', 'ff-buttons');
-  btns.appendChild(retry);
-  btns.appendChild(menu);
-  // Mid-cup the action is NEXT RACE and nothing else is a peer:
-  // leaving abandons the attempt entirely, so it must be deliberate
-  // rather than one of two equal buttons.
-  const next = el('button', 'ff-btn', 'NEXT RACE');
-  const quit = el('button', 'ff-btn ff-quiet', 'abandon cup');
-  elFinish._next = next;
-  elFinish._quit = quit;
-  const cupBtns = el('div');
-  cupBtns.appendChild(next);
-  cupBtns.appendChild(quit);
-  const foot = el('div', 'ff-foot');
-  foot.appendChild(btns);
-  foot.appendChild(cupBtns);
-  panel.appendChild(foot);
-  elFinish._btns = btns;
-  elFinish._cupBtns = cupBtns;
-  next.addEventListener('click', () => {
-    if (sessionCtx && sessionCtx.onNext) {
-      const go2 = sessionCtx.onNext;
-      sessionCtx = null;
-      fromMenuOrRetry = true;
-      go2();                       // the event module owns the transition
-      return;
-    }
-    const c = window.FF.cup;
-    if (!c || !startLegFn) return;
-    startLegFn(c.trackForLeg(c.current().leg));
-    fromMenuOrRetry = true;
-    flow.go('race');
-  });
-  // ABANDONING IS DESTRUCTIVE AND SILENT: it throws away every leg
-  // already raced, and nothing on screen would say so afterwards. A
-  // quiet button made it hard to hit BY ACCIDENT; a confirm makes it
-  // impossible — and, more usefully, it states the cost in the one
-  // moment the player is deciding.
-  quit.addEventListener('click', () => {
-    const c = window.FF.cup;
-    const legs = (c && c.current()) ? c.current().results.length : 0;
-    confirmAsk({
-      title: 'ABANDON CUP?',
-      body: legs === 1
-        ? 'One race already run. It will not be recorded.'
-        : legs > 1
-          ? legs + ' races already run. None of them will be recorded.'
-          : 'Nothing will be recorded.',
-      confirm: 'ABANDON',
-      cancel: 'KEEP RACING',
-      onConfirm: () => {
-        // Records nothing — not even the legs already run.
-        if (window.FF.resume) window.FF.resume.clear();
-        if (window.FF.cup) window.FF.cup.abandon();
-        practiceMode = true;
-        if (respawnFn) respawnFn();
-        flow.go('menu');
-      },
-    });
-  });
-  elFinish.appendChild(panel);
-  document.body.appendChild(elFinish);
-  // ---- COLLECT ON THE WAY OUT, WHICHEVER DOOR ----------------------
-  // The prize is spent by EVERY exit from this screen, not just MAIN
-  // MENU. Without this, pressing RETRY after winning left the award
-  // pending: the melon was safe (it is persisted the moment it is
-  // won) but the ceremony never ran, and the next completed cup
-  // overwrote the pending award — a prize collected silently, with no
-  // moment attached to it. Now the ceremony always happens, and only
-  // the destination afterwards differs.
-  // THE TELLING. Everything in the queue is already true; these
-  // cards only present it, one per reward, in the order it queued —
-  // xp first (the constant), decals next, melon last, because the
-  // melon chains into acceptance and naming and nothing should come
-  // back from a naming ceremony to '+56 XP, tap to continue'.
-  const collectThen = (next) => runRewards(next);
-
-  retry.addEventListener('click', () => {
-    if (sessionCtx && sessionCtx.final && sessionCtx.onRetry) {
-      const go3 = sessionCtx.onRetry;
-      sessionCtx = null;
-      fromMenuOrRetry = true;
-      go3();                       // RUN IT BACK: a fresh party cup
-      return;
-    }
-    collectThen(() => {
-      // After a completed cup, RETRY means another ATTEMPT at the day —
-      // unlimited by design, ranked on your best.
-      if (!practiceMode && window.FF.cup && window.FF.cup.isComplete() && startLegFn) {
-        window.FF.cup.begin();
-        startLegFn(window.FF.cup.trackForLeg(0));
-      } else if (respawnFn) {
-        respawnFn();
-      }
-      fromMenuOrRetry = true;
-      flow.go('race');
-    });
-  });
-  menu.addEventListener('click', () => {
-    if (sessionCtx && sessionCtx.final && sessionCtx.onMenu) {
-      const go4 = sessionCtx.onMenu;
-      sessionCtx = null;
-      go4();                       // the event module tears down
-      return;
-    }
-    // Leaving for the menu ends the run: nothing left to resume, and
-    // an orphaned snapshot would offer to restore a race the player
-    // deliberately walked away from.
-    if (window.FF.resume) window.FF.resume.clear();
-    if (window.FF.cup && !window.FF.cup.isRunning()) window.FF.cup.abandon();
-    if (respawnFn) respawnFn();
-    fromMenuOrRetry = true;
-    // THE HANDOVER. The prize was announced on the cup tab and is
-    // already in the stable; this is the ceremony. It happens between
-    // the finish screen and the menu, so the input-requiring beat
-    // lands once the player has decided they are done reading — and
-    // never before the placing that earned it.
-    collectThen(() => flow.go('menu'));
-  });
-  // THE DOOR HAS TO NAME WHAT IS BEHIND IT. 'YOU'VE WON A MELON'
-  // followed by two buttons that say RETRY and MAIN MENU leaves the
-  // player told about a prize with no visible way to reach it — and
-  // nothing hints that the menu route hands it over on the way. So
-  // when a prize is waiting the exit says so and becomes the PRIMARY
-  // action, and RETRY steps down to secondary.
-  //
-  // THE LABEL IS 'MELON GET!' — the acquisition shout from the
-  // Japanese Super Mario Sunshine ("SHINE GET!"), whose joke is the
-  // word order, not the casing. Set in CAPS like every other button:
-  // the buttons are one family and a lone sentence-case member reads
-  // as an inconsistency before it reads as a quote. The plain
-  // language directly above it ("YOU'VE WON A MELON" on the cup tab)
-  // does the informing, so the button is free to celebrate.
-  elFinish._paintPrizeButtons = () => {
-    // ONE LABEL LAW (ruled 2026-08-16, replacing the MAIN MENU /
-    // MELON GET! switch): the button says GET XP exactly when
-    // pressing it gets you something — the reward queue is non-empty
-    // after every completed cup (xp is the constant), and the same
-    // press still runs decals and the melon ceremony after it. XP,
-    // not EXP: every shipped surface already says XP (+76 XP, PILOT
-    // LEVEL 2 · 26/75 XP), and two spellings of one number is noise.
-    // Practice and reward-less exits keep MAIN MENU, because a button
-    // that promises xp it cannot pay is a lie.
-    const waiting = window.FF.melon.pendingRewards().length > 0;
-    menu.textContent = waiting ? 'GET XP' : 'MAIN MENU';
-    menu.classList.toggle('ff-secondary', !waiting);
-    retry.classList.toggle('ff-secondary', waiting);
-  };
-  elFinish._rows = rows;
-  elFinish._cupTable = cupTable;
-  elFinish._facts = facts;
-  elFinish._summary = summary;
-  elFinish._panes = panes;
-  elFinish._tabBtns = tabBtns;
-}
-
-// ---- The rotating racer previews ----
-// One rAF loop serves every visible spinner; each row's canvas is
-// redrawn via the renderer's own standalone body draw, so previews
-// are the REAL species/pigment/pattern, not icons.
-const spinners = []; // { canvas, a, b, color, patKey, fruit, angle }
-let spinnersPaused = false;
-// A canvas has TWO sizes: its CSS box and its backing store. A fixed
-// backing store is under-resolved the moment CSS scales the box up on
-// a high-DPR screen — and no amount of pattern fidelity survives being
-// resampled by a soft canvas. So each spinner sizes its store from the
-// box it actually occupies times devicePixelRatio, and re-sizes when
-// that changes (rotation, window resize, moving to another monitor).
-// Wipe a canvas that is about to be reused. Without this, a spinner
-// whose loop hasn't run yet still displays the last thing drawn into
-// it — which is how a fresh menu could show a race-old portrait.
-function clearCanvas(cv) {
-  const ctx = cv.getContext && cv.getContext('2d');
-  if (ctx) ctx.clearRect(0, 0, cv.width, cv.height);
-}
-
-// Any layout-changing event drops the cached boxes, so the rare
-// remeasure never lags a rotation or a window resize.
-if (typeof window !== 'undefined' && window.addEventListener) {
-  for (const ev of ['resize', 'orientationchange']) {
-    window.addEventListener(ev, () => {
-      spinMeasureAt = 0;
-      for (const s of spinners) s.box = null;
-    });
-  }
-}
-
-function syncCanvasSize(cv) {
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-  const rect = cv.getBoundingClientRect();
-  const cssW = rect.width || cv.clientWidth || 104;
-  const want = Math.max(64, Math.min(1600, Math.round(cssW * dpr)));
-  if (cv.width !== want || cv.height !== want) { cv.width = want; cv.height = want; }
-  return { dpr, cssW };
-}
-
-// ---- THE SPINNERS ARE THE FINISH SCREEN'S REAL COST ----------------
-// The results panel registers a rotating body per racer on BOTH the
-// PLACES and CUP tabs: two dozen canvases, each needing a
-// portrait-resolution pattern raster (for a watermelon that is a
-// per-pixel island field). Three costs came out of that, and all
-// three landed on the frame the player crosses the line:
-//
-//   BUILD SPIKE   two dozen rasters built in one frame.
-//   DOUBLE DRAW   the hidden tab's twelve kept redrawing, because
-//                 isConnected cannot see display:none. Half the work
-//                 was for pixels nobody could look at.
-//   LAYOUT THRASH getBoundingClientRect per spinner per frame — two
-//                 dozen forced reflows every frame.
-//
-// Fixed here by drawing only what is visible, measuring only when the
-// size can actually have changed, and turning at a rate the motion
-// does not miss.
-const SPIN_FPS = 30;              // decorative rotation; 60 is waste
-const SPIN_FRAME_MS = 1000 / SPIN_FPS;
-let spinLast = 0;
-let spinMeasureAt = 0;            // remeasure clock (see below)
-
-// A canvas that is display:none still reports isConnected — so the
-// hidden tab has to be excluded by geometry, not by connection.
-function spinnerVisible(cv) {
-  return cv.isConnected && cv.offsetParent !== null;
-}
-
-function spinLoop(now) {
-  spinRAF = 0;
-  const draw = window.FF.drawMelonStandalone;
-  if (!draw || spinnersPaused) return;
-  const t = now || (typeof performance !== 'undefined' ? performance.now() : Date.now());
-  // Rate-limit: the bodies turn slowly and decoratively, so half the
-  // frames are indistinguishable and cost half as much.
-  if (t - spinLast < SPIN_FRAME_MS) {
-    spinRAF = requestAnimationFrame(spinLoop);
-    return;
-  }
-  const dt = spinLast ? Math.min(0.1, (t - spinLast) / 1000) : 1 / SPIN_FPS;
-  spinLast = t;
-  // MEASURE RARELY. A canvas box only changes on resize or rotation,
-  // and getBoundingClientRect forces a synchronous layout — two dozen
-  // of those per frame is the classic way to lose smoothness. Once a
-  // second is plenty; resize handlers catch the rest.
-  const remeasure = t >= spinMeasureAt;
-  if (remeasure) spinMeasureAt = t + 1000;
-  let any = false;
-  for (const s of spinners) {
-    if (!spinnerVisible(s.canvas)) continue;
-    any = true;
-    s.angle += dt * 55 * (s.rate === undefined ? 0.9 : s.rate) / 60; // slow, stately
-    const box = (remeasure || !s.box) ? syncCanvasSize(s.canvas) : s.box;
-    s.box = box;
-    const ctx = s.canvas.getContext('2d');
-    ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
-    ctx.save();
-    ctx.translate(s.canvas.width / 2, s.canvas.height / 2);
-    const fit = (s.canvas.width / 2 - 4 * box.dpr) / Math.max(s.a, s.b);
-    ctx.scale(fit, fit);
-    // The pattern raster is built for THIS destination: `fit` is
-    // exactly device pixels per world pixel, which is the number the
-    // renderer needs and the only place it can be known.
-    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit, s.decals);
-    ctx.restore();
-  }
-  // Keep the loop alive while ANY spinner exists, visible or not: the
-  // player can switch tabs, and a loop that stopped because the
-  // visible ones were hidden would never restart itself.
-  if ((any || spinners.length) && flow.state !== 'race') {
-    spinRAF = requestAnimationFrame(spinLoop);
-  }
-}
-function startSpinners() {
-  if (!spinRAF) spinRAF = requestAnimationFrame(spinLoop);
-}
 
 // ---- The machine ----
 const SCREENS = {};
@@ -2026,8 +1165,9 @@ function initAutoPause() {
     // Re-asking on return costs one call and fixes both kinds of
     // resume, and it is also where the "expired" note gets its chance
     // to appear for a player who never navigated away.
-    if (flow.state === 'menu' && elMenu && elMenu._refresh) {
-      try { elMenu._refresh(); } catch (_) {}
+    const ms = SCREENS.menu;
+    if (flow.state === 'menu' && ms && ms.refresh) {
+      try { ms.refresh(); } catch (_) {}
     }
   });
   // Safari on iOS is unreliable about visibilitychange when the app
@@ -2055,8 +1195,14 @@ function initHistory() {
         flow.go('race');
         pushHistory('race');
       } else if (s === 'finish') {
-        if (window.FF.cup && window.FF.cup.isRunning() && !practiceMode) {
-          // Mid-cup: refuse. Abandoning must be a deliberate tap.
+        const partyBack = window.FF.partycup && window.FF.partycup.isRunning
+          && window.FF.partycup.isRunning();
+        if ((window.FF.cup && window.FF.cup.isRunning()) || partyBack) {
+          // Mid-cup — EITHER cup (party joined 2026-08-26t: before
+          // this, back between party games fell through to the
+          // abandon path and respawned a race under the session).
+          // Refuse: abandoning must be a deliberate tap, and the
+          // finish screen's own quit carries the confirm.
           pushHistory('finish');
         } else {
           if (window.FF.resume) window.FF.resume.clear();
@@ -2089,301 +1235,6 @@ flow.go = function (name) {
   if (next && next.enter) next.enter();
   pushHistory(name);
 };
-
-// ---- THE NAMING GATE (2026-08-14) --------------------------------
-// A first-time player is given a melon before anything else happens.
-// This is a real FLOW STATE rather than a floating overlay, because
-// an overlay that lives outside the screen system is exactly how the
-// ceremony ended up racing the menu for the same pixels: it fired at
-// boot, rendered behind the menu (z-20 vs z-40), and only surfaced
-// once the race screen stepped aside — so it appeared to arrive
-// mid-race, and the tap that dismissed it fell through to the armed
-// grid and started the countdown.
-//
-// THE EXHIBITION RUNS BEHIND IT. A blank field behind the card is a
-// loading screen; melons already tumbling down today's track is the
-// game introducing itself while you name your racer. The exhibition's
-// local body is deliberately NOT dressed in the player's melon
-// (main.js skips that for the exhibition), which is right here too:
-// the melon being named is the one on the card, not one of the twelve
-// in the background.
-//
-// NOTHING ELSE IS TOUCHABLE and nothing can leak: no race has been
-// built at this point, so there is no grid to arm — the structural
-// version of the fix rather than a guard bolted on.
-flow.register('naming', {
-  enter() {
-    // start() is a no-op while running, so this only fires on the boot
-    // ceremony, where the menu has never been entered and nothing is
-    // running behind us yet.
-    if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
-    clearFade();
-    const M = window.FF.melon;
-    const cur = M.active();
-    const isPilot = namingMode === 'pilot';
-    const isAward = namingMode === 'award';
-    elNaming._title.textContent = isPilot ? 'YOUR NAME'
-      : namingMode === 'rename' ? 'RENAME'
-      : (M.pickHeadline ? M.pickHeadline() : "You've got Melon!");
-    elNaming._sub.textContent = isPilot ? 'who is racing?'
-      : namingMode === 'rename' ? 'what should it be called?'
-      : isAward ? 'your prize for the cup'
-      : 'name your racer';
-    elNaming._input.placeholder = isPilot ? 'your name' : 'name your melon';
-    elNaming._input.value = isPilot ? (M.playerName ? M.playerName() : '')
-      : namingMode === 'rename' ? (cur.name || '') : '';
-    // LEAVE IT: only offered when accepting the prize would cost one
-    // of the six. A player must be able to say no to a runt without
-    // first being made to choose a victim.
-    elNaming._leave.style.display = namingAllowLeave ? '' : 'none';
-    // THE BUTTON STATES THE ACTION THAT EXISTS. 'KEEP' implies an
-    // alternative, and outside the full-stable case there isn't one:
-    // the melon is already yours and the screen is a gift being
-    // handed over, not a decision. So the label follows the mode —
-    //   choice to decline  -> KEEP   (paired with 'leave it')
-    //   a gift, no choice  -> THANKS (the headlines are all giving
-    //                        moments; 'Take this!' wants 'Thanks')
-    //   an edit            -> SAVE
-    elNaming._keep.textContent = namingAllowLeave ? 'KEEP'
-      : (isPilot || namingMode === 'rename') ? 'SAVE'
-      : 'THANKS';
-    elNaming._refresh(namingAward);
-    elNaming.style.display = 'flex';
-    spinners.length = 0;
-    clearCanvas(elNaming._spin);
-    if (namingAward) pushSpecPortrait(elNaming._spin, namingAward);
-    else pushMelonPortrait(elNaming._spin);
-    spinnersPaused = false;
-    startSpinners();
-    // Focus AFTER the screen is up, or the keyboard opens against a
-    // hidden field on iOS.
-    setTimeout(() => { try { elNaming._input.focus(); } catch (_) {} }, 60);
-  },
-  exit() {
-    elNaming.style.display = 'none';
-    spinners.length = 0;
-  },
-});
-
-// Open the naming screen. Modes:
-//   'ceremony' — first boot, names the MELON
-//   'rename'   — rename the melon
-//   'pilot'    — rename YOU, the racer driving it
-// Returns to the screen it was opened from, so the door can sit on
-// more than one screen without each caller having to say where back
-// is. NOTE it deliberately cannot be opened from 'finish': entering
-// that screen performs the one career write, so returning to it would
-// count the race twice.
-flow.openNaming = function (mode, onDone, opts) {
-  namingMode = mode || 'ceremony';
-  namingAllowLeave = !!(opts && opts.allowLeave);
-  const from = (flow.state && flow.state !== 'naming') ? flow.state : 'menu';
-  namingDone = onDone || (() => flow.go(from === 'finish' ? 'menu' : from));
-  flow.go('naming');
-};
-
-// THE HERO PORTRAIT, in one place. The menu and the naming ceremony
-// both show the player's melon at portrait size, and they must show
-// the SAME melon — same seed-derived scale, colour, rind and species,
-// same slow rate. Two copies of this drifted the moment one of them
-// learned about the Shader Studio's design override.
-// The same portrait, for a spec that is NOT the active melon (a prize
-// being offered). Shares the rate and geometry so a won melon is
-// presented exactly as the start screen presents yours.
-function pushSpecPortrait(canvas, spec) {
-  const M = window.FF.melon;
-  const d = M.deriveSpec(spec);
-  const F = window.FF.FRUITS.watermelon || {};
-  const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
-  spinners.push({ rate: 0.55, canvas, angle: 0,
-    a, b: a * (F.aspect || 0.78),
-    color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon',
-    decals: spec.decals || null });
-}
-
-function pushMelonPortrait(canvas) {
-  const M = window.FF.melon;
-  const d = M.deriveSpec(M.active());
-  const design = window.FF.studio && window.FF.studio.design;
-  const fruit = (design && design.fruit) || 'watermelon';
-  const F = window.FF.FRUITS[fruit] || {};
-  // Semi-major from CONFIG, not a hard-coded 46: the portrait must
-  // track the same reference the sim uses if the tune panel moves it.
-  const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
-  spinners.push({
-    // The hero portrait turns slower than the results rows: it is
-    // being looked AT, not glanced at.
-    rate: 0.55,
-    canvas, angle: 0,
-    a, b: a * (F.aspect || 0.78),
-    color: (design && design.color) || d.bodyColor,
-    decals: M.active().decals || null,
-    // d.patternKey ('m'+seed), NOT String(seed): the race body is
-    // dressed with d.patternKey (main.js) and the award screen uses
-    // it too, so a bare seed here generated a DIFFERENT rind — the
-    // melon on the menu was not the melon on the track.
-    patKey: (design && design.patKey) || d.patternKey,
-    fruit,
-  });
-}
-
-// ---- THE NAMING SCREEN -------------------------------------------
-// Built from the START SCREEN'S OWN COMPONENTS (Eddie, 2026-08-14):
-// same .ff-screen scrim, same .ff-panel, same head/body/foot
-// contract, same .ff-title, the same portrait canvas classes, the
-// same .ff-stat-row grammar and the same .ff-btn. The card it
-// replaces predated type.js entirely — #111 panels, #fff titles,
-// #9a9a9a labels and a PINK keep button, the only pink control in the
-// game — so it read as a different product at the exact moment a new
-// player forms their first impression.
-//
-// Two modes, one screen: the CEREMONY (first boot, headline varies)
-// and RENAME (from the menu). They differ by a string and a starting
-// value, which is not enough to justify two surfaces.
-//
-// STATS: species and weight only. The full card belongs to the start
-// screen, where a player is choosing; here they are being handed one
-// melon, and length is a number nobody needs before they have a name.
-const NAMING_ROWS = ['species', 'weight'];
-let elNaming = null;
-let namingMode = 'ceremony';
-// The prize rolled at cup completion, waiting to be told and (if the
-// stable is full) resolved. Cleared once the player has seen it out.
-// The spec being named by the 'award' mode: a prize is not the active
-// melon, so the screen must be told which melon it is naming.
-let namingAward = null;
-let namingAllowLeave = false;
-let namingDone = null;
-
-function buildNaming() {
-  const M = window.FF.melon;
-  elNaming = el('div', 'ff-screen ff-naming-screen');
-  const panel = el('div', 'ff-panel');
-  const head = el('div', 'ff-head');
-  const title = el('h1', 'ff-title', '');
-  const sub = el('p', 'ff-sub', '');
-  head.appendChild(title); head.appendChild(sub);
-  panel.appendChild(head);
-
-  const bodyZone = el('div', 'ff-body');
-  const row = el('div', 'ff-melon-row');
-  const spin = el('canvas', 'ff-spin ff-portrait');
-  spin.width = 560; spin.height = 560;
-  row.appendChild(spin);
-  bodyZone.appendChild(row);
-  const statsEl = el('div', 'ff-stats');
-  bodyZone.appendChild(statsEl);
-  panel.appendChild(bodyZone);
-
-  const foot = el('div', 'ff-foot');
-  const input = el('input', 'ff-name-input');
-  input.id = 'melon-name-input';
-  input.maxLength = 24;
-  input.placeholder = 'name your melon';
-  input.autocomplete = 'off';
-  const keep = el('button', 'ff-btn', 'KEEP');
-  keep.id = 'melon-name-ok';
-  const leave = el('button', 'ff-btn ff-quiet', 'leave it');
-  leave.style.display = 'none';
-  foot.appendChild(input);
-  foot.appendChild(keep);
-  foot.appendChild(leave);
-  panel.appendChild(foot);
-  elNaming.appendChild(panel);
-  document.body.appendChild(elNaming);
-
-  const finish = () => {
-    const typed = input.value.trim();
-    // WHICH IDENTITY is being named: the melon (a body) or the pilot
-    // (you). One screen, one field, two destinations — the mode says
-    // which, so neither can be written by accident.
-    let out;
-    if (namingMode === 'award' && namingAward) {
-      // Name the PRIZE, which is its own spec — never the melon the
-      // player is currently racing.
-      namingAward.name = String(typed || M.UNNAMED_NAME).slice(0, 24);
-      M._save && M._save();
-      out = namingAward.name;
-    } else if (namingMode === 'pilot') {
-      out = M.renamePlayer(typed || M.playerName());
-    } else {
-      const cur = M.active();
-      // Empty is not a wall and not a random identity: see melon.js.
-      out = M.rename(typed || cur.name || M.UNNAMED_NAME);
-    }
-    const cb = namingDone; namingDone = null;
-    if (cb) cb(out);
-  };
-  keep.addEventListener('click', finish);
-  // Declining a prize: the callback is told with null, so the caller
-  // can tell "left it" from "kept it" without inspecting the stable.
-  leave.addEventListener('click', () => {
-    const cb = namingDone; namingDone = null;
-    if (cb) cb(null);
-  });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); finish(); }
-  });
-
-  elNaming._title = title;
-  elNaming._sub = sub;
-  elNaming._spin = spin;
-  elNaming._stats = statsEl;
-  elNaming._input = input;
-  elNaming._leave = leave;
-  elNaming._keep = keep;
-  elNaming._refresh = () => {
-    const design = window.FF.studio && window.FF.studio.design;
-    const fruit = (design && design.fruit) || 'watermelon';
-    const byKey = new Map();
-    for (const r of (M.stats ? M.stats(M.active().seed, fruit, M.active().wide) : [])) byKey.set(r.key, r);
-    const rows = [];
-    for (const k of NAMING_ROWS) { const r = byKey.get(k); if (r) rows.push(r); }
-    statsEl.textContent = '';
-    for (const r of rows) {
-      const line = el('div', 'ff-stat-row');
-      line.appendChild(el('span', 'k', r.label));
-      const v = el('span', 'v', r.value);
-      if (r.note) v.appendChild(el('small', null, r.note));
-      line.appendChild(v);
-      statsEl.appendChild(line);
-    }
-  };
-}
-
-flow.register('menu', {
-  enter() {
-    // Scenery: a full grid of bots lapping today's daily behind the
-    // panel. Started here and stopped on exit, so it can never
-    // outlive the screen that owns it.
-    if (window.FF.exhibition && exhibitionHooks) window.FF.exhibition.start(exhibitionHooks);
-    clearFade();
-    elMenu.style.display = 'flex';
-    elMenu._refresh();
-    spinners.length = 0;
-    elMenu._paintPortrait();   // one definition of "paint the portrait"
-    // Unrevealed rewards re-offer here: they are persisted facts, and
-    // a crash or closed tab between earning and telling loses nothing
-    // but the wait.
-    if (window.FF.melon.pendingRewards().length) {
-      runRewards(() => {});
-    }
-  },
-  exit(to) {
-    // Pressing RACE resets to a clean grid: you cannot be handed a
-    // lap-two position you did not earn, so the exhibition is torn
-    // down and a real race is built fresh (respawnFn below).
-    //
-    // ...BUT NOT WHEN THE NAMING SCREEN IS WHAT COVERS US. That screen
-    // shows the very same exhibition through its scrim, so tearing it
-    // down here and letting naming.enter() start it again REBUILT the
-    // race — the field visibly jumped back to the grid every time a
-    // player tapped to rename themselves. Leave it running and the
-    // backdrop is continuous, which is the whole point of it.
-    if (window.FF.exhibition && to !== 'naming') window.FF.exhibition.stop();
-    elMenu.style.display = 'none';
-  },
-});
 
 flow.register('race', {
   enter() {
@@ -2421,7 +1272,10 @@ flow.register('pause', {
     // Label the truth: mid-cup this restarts the ATTEMPT, not the leg.
     if (elPause._restart) {
       const c = window.FF.cup;
-      elPause._restart.textContent = (!practiceMode && c && c.isRunning())
+      const partyOn = window.FF.partycup && window.FF.partycup.isRunning
+        && window.FF.partycup.isRunning();
+      elPause._restart.textContent = (partyOn
+        || (c && c.isRunning()))
         ? 'RESTART CUP' : 'RESTART RACE';
     }
     elPause.style.display = 'flex';
@@ -2429,276 +1283,6 @@ flow.register('pause', {
   exit() { elPause.style.display = 'none'; },
 });
 
-// A cup leg finishing is not the end of anything except that leg, so
-// the finish screen behaves differently mid-cup: the standings become
-// a POINTS TABLE and the action is NEXT RACE. Leaving mid-cup must be
-// deliberate — abandoning records nothing at all — so MAIN MENU is
-// demoted rather than offered as an equal choice.
-function inCup() {
-  return !practiceMode && window.FF.cup && window.FF.cup.isRunning();
-}
-function cupJustEnded() {
-  return !practiceMode && window.FF.cup && window.FF.cup.isComplete();
-}
-
-// ---- THE RACER CARD ---------------------------------------------------
-// Tap any standings row and the melon gets the start-screen treatment:
-// name, pilot, spinning portrait, species, the body's own weight, the
-// result you tapped it from, and what it's wearing. The moment the
-// fixed cast becomes INSPECTABLE — "who exactly just bullied me into a
-// ravine" gets an answer, and the day bot decals ship there is already
-// a place to admire them. NEXT browses the field in table order;
-// CLOSE (or the scrim) leaves.
-let elRacer = null;
-let racerSpin = null;    // this card's entry in the spinner list
-let racerCtx = null;     // { rows, idx }
-
-function closeRacerCard() {
-  if (racerSpin) {
-    const i = spinners.indexOf(racerSpin);
-    if (i !== -1) spinners.splice(i, 1);
-    racerSpin = null;
-  }
-  if (elRacer) elRacer.style.display = 'none';
-  racerCtx = null;
-}
-
-function openRacerCard(rows, idx) {
-  const r = rows[idx];
-  if (!r) return;
-  if (!elRacer) {
-    elRacer = el('div', 'ff-screen ff-racer-screen');
-    elRacer.addEventListener('pointerdown', (ev) => {
-      if (ev.target === elRacer) closeRacerCard();   // the scrim closes
-    });
-    document.body.appendChild(elRacer);
-  }
-  if (racerSpin) {
-    const i = spinners.indexOf(racerSpin);
-    if (i !== -1) spinners.splice(i, 1);
-    racerSpin = null;
-  }
-  racerCtx = { rows, idx };
-  elRacer.textContent = '';
-  const panel = el('div', 'ff-panel');
-  elRacer.appendChild(panel);
-
-  const head = el('div', 'ff-head');
-  head.appendChild(el('h1', 'ff-title', r.name || '?'));
-  head.appendChild(el('p', 'ff-sub', r.isPlayer ? 'driven by you' : r.pilot));
-  panel.appendChild(head);
-
-  // The chevrons are the collection-browser language from the start
-  // screen (ruled 2026-08-16, replacing a NEXT button): browsing the
-  // field reads the same as browsing your stable, and the foot drops
-  // to ONE full-width button — the house .ff-btn is a block, and two
-  // in a row is how the first cut burst the panel.
-  const prow = el('div', 'ff-rc-prow');
-  const left = el('button', 'ff-arrow', '\u25C0');
-  left.addEventListener('click', () => {
-    if (racerCtx) openRacerCard(racerCtx.rows,
-      (racerCtx.idx - 1 + racerCtx.rows.length) % racerCtx.rows.length);
-  });
-  const cv = el('canvas', 'ff-spin');
-  cv.width = 256; cv.height = 256;
-  const right = el('button', 'ff-arrow', '\u25B6');
-  right.addEventListener('click', () => {
-    if (racerCtx) openRacerCard(racerCtx.rows,
-      (racerCtx.idx + 1) % racerCtx.rows.length);
-  });
-  prow.appendChild(left);
-  prow.appendChild(cv);
-  prow.appendChild(right);
-  panel.appendChild(prow);
-  clearCanvas(cv);
-  racerSpin = { canvas: cv, angle: (r.pos || 1) * 0.7, a: r.a, b: r.b,
-    color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals };
-  spinners.push(racerSpin);
-
-  const stats = el('div', 'ff-stats');
-  const stat = (k, v) => {
-    const rowEl = el('div', 'ff-stat-row');
-    rowEl.appendChild(el('div', 'k', k));
-    rowEl.appendChild(el('div', 'v', v));
-    stats.appendChild(rowEl);
-  };
-  stat('SPECIES', (r.fruit || 'watermelon').toUpperCase());
-  if (r.kg != null) stat('WEIGHT', r.kg.toFixed(1) + ' kg');
-  const res = r.dnf ? 'DNF'
-    : r.pos + ordinalSuffix(r.pos)
-      + (r.timeSec != null ? ' \u00b7 ' + fmtTime(r.timeSec) : '')
-      + (r.points != null ? ' \u00b7 ' + r.points + ' pts' : '');
-  stat('RESULT', res);
-  panel.appendChild(stats);
-
-  // What it's wearing — the same painter as the tray, so a sticker
-  // can never look different here. The zero-state is a fact, stated
-  // in the dossier voice: most of this field wears nothing, which is
-  // exactly what makes the one melon in a wrap funny.
-  const D = window.FF.decals;
-  const wornList = (r.decals || []).map(w => D.byId(w.id)).filter(Boolean);
-  if (wornList.length) {
-    const strip = el('div', 'ff-rc-decals');
-    for (const item of wornList) {
-      const chip = el('div', 'ff-rc-chip');
-      const c2 = el('canvas');
-      c2.width = 72; c2.height = 72;
-      D.paintArt(c2, item);
-      chip.appendChild(c2);
-      chip.appendChild(el('div', '', item.label));
-      strip.appendChild(chip);
-    }
-    panel.appendChild(strip);
-  } else {
-    const none = el('div', 'ff-stats');
-    const rowEl = el('div', 'ff-stat-row');
-    rowEl.appendChild(el('div', 'k', 'DECALS'));
-    rowEl.appendChild(el('div', 'v', 'none'));
-    none.appendChild(rowEl);
-    panel.appendChild(none);
-  }
-
-  const foot = el('div', 'ff-reward-foot');
-  const closeBtn = el('button', 'ff-btn', 'CLOSE');
-  closeBtn.addEventListener('click', closeRacerCard);
-  foot.appendChild(closeBtn);
-  panel.appendChild(foot);
-
-  elRacer.style.display = 'flex';
-}
-
-// ---- THE REWARD CARDS ------------------------------------------------
-// One overlay, reconfigured per entry. Sports-administration voice:
-// the cards read like notices posted by an unseen governing body that
-// takes melon racing entirely seriously. Tap anywhere: a tap during
-// the bar animation completes it instantly; a tap after advances. The
-// sequence must never cost a fast player more taps than it has cards.
-let elReward = null;
-let rewardAnim = null;      // { finish() } while the bar is animating
-
-function buildRewardScreen() {
-  elReward = el('div', 'ff-screen ff-reward-screen');
-  const panel = el('div', 'ff-panel');
-  elReward.appendChild(panel);
-  elReward._panel = panel;
-  document.body.appendChild(elReward);
-}
-
-function showRewardCard(entry, onAdvance) {
-  if (!elReward) buildRewardScreen();
-  const panel = elReward._panel;
-  panel.textContent = '';
-  elReward.style.display = 'flex';
-
-  if (entry.kind === 'xp') paintXpCard(panel, entry);
-  else paintDecalCard(panel, entry);
-
-  // A REAL BUTTON. The quiet style is for the road not taken (QUIT
-  // RACE beside CONTINUE RACE); this is the only road, so it gets the
-  // standard button. The whole card still advances on tap — the
-  // button is the visible affordance, not a smaller hit target.
-  const foot = el('div', 'ff-reward-foot');
-  foot.appendChild(el('button', 'ff-btn', 'CONTINUE'));
-  panel.appendChild(foot);
-
-  const advance = (ev) => {
-    ev.preventDefault();
-    if (rewardAnim) { rewardAnim.finish(); return; }   // first tap: skip anim
-    elReward.removeEventListener('pointerdown', advance);
-    window.removeEventListener('keydown', keyAdvance);
-    elReward.style.display = 'none';
-    onAdvance();
-  };
-  const keyAdvance = (ev) => {
-    if (ev.key === 'Enter' || ev.key === ' ') advance(ev);
-  };
-  elReward.addEventListener('pointerdown', advance);
-  window.addEventListener('keydown', keyAdvance);
-}
-
-function paintXpCard(panel, e) {
-  const X = window.FF.xp;
-  const head = el('div', 'ff-head');
-  head.appendChild(el('h1', 'ff-title', 'PILOT RECORD'));
-  head.appendChild(el('p', 'ff-sub ff-reward-sub', 'official adjustment'));
-  panel.appendChild(head);
-  const big = el('div', 'ff-reward-big', '+0 XP');
-  panel.appendChild(big);
-  const stamp = el('div', 'ff-levelup-stamp', 'LEVEL UP');
-  panel.appendChild(stamp);
-  const track = el('div', 'ff-xp-track');
-  const fill = el('div', 'ff-xp-fill');
-  track.appendChild(fill);
-  panel.appendChild(track);
-  const line = el('div', 'ff-xp-line', '');
-  panel.appendChild(line);
-
-  // The bar animates the FACT (from -> to, wrapping at each level it
-  // crossed); nothing here recomputes an award.
-  const dur = Math.min(1200, 300 + 8 * (e.added || 0));
-  const t0 = performance.now();
-  let done = false;
-  const setTo = (xpNow) => {
-    const p = X.progress(Math.round(xpNow));
-    fill.style.width = Math.round(100 * p.into / p.need) + '%';
-    big.textContent = '+' + Math.round(xpNow - e.from) + ' XP';
-    line.textContent = 'PILOT LEVEL ' + p.level + ' \u00b7 '
-      + p.into + ' / ' + p.need + ' XP';
-    if (p.level > e.levelFrom) stamp.classList.add('ff-stamped');
-  };
-  const finish = () => {
-    if (done) return;
-    done = true;
-    rewardAnim = null;
-    setTo(e.to);
-  };
-  rewardAnim = { finish };
-  (function tick(now) {
-    if (done) return;
-    const t = Math.min(1, (now - t0) / dur);
-    const eased = 1 - (1 - t) * (1 - t);
-    setTo(e.from + (e.to - e.from) * eased);
-    if (t >= 1) { finish(); return; }
-    requestAnimationFrame(tick);
-  })(t0);
-}
-
-function paintDecalCard(panel, e) {
-  const D = window.FF.decals;
-  const head = el('div', 'ff-head');
-  head.appendChild(el('h1', 'ff-title', 'DECAL AWARDED'));
-  head.appendChild(el('p', 'ff-sub ff-reward-sub',
-    'issued at pilot level ' + e.level));
-  panel.appendChild(head);
-  const cv = el('canvas', 'ff-reward-art');
-  cv.width = 176; cv.height = 176;
-  const item = D.byId(e.id);
-  if (item) D.paintArt(cv, item);
-  panel.appendChild(cv);
-  panel.appendChild(el('div', 'ff-reward-name', (e.label || e.id).toUpperCase()));
-  panel.appendChild(el('div', 'ff-xp-line',
-    '1 OF ' + e.setSize + ' \u00b7 ' + e.setLabel));
-}
-
-// Run the queue front-to-back. Melon entries hand off to the existing
-// award ceremony (acceptance, possibly naming) and the runner resumes
-// after it — but since melons queue last, 'resumes' is almost always
-// 'finishes'.
-function runRewards(next) {
-  const M = window.FF.melon;
-  const q = M.pendingRewards();
-  if (!q.length) { next(); return; }
-  const e = q[0];
-  if (e.kind === 'melon') {
-    M.shiftReward();
-    openAwardFlow(e.award, () => runRewards(next));
-    return;
-  }
-  showRewardCard(e, () => {
-    M.shiftReward();                 // popped only after the tap-past
-    runRewards(next);
-  });
-}
 
 // ---- SESSION FINISH (party games, 2026-08-26) --------------------
 // The party cup and the race cup SHARE the finish screen: same rows,
@@ -2711,520 +1295,6 @@ flow.showSessionFinish = function (ctx) {
   fromMenuOrRetry = false;
   flow.go('finish');
 };
-
-flow.register('finish', {
-  enter() {
-    // THE ONE CAREER WRITE. This is the only moment a race is
-    // genuinely complete, and entering this state happens exactly once
-    // per finish (flow.onFrame fires on the crossing tick and latches),
-    // so the record can't double-count. Everything written comes from
-    // the standings captured at the flag and the race book — no new
-    // measurement, no second source of truth.
-    const M = window.FF.melon;
-    if (M && M.recordRace) {
-      // The times were resolved during the settle beat (see
-      // beginSettle): by here they are a fact, not a computation.
-      const resolved = lastResolved;
-      const rowsNow = computeStandings(stateRef, resolved);
-      const mine = rowsNow.find(r => r.isPlayer);
-      const rw = window.FF.raceWatch;
-      const sum = (rw && rw.summary) ? rw.summary(stateRef) : {};
-      if (mine) {
-        // PRACTICE RECORDS NOTHING: it is how you learn the day's
-        // terrain, not a result. Cup races record as races, exactly
-        // as before the cup existed.
-        if (!practiceMode) {
-          M.recordRace({
-            place: mine.pos,
-            fieldSize: rowsNow.length,
-            splats: sum.deaths || 0,
-            bestLapTicks: (stateRef.race && stateRef.race.bestLapTicks) || null,
-            distanceM: mine.x / 100,
-            biggestSurvived: sum.biggestSurvived || 0,
-          });
-        }
-        // XP BANKS AT THE LINE (5 per cup race finished — the law is
-        // xp.js's). A DNF banks nothing; practice banks nothing. The
-        // fact is written now; any telling of it waits for cup end.
-        if (!practiceMode && window.FF.cup && window.FF.cup.current()
-            && !mine.dnf && M.addXp && window.FF.xp) {
-          M.addXp(window.FF.xp.XP_RACE);
-        }
-        if (!practiceMode && window.FF.cup && window.FF.cup.current()) {
-          window.FF.cup.completeLeg({
-            place: mine.pos,
-            fieldSize: rowsNow.length,
-            timeSec: mine.timeSec,
-            dnf: !!mine.dnf,
-            splats: sum.deaths || 0,
-            standings: rowsNow,   // the whole field, for the points table
-          });
-          // A finished cup banks the attempt and the career record.
-          if (window.FF.cup.isComplete()) {
-            const done = window.FF.cup.finish();
-            if (done && M.recordCup) {
-              // done.place is the player's rank in the cup's own
-              // points table — a fact, computed from every racer's
-              // finishes, not an estimate from the player's score.
-              M.recordCup({ place: done.place, points: done.totals.points });
-            }
-            // ---- THE PRIZE ----------------------------------------
-            // Rolled HERE, at the same latched moment as the career
-            // write, so it happens exactly once per completed cup and
-            // cannot be re-rolled by revisiting a screen. The melon is
-            // minted and persisted immediately (melon.js) — a player
-            // who closes the tab between this screen and the menu keeps
-            // what they won. What follows is only the telling of it.
-            // Completion xp banks with the career write: the cup
-            // bonus plus the points-become-xp law. The reveal card
-            // carries a snapshot (from/to) so the bar it animates is
-            // the fact as it happened, not a re-derivation later.
-            if (done && M.addXp && window.FF.xp) {
-              const X = window.FF.xp;
-              const cupState = window.FF.cup.current() || {};
-              const from = (typeof cupState.xpStart === 'number')
-                ? cupState.xpStart : M.pilotXp();
-              M.addXp(X.XP_CUP + X.XP_PER_POINT * (done.totals.points | 0));
-              const to = M.pilotXp();
-              M.queueReward({ kind: 'xp', from, to, added: to - from,
-                levelFrom: X.levelFor(from), levelTo: X.levelFor(to) });
-              // Every level crossed fires its roll NOW — the sticker
-              // is granted and persisted here; the card only tells it.
-              M.settleLevelRolls();
-            }
-            if (done && M.awardForCup) {
-              const award = M.awardForCup({
-                day: (window.FF.cup.current() || {}).day,
-                attempt: (done.record && done.record.attempts) || 1,
-                place: done.place,
-              });
-              // Won melons join the queue like everything else —
-              // last, per the ruling: the showstopper closes the
-              // sequence because it chains into acceptance and naming.
-              if (award && award.won) {
-                M.queueReward({ kind: 'melon', award });
-              }
-            }
-          }
-        }
-      }
-    }
-    // Hand the melon over: the field keeps racing behind the panel.
-    // Solo only — in netplay peers exchange inputs, so substituting
-    // local AI would desync the session (netplay bypasses these
-    // screens anyway; the guard is belt and braces).
-    if (window.FF.autopilot) window.FF.autopilot.engage(stateRef, { netplay: !!netplayFn && netplayFn() });
-    if (elFinish._paintPrizeButtons) elFinish._paintPrizeButtons();
-    elFinish.style.display = 'flex';
-    const rows = elFinish._rows;
-    rows.textContent = '';
-    spinners.length = 0;
-    closeRacerCard();                    // never carry a card between races
-    // The handshake layer: fresh rows, and the response plan seeded by
-    // THIS race's identity — a retry is a new race and rolls anew.
-    if (window.FF.emote) {
-      window.FF.emote.reset(((stateRef.raceStartTick | 0) * 2654435761) >>> 0);
-    }
-    const standRows = computeStandings(stateRef, lastResolved);
-    elFinish._standRows = standRows;     // the RACE tab's facts look up here
-    for (let ri = 0; ri < standRows.length; ri++) {
-      const r = standRows[ri];
-      const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
-      // BARE ROWS ARE DOORS (ruled 2026-08-16): tap any melon row for
-      // its card. No chevron — this is a bonus surface, found by the
-      // curious, and the screen is dense enough already.
-      row.style.cursor = 'pointer';
-      row.addEventListener('click', () => openRacerCard(standRows, ri));
-      // Ordinal, with the suffix styled small: the NUMBER is the
-      // thing you read across the room.
-      const pos = el('div', 'ff-pos', String(r.pos));
-      pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.pos)));
-      row.appendChild(pos);
-      const c = el('canvas', 'ff-spin');
-      c.width = 104; c.height = 104; // hint; syncCanvasSize owns it
-      row.appendChild(c);
-      if (window.FF.emote) {
-        window.FF.emote.registerRow(r.key, row, c);
-        if (r.isPlayer) {
-          // YOUR portrait is the emote button (ruled 2026-08-16); the
-          // rest of your row still opens your card. You can only
-          // speak as yourself; you can only inspect others in full.
-          c.style.cursor = 'pointer';
-          c.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            window.FF.emote.playerEmote(r.key);
-          });
-        }
-      }
-      const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
-      nm.appendChild(el('div', 'ff-rtime',
-        r.metricStr !== undefined ? r.metricStr : (r.dnf ? 'DNF' : fmtTime(r.timeSec))));
-      row.appendChild(nm);
-      rows.appendChild(row);
-      clearCanvas(c);
-      spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b,
-        color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals });
-    }
-    fillFacts();
-    fillSummary();
-    const cupping = !practiceMode && window.FF.cup && window.FF.cup.current();
-    // After the places rows: both tabs push into the same spinner
-    // list, which is emptied once at the top of enter().
-    fillCup();
-    // Mid-cup the standings that matter are the CUP's, so that tab
-    // leads; a single race still opens on its own result.
-    setCupMode(!!cupping, cupping && window.FF.cup.isComplete());
-    if (stateRef.session && sessionCtx) {
-      // THE RELEVANCE FILTER, first pass (design ruled: tabs declare
-      // their data; absent data, absent tab). A session has PLACES —
-      // ranks, portraits, bests. The RACE and YOU tabs read race
-      // telemetry that does not exist here; the CUP tab reads the
-      // daily cup. None of that data exists, so none of those tabs
-      // render. The full declaration-driven filter arrives with the
-      // metric-aware tab work.
-      elFinishTitle.textContent = sessionCtx.title || 'RESULTS';
-      if (elFinishNote) elFinishNote.textContent = sessionCtx.note || '';
-      // FOUR TABS, SAME AS A RACE (re-ruled 2026-08-26): relevance
-      // filters at the FACT level, not the tab level. raceWatch
-      // observes the SIM, not the race rules, so the field's carnage
-      // census and your run both exist in a party game; only the
-      // lap-shaped facts drop out (each guarded by its own data
-      // already — bestLapSec is null in a session).
-      elFinish._tabBtns.race.style.display = '';
-      elFinish._tabBtns.race.textContent = 'GAME';
-      elFinish._tabBtns.you.style.display = '';
-      fillSessionSummary();
-      // THE CUP TAB DECLARES ITS DATA: party points (a running table
-      // between games, the final table at the end). Present, it
-      // renders and LEADS — the race cup's own mid-cup law. Absent
-      // (a lone session outside a cup), no tab.
-      if (sessionCtx.cupRows) {
-        elFinish._tabBtns.cup.style.display = '';
-        fillPartyCup(sessionCtx.cupRows);
-        showTab('cup');
-      } else {
-        elFinish._tabBtns.cup.style.display = 'none';
-        showTab('places');
-      }
-      const mid2 = !!sessionCtx.onNext;
-      elFinish._cupBtns.style.display = mid2 ? '' : 'none';
-      elFinish._btns.style.display = mid2 ? 'none' : '';
-      elFinish._next.textContent = sessionCtx.nextLabel || 'NEXT GAME';
-      if (sessionCtx.final) elFinish._retry.textContent = 'RUN IT BACK';
-      elFinish._quit.style.display = 'none';   // party abandon: own commit
-      return;
-    }
-    // A race finish restores what a session may have hidden.
-    elFinish._tabBtns.race.style.display = '';
-    elFinish._tabBtns.race.textContent = 'RACE';
-    elFinish._tabBtns.you.style.display = '';
-    elFinish._next.textContent = 'NEXT RACE';
-    elFinish._retry.textContent = 'RETRY';
-    elFinish._quit.style.display = '';
-    if (elFinishNote) {
-      const c = window.FF.cup;
-      if (practiceMode) {
-        elFinishNote.textContent = 'practice \u00b7 nothing recorded';
-      } else if (c && c.isComplete()) {
-        const rec = c.dayRecord();
-        const t = c.totals();
-        elFinishNote.textContent = 'cup complete \u00b7 ' + t.points + ' pts'
-          + (rec && rec.attempts > 1
-            ? '  \u00b7  best ' + rec.bestPoints + ' in ' + rec.attempts + ' tries'
-            : '');
-      } else if (c && c.current()) {
-        elFinishNote.textContent = 'race ' + c.current().leg + ' of ' + c.LEGS;
-      } else {
-        elFinishNote.textContent = '';
-      }
-      elFinishNote.style.display = elFinishNote.textContent ? '' : 'none';
-    }
-    if (elFinishTitle) {
-      elFinishTitle.textContent = (!practiceMode && window.FF.cup && window.FF.cup.isComplete())
-        ? 'CUP COMPLETE' : 'FINISH';
-    }
-    showTab(cupping ? 'cup' : 'places');
-    startSpinners();
-  },
-  exit() {
-    clearFade();
-    if (window.FF.autopilot) window.FF.autopilot.disengage();
-    // Release the tab-scoped pause: it is meaningless once this
-    // screen is gone, and leaving it set froze the next screen's
-    // spinners.
-    spinnersPaused = false;
-    elFinish.style.display = 'none';
-  },
-});
-
-function showTab(key) {
-  const panes = elFinish._panes, btns = elFinish._tabBtns;
-  for (const k of Object.keys(panes)) {
-    const on = (k === key);
-    panes[k].classList.toggle('on', on);
-    btns[k].classList.toggle('on', on);
-    // The state the eye reads and the state the screen reader reads
-    // are set in the same breath, so they cannot drift.
-    btns[k].setAttribute('aria-selected', on ? 'true' : 'false');
-  }
-  // Spinners live in the PLACES and CUP panes; a hidden canvas would
-  // keep the rAF loop alive for nothing, and isConnected cannot see
-  // display:none.
-  // SCOPED TO THIS SCREEN: leaving the finish on the RACE or YOU tab
-  // used to strand this flag as true, so the menu's portrait never
-  // animated and simply showed whatever pixels the canvas still held
-  // from before the race — a stale bitmap, stretched by CSS, which
-  // reads exactly like "low fidelity and won't rotate".
-  // A tab change reveals canvases that have never been measured, and
-  // hides others; force a remeasure on the next frame.
-  spinMeasureAt = 0;
-  for (const s of spinners) s.box = null;
-  spinnersPaused = !(key === 'places' || key === 'cup');
-  if (!spinnersPaused) startSpinners();
-}
-
-// ---- The CUP tab: the points table, and what it is for ----------
-function fillCup() {
-  const box = elFinish._cupTable;
-  box.textContent = '';
-  const c = window.FF.cup;
-  if (!c || !c.current()) return;
-  const rows = c.table();
-  const t = c.totals();
-  const legs = c.current().leg;
-  const head = el('div', 'ff-cup-head',
-    c.isComplete() ? 'FINAL \u00b7 ' + t.points + ' pts'
-      : 'AFTER ' + legs + ' OF ' + c.LEGS + '  \u00b7  ' + t.points + ' pts');
-  box.appendChild(head);
-
-  // THE PRIZE, ANNOUNCED WHERE THE DAY'S RESULT IS STATED. The award
-  // is a consequence of the placing, so it is told in the moment of
-  // triumph and HANDED OVER on the way out (see the MAIN MENU
-  // handler): a beat of anticipation between learning and receiving,
-  // which is the shape a prize wants. A blocked award says so rather
-  // than showing nothing, because winning and receiving nothing looks
-  // like a bug.
-  // THE FINISH SCREEN ANNOUNCES NOTHING (ruled 2026-08-15). It is
-  // performance feedback — positions, points, the truth of the race.
-  // Rewards are already granted and queued; their telling begins when
-  // the player chooses to leave, one card per reward. (The old
-  // dailyCap notice died with the announcement: a blocked award is no
-  // reward, and no reward gets no card.)
-
-  // SAME SHAPE AS THE PLACES TAB. A cup standing is a standing: the
-  // player reads it the same way, so it gets the same tiered ordinal,
-  // the same rotating body, and the same quiet second line. Only the
-  // CONTENT differs — points and cumulative time instead of one
-  // race's finish. (The rows live in their own container so the
-  // podium's :nth-child tiering counts rows, not the heading above
-  // them.)
-  const list = el('div', 'ff-rows ff-cup-rows');
-  box.appendChild(list);
-  const cardRows = [];                   // cup standing + race-row visuals
-
-  // The cup's cast is fixed for all four legs, so a racer's
-  // appearance can be looked up from this race's standings by name —
-  // no second source of truth for what a melon looks like.
-  const look = new Map();
-  for (const s of computeStandings(stateRef, lastResolved)) {
-    look.set(s.key, s);
-  }
-
-  for (const r of rows) {
-    const key = r.key;
-    const s = look.get(key);
-    const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
-    const pos = el('div', 'ff-pos', String(r.pos));
-    pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.pos)));
-    row.appendChild(pos);
-    const cv = el('canvas', 'ff-spin');
-    cv.width = 104; cv.height = 104;   // hint; syncCanvasSize owns it
-    row.appendChild(cv);
-    const nm = racerIdentity(r.isPlayer ? (s ? s.name : 'YOU') : r.name, r.pilot, r.isPlayer);
-    nm.appendChild(el('div', 'ff-rtime',
-      r.points + ' pts  \u00b7  ' + (r.dnfs ? fmtTime(r.timeSec) + '  \u00b7  ' + r.dnfs + ' DNF' : fmtTime(r.timeSec))));
-    row.appendChild(nm);
-    list.appendChild(row);
-    clearCanvas(cv);
-    if (s) {
-      if (window.FF.emote) {
-        window.FF.emote.registerRow(s.key, row, cv);
-        if (s.isPlayer) {
-          cv.style.cursor = 'pointer';
-          cv.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            window.FF.emote.playerEmote(s.key);
-          });
-        }
-      }
-      spinners.push({ canvas: cv, angle: r.pos * 0.7, a: s.a, b: s.b,
-        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
-      // The card for a cup row: the CUP's standing (pos, points,
-      // cumulative time) wearing this race's body — same one-source
-      // rule the row itself follows.
-      const cardIdx = cardRows.length;
-      cardRows.push({ name: s.name, pilot: s.pilot, isPlayer: s.isPlayer,
-        fruit: s.fruit, kg: s.kg, a: s.a, b: s.b, color: s.color,
-        patKey: s.patKey, decals: s.decals,
-        pos: r.pos, timeSec: r.timeSec, dnf: false, points: r.points });
-      row.style.cursor = 'pointer';
-      row.addEventListener('click', () => openRacerCard(cardRows, cardIdx));
-    }
-  }
-}
-
-// Which face is the finish screen wearing?
-function setCupMode(cupping, complete) {
-  const showCupTab = !!cupping;
-  elFinish._tabBtns.cup.style.display = showCupTab ? '' : 'none';
-  // Mid-cup: NEXT RACE. Cup over, or a practice race: RETRY / MENU.
-  const mid = cupping && !complete;
-  elFinish._cupBtns.style.display = mid ? '' : 'none';
-  elFinish._btns.style.display = mid ? 'none' : '';
-}
-
-// ---- The PARTY CUP tab (2026-08-26): points so far / final -------
-// Same pane the race cup's table uses; the columns speak the party
-// cup's language — per-game bests and points.
-function fillPartyCup(cupRows) {
-  // SAME SHAPE AS THE RACE CUP TAB (re-fixed 2026-08-26: the first
-  // version used plain fact rows and read as a different screen). A
-  // cup standing is a standing: tiered ordinal, rotating body,
-  // identity line — only the CONTENT differs (per-game bests and
-  // points instead of cumulative time).
-  const box = elFinish._cupTable;
-  box.textContent = '';
-  const mine = cupRows.find((r) => r.isPlayer);
-  box.appendChild(el('div', 'ff-cup-head',
-    (sessionCtx && sessionCtx.final ? 'FINAL' : 'AFTER '
-      + (window.FF.partycup ? Math.min(cupRows.length && window.FF.partycup.LEGS, 99) : ''))
-    .replace(/AFTER \d*/, sessionCtx && sessionCtx.final ? 'FINAL'
-      : 'STANDINGS') + ' \u00b7 ' + (mine ? mine.points + ' pts' : '')));
-  const list = el('div', 'ff-rows ff-cup-rows');
-  box.appendChild(list);
-  const look = new Map();
-  for (const s of computeStandings(stateRef, lastResolved)) look.set(s.name, s);
-  for (const r of cupRows) {
-    const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
-    const pos = el('div', 'ff-pos', String(r.place));
-    pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.place)));
-    row.appendChild(pos);
-    const cv = el('canvas', 'ff-spin');
-    cv.width = 104; cv.height = 104;
-    row.appendChild(cv);
-    const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
-    nm.appendChild(el('div', 'ff-rtime',
-      r.points + ' pts' + (r.bests && r.bests.length
-        ? '  \u00b7  ' + r.bests.join('  ') : '')));
-    row.appendChild(nm);
-    list.appendChild(row);
-    clearCanvas(cv);
-    const s = look.get(r.name);
-    if (s) {
-      spinners.push({ canvas: cv, angle: r.place * 0.7, a: s.a, b: s.b,
-        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
-    }
-  }
-}
-
-// ---- The YOU tab, session form (2026-08-26) ----------------------
-// Session-native facts over the SAME row markup fillSummary uses:
-// your best in the game's own units, attempts (the mark counter),
-// splats, biggest hit survived. Lap facts have no session existence.
-function fillSessionSummary() {
-  const box = elFinish._summary;
-  box.textContent = '';
-  const st = stateRef;
-  const S = window.FF.session;
-  const m = st.players[0].melon;
-  const stat = (v, k) => {
-    const row = el('div', 'ff-fact');
-    row.appendChild(el('div', 'ff-fact-l', k));
-    const right = el('div', 'ff-fact-r');
-    right.appendChild(el('div', 'ff-fact-n', String(v)));
-    row.appendChild(right);
-    box.appendChild(row);
-  };
-  stat(S.formatBest(st, m), 'BEST');
-  stat(String(m.skiMarkSeq || 0), 'ATTEMPTS');
-  const rw = window.FF.raceWatch;
-  const s = (rw && rw.summary) ? rw.summary(st) : {};
-  stat(String(s.deaths || 0), (s.deaths || 0) === 1 ? 'SPLAT' : 'SPLATS');
-  if (s.biggestSurvived) stat(s.biggestSurvived.toFixed(1), 'BIGGEST SURVIVED');
-}
-
-// ---- The RACE tab: superlatives over the whole field -------------
-function fillFacts() {
-  const box = elFinish._facts;
-  box.textContent = '';
-  const rw = window.FF.raceWatch;
-  const facts = (rw && rw.fieldSummary) ? rw.fieldSummary() : [];
-  if (!facts.length) {
-    box.appendChild(el('div', 'ff-empty', 'a quiet race — nothing to report'));
-    return;
-  }
-  for (const f of facts) {
-    const row = el('div', 'ff-fact');
-    row.appendChild(el('div', 'ff-fact-l', f.label));
-    const right = el('div', 'ff-fact-r');
-    right.appendChild(el('div', 'ff-fact-n', f.name));
-    right.appendChild(el('div', 'ff-fact-v', f.value));
-    row.appendChild(right);
-    // The RACE tab has no melon rows, but its superlatives NAME
-    // melons, and any representation of a melon is a door (same
-    // ruling as the rows). Looked up by name in this race's
-    // standings; a miss (a fact about no one) simply isn't a door.
-    const sr = elFinish._standRows || [];
-    const idx = sr.findIndex(x => x.name === f.name);
-    if (idx !== -1) {
-      row.style.cursor = 'pointer';
-      row.addEventListener('click', () => openRacerCard(sr, idx));
-    }
-    box.appendChild(row);
-  }
-}
-
-// ---- The race summary -------------------------------------------
-// The finish screen is the one place stats can be DENSE: nothing is
-// competing for attention and the race is over. racewatch keeps the
-// book during the race (it is the module that already knows race
-// context); this only lays it out. Stats that didn't happen are
-// omitted rather than shown as zeroes — a wall of 0s reads as
-// failure, and an empty slot reads as "not this time".
-function fillSummary() {
-  const box = elFinish._summary;
-  box.textContent = '';
-  const rw = window.FF.raceWatch;
-  if (!rw || !rw.summary) return;
-  const s = rw.summary(stateRef);
-  // SAME SHAPE AS THE RACE TAB: label left, value right, one row each
-  // (the three-across stat grid put the label under the number, so
-  // the two tabs read as different screens). Sharing the row markup
-  // means a change to one is a change to both.
-  const stat = (v, k, note, hi) => {
-    const row = el('div', 'ff-fact');
-    row.appendChild(el('div', 'ff-fact-l', k));
-    const right = el('div', 'ff-fact-r');
-    const n = el('div', 'ff-fact-n' + (hi ? ' hi' : ''), String(v));
-    right.appendChild(n);
-    if (note) right.appendChild(el('div', 'ff-fact-v', note));
-    row.appendChild(right);
-    box.appendChild(row);
-  };
-  // Order kept: the result first, then the flare story, then the rest.
-  if (s.bestLapSec !== null) stat(s.bestLapSec.toFixed(1) + 's', 'BEST LAP');
-  stat(String(s.deaths), s.deaths === 1 ? 'SPLAT' : 'SPLATS',
-    s.deaths === 0 ? 'not a scratch' : null, s.deaths === 0);
-  if (s.overtakes) stat(String(s.overtakes), 'OVERTAKES',
-    s.passedBy ? s.passedBy + ' passed you' : null);
-  if (s.flareSaves) stat(String(s.flareSaves), s.flareSaves === 1 ? 'FLARE SAVE' : 'FLARE SAVES',
-    'lives the flare bought', true);
-  if (s.biggestSurvived) stat(String(s.biggestSurvived), 'BIGGEST HIT SURVIVED');
-  if (s.bestAirSec >= 1) stat(s.bestAirSec.toFixed(1) + 's', 'BEST AIR');
-  if (s.longestStreakM >= 100) stat(s.longestStreakM + 'm', 'LONGEST CLEAN RUN');
-  if (s.flarePct) stat(s.flarePct + '%', 'TIME FLARED',
-    s.deadPct ? s.deadPct + '% dead-sticked' : null);
-}
 
 // ---- Hooks for main.js ----
 // Called every frame after lap logic: fires the finish screen ONCE
@@ -3327,15 +1397,18 @@ flow.init = function (state, opts) {
   buildFade();
   buildConfirm();
   buildCountdown();
-  buildMenu();
-  buildNaming();
-  buildFinish();
   buildPause();
+  // THE BUILD HOOK (split commit 2): extracted screens cannot be
+  // built by name from here. A screen that needs DOM registers a
+  // build() with its screen object; they run once, in registration
+  // order, at the same phase the in-file builds always ran. A screen
+  // hides itself at the end of its own build.
+  for (const nm of Object.keys(SCREENS)) {
+    const s = SCREENS[nm];
+    if (s.build) s.build();
+  }
   initHistory();
   initAutoPause();
-  elMenu.style.display = 'none';
-  elNaming.style.display = 'none';
-  elFinish.style.display = 'none';
   elPause.style.display = 'none';
   // A melon that has never been named gets its ceremony FIRST, with
   // the exhibition running behind it; the menu follows. Existing
@@ -3349,9 +1422,48 @@ flow.init = function (state, opts) {
 
 // Test hook: what the spinner loop is actually drawing right now.
 // Pixel-sampling a rotating portrait cannot answer that question.
-flow._spinners = () => spinners.map(s => ({
-  a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, fruit: s.fruit,
-  decals: (s.decals || []).length }));
+flow._spinners = window.FF.flowLib.spinnerDump;
 flow.computeStandings = computeStandings;
+
+// ---- THE INTERNALS DOOR (split commit 1) --------------------------
+// The machine's own moving parts, exposed for the screen modules the
+// split extracts (finish, menu, rewards, naming). Accessors, not
+// values: the variables stay HERE, owned by the machine — a screen
+// that wants practiceMode asks the machine, every time, and two
+// modules can never hold divergent copies (practiceMode lived here
+// until ruling B, 2026-08-26: the flag was excised — every reachable
+// race is a cup race, and sessions guard on st.session, the thing
+// they actually are). Underscore-named because
+// this is the family entrance, not the public door: flow's public
+// surface (register/go/onFrame/showSessionFinish) is the design;
+// _internals is plumbing the split makes explicit.
+flow._internals = {
+  state: () => stateRef,
+  respawn: () => respawnFn,
+  netplay: () => netplayFn,
+  exhibition: () => exhibitionHooks,
+  provider: () => providerFn,
+  startLeg: () => startLegFn,
+  rebuild: () => rebuildFn,
+  lastResolved: () => lastResolved,
+  fromMenuOrRetry: () => fromMenuOrRetry,
+  setFromMenuOrRetry: (v) => { fromMenuOrRetry = !!v; },
+  confirmAsk, confirmIsOpen, clearFade,
+  // Session finish context: read by the finish screen (what NEXT
+  // means now) and the pause screen (a party MAIN MENU walks
+  // onMenu). The variable stays here; two modules can never hold
+  // divergent copies.
+  sessionCtx: () => sessionCtx,
+  setSessionCtx: (v) => { sessionCtx = v; },
+  // The reward ceremony runner lives in screen-rewards (commit 4).
+  // A TRAMPOLINE, resolved at call time: the finish and menu screens
+  // destructure this at THEIR load, which may precede the rewards
+  // module's — a direct reference would freeze whatever was bound
+  // first.
+  runRewards: (next) => window.FF.rewards.run(next),
+  // The melon award ceremony (naming-coupled; extracts with the
+  // naming commit). An accessor for the same load-order reason.
+  openAwardFlow: () => SCREENS.naming.openAward,
+};
 window.FF.flow = flow;
 })();

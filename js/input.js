@@ -206,6 +206,15 @@ function initInput(state, canvas) {
   // dropped (so a tap on a results button can't steer), the axes fall
   // to neutral, and getInputSticks reports nothing so the visible
   // stick disappears with it. One switch, three consequences.
+  // THE WHEEL FOLLOWS THE ANNOUNCEMENT (step 6b): when the
+  // autopilot states it has engaged, input gates itself — pointers
+  // dropped, axes neutral, stick invisible. Subscribing HERE, where
+  // the switch lives, keeps one implementation of "hands off".
+  if (window.FF.events) {
+    window.FF.events.on('autopilot', (d) => {
+      window.FF.setInputEnabled(!(d && d.engaged));
+    });
+  }
   window.FF.setInputEnabled = function (on) {
     enabled = !!on;
     if (!enabled) {

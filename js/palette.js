@@ -632,6 +632,48 @@ const api = { register, registerTone, tone, isMemberInt, isMemberHex,
 
 if (typeof window !== 'undefined') {
   window.FF = window.FF || {};
+  // ---- THE RACER COLOR LAW (moved from renderer.js, step 6b,
+  // 2026-08-26u). fx (debris) and presentation both read it; a color
+  // law over canonical body order carries no game RULES, so core is
+  // its home and every reference points downward. The slot palette
+  // is exported for the netplay slot colors renderer still draws.
+// Bot palette: each melon its own bright shade (player stays pure green).
+// Indexed by spawn order, so a bot keeps its color for the whole race.
+const BOT_PALETTE = [
+  // Eleven greens, L*-NORMALIZED into [54, 74]: every bot guarantees
+  // >=20 L* of highlight headroom, so the constant-contrast solver in
+  // litColor can hit its full delta on all of them (the old palette
+  // had L*93 pale limes with nowhere brighter to go — measured as the
+  // "subtle on some melons" complaint). Hues span the green family
+  // 78-164deg; the player's pure #00ff00 stays sacred and out-brights
+  // them all.
+  '#90c710', '#6bb31a', '#56c516', '#37a01c', '#1bc01b', '#24a93f',
+  '#17ce54', '#25965a', '#20b378', '#22a07e', '#608e24',
+];
+api.register('bots', BOT_PALETTE);   // moved home (step 6b): the
+                                     // palette registers its own
+
+
+// Canonical racer color by body index (players in slot order, then
+// bots) — shared with the debris system so every melon's pulp wears
+// its own green. Presentation-only; the sim never reads colors.
+window.FF.racerColor = function (state, bodyIndex) {
+  const np = state.players.length;
+  if (bodyIndex < np) {
+    const pb = state.players[bodyIndex] && state.players[bodyIndex].melon;
+    return (pb && pb.bodyColor) || PLAYER_PALETTE[bodyIndex % PLAYER_PALETTE.length];
+  }
+  const body = state.bots[bodyIndex - np] && state.bots[bodyIndex - np].melon;
+  // Bots carry their seeded pigment (state.js, via the anchor band);
+  // the legacy palette survives only as a headless/boot fallback.
+  if (body && body.bodyColor) return body.bodyColor;
+  return BOT_PALETTE[(bodyIndex - np) % BOT_PALETTE.length];
+};
+
+// Canonical player-slot colors: every peer agrees on who wears what.
+const PLAYER_PALETTE = ['#00ff00', '#ff2d2d', '#2d8cff', '#ffd22d'];
+  api.PLAYER_SLOTS = PLAYER_PALETTE;
+
   window.FF.palette = api;
 }
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -57,12 +57,21 @@ function emit(type, payload, state) {
     for (const fn of arr.slice()) {
       // A broken listener must never take the frame (or the sim tick
       // that announced it) down with it.
-      try { fn(ev.data, ev); } catch (err) { console.warn('FF.events listener failed:', err); }
+      // THE STATE IS DELIVERED (fix 2026-08-26r). emit() has always
+      // TAKEN the state — and then dropped it, using only state.tick.
+      // The signals commit's first citizen was written as
+      // onSessionOver(payload, state): the subscriber and the bus
+      // disagreed about the second argument, so the ski-jump
+      // adapter's isOver() interrogated the EVENT RECORD, found no
+      // .session, and quietly said no — a session end announced and
+      // never acted on. Third argument, additive: two-arg listeners
+      // are untouched.
+      try { fn(ev.data, ev, state); } catch (err) { console.warn('FF.events listener failed:', err); }
     }
   }
   const any = listeners.get('*');
   if (any) for (const fn of any.slice()) {
-    try { fn(ev.data, ev); } catch (err) { console.warn('FF.events listener failed:', err); }
+    try { fn(ev.data, ev, state); } catch (err) { console.warn('FF.events listener failed:', err); }
   }
   return ev;
 }

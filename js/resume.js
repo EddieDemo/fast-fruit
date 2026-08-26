@@ -126,6 +126,12 @@ function save(state, opts) {
   if (!state || (opts && opts.netplay)) return false;
   try {
     const cup = window.FF.cup && window.FF.cup.current();
+    // NO AVENUE TO PRACTICE (Eddie, 2026-08-26). Only a race-cup run
+    // is worth resuming: practice is retired, and sessions (party
+    // legs) are ruled non-resumable — a 2-minute leg restarts, it
+    // does not deserialize a conveyor. A run outside the cup is
+    // therefore never saved at all.
+    if (!cup) return false;
     const snap = {
       v: VERSION,
       at: Date.now(),
@@ -151,7 +157,6 @@ function save(state, opts) {
         day: cup.day, leg: cup.leg, results: cup.results,
         table: cup.table, nameSeed: cup.nameSeed,
       } : null,
-      practice: !cup,
     };
     localStorage.setItem(KEY, JSON.stringify(snap));
     lastWrite = now();
@@ -206,6 +211,11 @@ function peek() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const snap = JSON.parse(raw);
+    // A practice snapshot from ANY earlier build is DISCARDED before
+    // the version check even looks: practice is gone, so there is
+    // nothing such a snapshot could resume INTO. Silent (no expiry
+    // note): the player never lost a run they could have continued.
+    if (snap.practice) { clear(); return null; }
     // A snapshot from an older build is DISCARDED. Half-loading a
     // stale shape is worse than losing the run: the player cannot
     // tell which half is lying.

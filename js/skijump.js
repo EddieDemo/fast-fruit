@@ -247,6 +247,29 @@ function provider(h) {
   };
 }
 
+// ---- The sim observer (refactor step 5, 2026-08-26) --------------
+// The mark breadcrumb, migrated OUT of physics.js: same fields, same
+// site (touchdown, before severity), same flight filter — now
+// registered rather than hand-edited. The first customer of the
+// observer sites; Lava's altitude ledger arrives the same way.
+if (window.FF.registerSimObserver) {
+  window.FF.registerSimObserver({
+    reset(m) {
+      m.skiMarkX = null;      // first-impact x of the last REAL flight
+      m.skiMarkSeq = 0;       // bumps once per recorded mark
+    },
+    touchdown(m) {
+      // A real flight is >= 30 ticks (~0.25s): rolling bumps never
+      // mark. Recorded before severity: a fatal landing still marks
+      // (death IS the scoring event).
+      if ((m.flightTicks || 0) >= 30) {
+        m.skiMarkX = m.x;
+        m.skiMarkSeq = (m.skiMarkSeq || 0) + 1;
+      }
+    },
+  });
+}
+
 // ---- The metric --------------------------------------------------
 // Distance in metres from the LIP to the first-impact mark. Marks
 // behind the lip (a tumble on the run-in) score nothing: the event
