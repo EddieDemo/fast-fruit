@@ -922,6 +922,27 @@ function computeStandings(state, resolved) {
   });
   for (const p of state.players) push(p.melon, p.melon === state.melon);
   for (const b of state.bots) push(b.melon, false);
+  // AN OPEN SESSION RANKS BY ITS METRIC (party games, 2026-08-26):
+  // the chassis owns the ranking and the formatted best; the rows are
+  // the same rows — portraits, pilots, decals, taps — with the metric
+  // where the time would be. Resolution machinery (settle, projected
+  // times, DNF) is race-shaped and never runs here: a session's clock
+  // ending IS the resolution.
+  if (state.session && window.FF.session) {
+    const S = window.FF.session;
+    const bodies = [];
+    for (const p of state.players) bodies.push(p.melon);
+    for (const b of state.bots) bodies.push(b.melon);
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].metricStr = S.formatBest(state, bodies[i]);
+      rows[i]._rank = state.session.rank[i] || rows.length;
+      rows[i].timeSec = null;
+      rows[i].dnf = false;
+    }
+    rows.sort((r, q) => r._rank - q._rank);
+    rows.forEach((r, i) => { r.pos = i + 1; });
+    return rows;
+  }
   // PLACE FOLLOWS TIME. Ordering by distance-at-the-flag was the old
   // rule, from before finish times existed for everyone: it put a
   // melon five metres further along ahead of one running a faster
@@ -1197,7 +1218,7 @@ function buildMenu() {
   // PARTY CUP replaces practice (doorway swap, ruled 2026-08-25:
   // practice-mode machinery stays dormant behind it; full removal is
   // its own future commit with the flow suite bracketing it).
-  const race = el('button', 'ff-btn ff-secondary', 'PARTY CUP \u00b7 3 EVENTS');
+  const race = el('button', 'ff-btn ff-secondary', 'PARTY CUP \u00b7 3 GAMES');
   const foot = el('div', 'ff-foot');
   foot.appendChild(resumeBtn);
   foot.appendChild(cupBtn);
@@ -1525,6 +1546,12 @@ function buildPause() {
     flow.go('race');
   });
   menu.addEventListener('click', () => {
+    if (sessionCtx && sessionCtx.final && sessionCtx.onMenu) {
+      const go4 = sessionCtx.onMenu;
+      sessionCtx = null;
+      go4();                       // the event module tears down
+      return;
+    }
     // Leaving for the menu ends the run: nothing left to resume, and
     // an orphaned snapshot would offer to restore a race the player
     // deliberately walked away from.
@@ -1666,6 +1693,7 @@ function buildFinish() {
   panel.appendChild(bodyZone);
   const retry = el('button', 'ff-btn', 'RETRY');
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
+  elFinish._retry = retry;
   const btns = el('div', 'ff-buttons');
   btns.appendChild(retry);
   btns.appendChild(menu);
@@ -1674,6 +1702,8 @@ function buildFinish() {
   // rather than one of two equal buttons.
   const next = el('button', 'ff-btn', 'NEXT RACE');
   const quit = el('button', 'ff-btn ff-quiet', 'abandon cup');
+  elFinish._next = next;
+  elFinish._quit = quit;
   const cupBtns = el('div');
   cupBtns.appendChild(next);
   cupBtns.appendChild(quit);
@@ -1684,6 +1714,13 @@ function buildFinish() {
   elFinish._btns = btns;
   elFinish._cupBtns = cupBtns;
   next.addEventListener('click', () => {
+    if (sessionCtx && sessionCtx.onNext) {
+      const go2 = sessionCtx.onNext;
+      sessionCtx = null;
+      fromMenuOrRetry = true;
+      go2();                       // the event module owns the transition
+      return;
+    }
     const c = window.FF.cup;
     if (!c || !startLegFn) return;
     startLegFn(c.trackForLeg(c.current().leg));
@@ -1735,6 +1772,13 @@ function buildFinish() {
   const collectThen = (next) => runRewards(next);
 
   retry.addEventListener('click', () => {
+    if (sessionCtx && sessionCtx.final && sessionCtx.onRetry) {
+      const go3 = sessionCtx.onRetry;
+      sessionCtx = null;
+      fromMenuOrRetry = true;
+      go3();                       // RUN IT BACK: a fresh party cup
+      return;
+    }
     collectThen(() => {
       // After a completed cup, RETRY means another ATTEMPT at the day —
       // unlimited by design, ranked on your best.
@@ -1749,6 +1793,12 @@ function buildFinish() {
     });
   });
   menu.addEventListener('click', () => {
+    if (sessionCtx && sessionCtx.final && sessionCtx.onMenu) {
+      const go4 = sessionCtx.onMenu;
+      sessionCtx = null;
+      go4();                       // the event module tears down
+      return;
+    }
     // Leaving for the menu ends the run: nothing left to resume, and
     // an orphaned snapshot would offer to restore a race the player
     // deliberately walked away from.
@@ -2650,6 +2700,18 @@ function runRewards(next) {
   });
 }
 
+// ---- SESSION FINISH (party games, 2026-08-26) --------------------
+// The party cup and the race cup SHARE the finish screen: same rows,
+// same portraits, same advance flow. A session result needs no
+// resolution (the clock ending IS the resolution), so an event
+// module hands over a context and goes; enter() does the rest.
+let sessionCtx = null;
+flow.showSessionFinish = function (ctx) {
+  sessionCtx = ctx || {};
+  fromMenuOrRetry = false;
+  flow.go('finish');
+};
+
 flow.register('finish', {
   enter() {
     // THE ONE CAREER WRITE. This is the only moment a race is
@@ -2795,7 +2857,8 @@ flow.register('finish', {
         }
       }
       const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
-      nm.appendChild(el('div', 'ff-rtime', r.dnf ? 'DNF' : fmtTime(r.timeSec)));
+      nm.appendChild(el('div', 'ff-rtime',
+        r.metricStr !== undefined ? r.metricStr : (r.dnf ? 'DNF' : fmtTime(r.timeSec))));
       row.appendChild(nm);
       rows.appendChild(row);
       clearCanvas(c);
@@ -2811,6 +2874,53 @@ flow.register('finish', {
     // Mid-cup the standings that matter are the CUP's, so that tab
     // leads; a single race still opens on its own result.
     setCupMode(!!cupping, cupping && window.FF.cup.isComplete());
+    if (stateRef.session && sessionCtx) {
+      // THE RELEVANCE FILTER, first pass (design ruled: tabs declare
+      // their data; absent data, absent tab). A session has PLACES —
+      // ranks, portraits, bests. The RACE and YOU tabs read race
+      // telemetry that does not exist here; the CUP tab reads the
+      // daily cup. None of that data exists, so none of those tabs
+      // render. The full declaration-driven filter arrives with the
+      // metric-aware tab work.
+      elFinishTitle.textContent = sessionCtx.title || 'RESULTS';
+      if (elFinishNote) elFinishNote.textContent = sessionCtx.note || '';
+      // FOUR TABS, SAME AS A RACE (re-ruled 2026-08-26): relevance
+      // filters at the FACT level, not the tab level. raceWatch
+      // observes the SIM, not the race rules, so the field's carnage
+      // census and your run both exist in a party game; only the
+      // lap-shaped facts drop out (each guarded by its own data
+      // already — bestLapSec is null in a session).
+      elFinish._tabBtns.race.style.display = '';
+      elFinish._tabBtns.race.textContent = 'GAME';
+      elFinish._tabBtns.you.style.display = '';
+      fillSessionSummary();
+      // THE CUP TAB DECLARES ITS DATA: party points (a running table
+      // between games, the final table at the end). Present, it
+      // renders and LEADS — the race cup's own mid-cup law. Absent
+      // (a lone session outside a cup), no tab.
+      if (sessionCtx.cupRows) {
+        elFinish._tabBtns.cup.style.display = '';
+        fillPartyCup(sessionCtx.cupRows);
+        showTab('cup');
+      } else {
+        elFinish._tabBtns.cup.style.display = 'none';
+        showTab('places');
+      }
+      const mid2 = !!sessionCtx.onNext;
+      elFinish._cupBtns.style.display = mid2 ? '' : 'none';
+      elFinish._btns.style.display = mid2 ? 'none' : '';
+      elFinish._next.textContent = sessionCtx.nextLabel || 'NEXT GAME';
+      if (sessionCtx.final) elFinish._retry.textContent = 'RUN IT BACK';
+      elFinish._quit.style.display = 'none';   // party abandon: own commit
+      return;
+    }
+    // A race finish restores what a session may have hidden.
+    elFinish._tabBtns.race.style.display = '';
+    elFinish._tabBtns.race.textContent = 'RACE';
+    elFinish._tabBtns.you.style.display = '';
+    elFinish._next.textContent = 'NEXT RACE';
+    elFinish._retry.textContent = 'RETRY';
+    elFinish._quit.style.display = '';
     if (elFinishNote) {
       const c = window.FF.cup;
       if (practiceMode) {
@@ -2971,6 +3081,76 @@ function setCupMode(cupping, complete) {
   const mid = cupping && !complete;
   elFinish._cupBtns.style.display = mid ? '' : 'none';
   elFinish._btns.style.display = mid ? 'none' : '';
+}
+
+// ---- The PARTY CUP tab (2026-08-26): points so far / final -------
+// Same pane the race cup's table uses; the columns speak the party
+// cup's language — per-game bests and points.
+function fillPartyCup(cupRows) {
+  // SAME SHAPE AS THE RACE CUP TAB (re-fixed 2026-08-26: the first
+  // version used plain fact rows and read as a different screen). A
+  // cup standing is a standing: tiered ordinal, rotating body,
+  // identity line — only the CONTENT differs (per-game bests and
+  // points instead of cumulative time).
+  const box = elFinish._cupTable;
+  box.textContent = '';
+  const mine = cupRows.find((r) => r.isPlayer);
+  box.appendChild(el('div', 'ff-cup-head',
+    (sessionCtx && sessionCtx.final ? 'FINAL' : 'AFTER '
+      + (window.FF.partycup ? Math.min(cupRows.length && window.FF.partycup.LEGS, 99) : ''))
+    .replace(/AFTER \d*/, sessionCtx && sessionCtx.final ? 'FINAL'
+      : 'STANDINGS') + ' \u00b7 ' + (mine ? mine.points + ' pts' : '')));
+  const list = el('div', 'ff-rows ff-cup-rows');
+  box.appendChild(list);
+  const look = new Map();
+  for (const s of computeStandings(stateRef, lastResolved)) look.set(s.name, s);
+  for (const r of cupRows) {
+    const row = el('div', 'ff-row' + (r.isPlayer ? ' ff-you' : ''));
+    const pos = el('div', 'ff-pos', String(r.place));
+    pos.appendChild(el('span', 'ff-ord', ordinalSuffix(r.place)));
+    row.appendChild(pos);
+    const cv = el('canvas', 'ff-spin');
+    cv.width = 104; cv.height = 104;
+    row.appendChild(cv);
+    const nm = racerIdentity(r.name, r.pilot, r.isPlayer);
+    nm.appendChild(el('div', 'ff-rtime',
+      r.points + ' pts' + (r.bests && r.bests.length
+        ? '  \u00b7  ' + r.bests.join('  ') : '')));
+    row.appendChild(nm);
+    list.appendChild(row);
+    clearCanvas(cv);
+    const s = look.get(r.name);
+    if (s) {
+      spinners.push({ canvas: cv, angle: r.place * 0.7, a: s.a, b: s.b,
+        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
+    }
+  }
+}
+
+// ---- The YOU tab, session form (2026-08-26) ----------------------
+// Session-native facts over the SAME row markup fillSummary uses:
+// your best in the game's own units, attempts (the mark counter),
+// splats, biggest hit survived. Lap facts have no session existence.
+function fillSessionSummary() {
+  const box = elFinish._summary;
+  box.textContent = '';
+  const st = stateRef;
+  const S = window.FF.session;
+  const m = st.players[0].melon;
+  const stat = (v, k) => {
+    const row = el('div', 'ff-fact');
+    row.appendChild(el('div', 'ff-fact-l', k));
+    const right = el('div', 'ff-fact-r');
+    right.appendChild(el('div', 'ff-fact-n', String(v)));
+    row.appendChild(right);
+    box.appendChild(row);
+  };
+  stat(S.formatBest(st, m), 'BEST');
+  stat(String(m.skiMarkSeq || 0), 'ATTEMPTS');
+  const rw = window.FF.raceWatch;
+  const s = (rw && rw.summary) ? rw.summary(st) : {};
+  stat(String(s.deaths || 0), (s.deaths || 0) === 1 ? 'SPLAT' : 'SPLATS');
+  if (s.biggestSurvived) stat(s.biggestSurvived.toFixed(1), 'BIGGEST SURVIVED');
 }
 
 // ---- The RACE tab: superlatives over the whole field -------------

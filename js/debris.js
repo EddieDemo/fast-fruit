@@ -237,8 +237,19 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   }
 
   // The stain: the fragments account for the solids; this is the
-  // liquid. The track remembers in two mediums.
-  spawnStain(state, cpx, cpy, tick, rng);
+  // liquid. The track remembers in two mediums — BUT ONLY WHAT
+  // TOUCHED IT (ruled 2026-08-26, found on device: floating stains).
+  // A stain is the record of a body meeting a SURFACE. A pair-kill in
+  // mid-air smeared nothing against terrain — and worse, projecting
+  // its burst point near the ski-jump cliff let the near-vertical
+  // face hand back a foot at the death's OWN altitude (a vertical
+  // wall offers a nearest point at every height), composing (death x,
+  // cliff-foot y): a coordinate belonging to no surface. Terrain-
+  // contact deaths only: the body is at the deck it died on, the
+  // projection is local and honest — including smears on the cliff
+  // face itself, which really was hit. Pair-only deaths still burst
+  // fragments; they just stain nothing.
+  if (m.hitSeverity > 0) spawnStain(state, cpx, cpy, tick, rng);
 }
 
 // Seeded irregular shard polygons — fracture STATISTICS, not fracture

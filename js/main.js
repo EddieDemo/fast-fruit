@@ -75,6 +75,14 @@ let provider = providers[modeName] || providers['Track 1'];
 // inherit exhibition settings by accident.
 function respawnRace(opts) {
   const exhibition = !!(opts && opts.endless);
+  // THE LIFECYCLE LAW (fix 2026-08-26, found on device: races
+  // inherited the party conveyor, countdown HUD and metric tags after
+  // any exit that skipped the polite teardown): BUILDING A RACE WORLD
+  // ENDS ANY SESSION. No exit path needs to remember, because the
+  // rebuild itself is the teardown. The hooks were each gated on the
+  // session; nothing had ever checked the session DIES with the world
+  // it was captured in.
+  if (!(opts && opts.session)) state.session = null;
   // An OPEN SESSION (party chassis): unreachable laps and no ghost
   // like the exhibition, but the player keeps their own melon and the
   // grid ceremony runs — everyone starts together, then loops freely.
@@ -225,6 +233,11 @@ function respawnRace(opts) {
   // The race's SEED (stage 5): the key for every seeded per-race
   // decision — today, the bots' fork commitments. Endless races key
   // on the world seed the same way.
+  // Sessions ride this line too (2026-08-26): a session provider
+  // CARRIES ITS SEED, and the whole conditions pipeline below — hour,
+  // stage, sky generate/gate/fallback, moon — runs on it unchanged.
+  // (The device sameness: the hill provider had no seed, so every
+  // session rolled sky zero.)
   race.seed = (def ? def.seed : (provider.seed || 0)) >>> 0;
   // PHASE 5.1 — THE HOUR. Chosen from the race seed and the cup leg,
   // so it is deterministic (same track, same leg, same light) and a
@@ -432,12 +445,14 @@ const renderer = createRenderer(canvas);
 // An event module hands over its provider and session config; this is
 // the ONLY door — it owns provider switching and the race rebuild so
 // event modules never touch main's internals.
-window.FF.startSession = function (name, providerObj, sessionOpts, extras) {
-  providers[name] = providerObj;
-  modeName = name;
-  provider = providerObj;
-  respawnRace({ session: true });
-  const s = window.FF.session.begin(state, sessionOpts);
+window.FF.world._install({
+  state,
+  buildSession(name, providerObj, sessionOpts, extras) {
+    providers[name] = providerObj;
+    modeName = name;
+    provider = providerObj;
+    respawnRace({ session: true });
+    const s = window.FF.session.begin(state, sessionOpts);
   // THE CONVEYOR RETURNS YOU TO YOUR OWN GRID SLOT (re-fixed
   // 2026-08-25, second device finding): the first anchor projected a
   // landing surface at revive time using the DEATH y as the reference
@@ -449,17 +464,28 @@ window.FF.startSession = function (name, providerObj, sessionOpts, extras) {
   // start" means YOUR start.
   const bodies0 = [state.players[0].melon].concat(state.bots.map((b) => b.melon));
   s.respawnX = SPAWN.x;                       // legacy fallback
-  s.respawnXs = bodies0.map((m) => m.x);
-  s.respawnYs = bodies0.map((m) => m.y);
-  if (extras) Object.assign(s, extras);
-  return s;
-};
-window.FF.endSessionToDaily = function () {
-  if (state.session) state.session = null;
+    s.respawnXs = bodies0.map((m) => m.x);
+    s.respawnYs = bodies0.map((m) => m.y);
+    if (extras) Object.assign(s, extras);
+    return s;
+  },
+  toDaily() {
+  // MIDNIGHT ROLLOVER (fix 2026-08-26, device freeze at 01:48: a cup
+  // started before midnight, MAIN MENU pressed after — the new day's
+  // track was never registered at boot, provider came back undefined,
+  // provider.reset threw and killed the frame loop). Resolve the
+  // provider exactly as boot does: register today's def on demand,
+  // fall back to Track 1. The same lesson the practice button learned
+  // on 2026-08-17.
   modeName = (window.FF.dailyTrackName && window.FF.dailyTrackName()) || 'Track 1';
-  provider = providers[modeName];
-  respawnRace();
-};
+  if (!providers[modeName]) {
+    const def = window.FF.trackDefByName(modeName);
+    if (def) providers[modeName] = createTrackProvider(def);
+  }
+    provider = providers[modeName] || providers['Track 1'];
+    respawnRace();
+  },
+});
 
 window.FF._state = state;   // read-only presentation handle (results overlays)
 const hud = createHud(state);
@@ -699,6 +725,15 @@ function frame(now) {
     // AFTER the observer: the finish screen captures standings the
     // moment race.finishedTick appears, and it must find every stamp
     // already written.
+    // LIFECYCLE ANNOUNCEMENTS (refactor step 4, 2026-08-26): the
+    // frame boundary announces deterministic sim moments to the
+    // events bus — HERE, outside the fixed-step loop, so listeners
+    // (which may rebuild worlds) never run mid-step. One announcement
+    // per session end; the latch resets when a new session begins.
+    if (state.session && state.session.over && !state.session._announced) {
+      state.session._announced = true;
+      if (window.FF.events) window.FF.events.emit('session:over', {}, state);
+    }
     if (window.FF.flow) window.FF.flow.onFrame(state);
     // A race in progress is saved on a heartbeat. Only while actually
     // racing: a finished or abandoned race has nothing to resume, and
