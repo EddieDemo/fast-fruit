@@ -255,7 +255,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-26aa';
+const BUILD = '2026-08-26ad';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -358,4 +358,12 @@ Object.assign(window.FF, { BUILD, DEFAULTS, CONFIG, SCHEMA, PRESETS, applyPreset
 // these lines) to restore daily-only, plain-slab behaviour.
 window.FF.DEV_RANDOM_TRACKS = true;
 window.FF.DEV_TERRAIN_COLORS = true;
+// DEV PIN (2026-08-26ac): force a named party event into LEG 1 for
+// building/testing party games. The rest of the lineup follows the
+// coverage law. Set to null to unpin. Works for any REGISTERED
+// event, pooled or not (an unpooled event under construction evicts
+// slot 0's draw — that's the point). begin() logs loudly while a
+// pin is active so it cannot ship silently.
+// >>> PINNED TO 'derby' FOR THE CURRENT BUILD CYCLE — UNPIN LATER <<<
+window.FF.DEV_PARTY_OPENER = 'derby';
 })();

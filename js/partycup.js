@@ -46,17 +46,44 @@ function registerEvent(a) {
   return a.id;
 }
 
-// The draw (grown 2026-08-26z, derby stage 4): TWO events now, so
-// "every slot draws the one event" is over. Each leg draws SEEDED
-// from the pool — deterministic per cup seed, distinct stream per
-// leg, both events reachable across parties. Slot CURATION (opener/
-// closer character) arrives with the third event, as planned.
+// THE COVERAGE LAW (ruled 2026-08-26ac, replacing the iid coin of
+// stamp z): a party is a SAMPLER — while the pool fits the card
+// (POOL.length <= LEGS), every event appears at least once. Eddie's
+// device found the iid law's flaw the honest way: one party in
+// eight was three ski jumps, one in eight never showed derby.
+// The lineup: the whole pool, plus seeded extras to fill the card,
+// seeded-shuffled — coverage guaranteed, order still a surprise.
+// Stateless per (seed): suites and setCup-injected cups need no new
+// fields. When the pool outgrows the card, the interim law is a
+// seeded per-leg pick; SLOT CURATION (opener/closer character)
+// still arrives with the third event, as planned.
 const POOL = ['skijump', 'derby'];
-function drawEvent() {
-  if (POOL.length === 1) return POOL[0];
-  const r = window.FF.mulberry32((cup.seed ^ ((cup.leg + 1) * 0x85ebca6b)) >>> 0)();
-  return POOL[(r * POOL.length) | 0];
+function partyLineup(seed) {
+  const r = window.FF.mulberry32(((seed ^ 0xc0ffee) >>> 0));
+  const ids = [];
+  if (POOL.length <= LEGS) {
+    for (const p of POOL) ids.push(p);
+    while (ids.length < LEGS) ids.push(POOL[(r() * POOL.length) | 0]);
+    for (let i = ids.length - 1; i > 0; i--) {   // seeded shuffle
+      const j = (r() * (i + 1)) | 0;
+      const t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+    }
+  } else {
+    for (let leg = 0; leg < LEGS; leg++) ids.push(POOL[(r() * POOL.length) | 0]);
+  }
+  // THE DEV PIN: a named REGISTERED event takes leg 1 (config.js,
+  // DEV_PARTY_OPENER). Already in the lineup -> swapped to the
+  // front, coverage intact; not in the pool (a game under
+  // construction) -> it evicts slot 0's draw, deliberately.
+  const pin = window.FF.DEV_PARTY_OPENER;
+  if (pin && EVENTS[pin]) {
+    const at = ids.indexOf(pin);
+    if (at >= 0) { ids[at] = ids[0]; ids[0] = pin; }
+    else ids[0] = pin;
+  }
+  return ids;
 }
+function drawEvent() { return partyLineup(cup.seed)[cup.leg]; }
 
 let cup = null;   // { leg, legRows: [][], points: {key: n}, handledOver }
 
@@ -69,6 +96,11 @@ function begin() {
     // The reveal card animates the WHOLE party's earnings (the race
     // cup's own xpStart pattern): snapshot before a single leg banks.
     xpStart: (M0 && M0.pilotXp) ? M0.pilotXp() : null };
+  if (window.FF.DEV_PARTY_OPENER && EVENTS[window.FF.DEV_PARTY_OPENER]) {
+    // Loud on purpose: a pin that ships silently becomes the game.
+    console.info('[partycup] DEV PIN active: leg 1 = '
+      + window.FF.DEV_PARTY_OPENER + ' (DEV_PARTY_OPENER in config.js)');
+  }
   startLeg();
 }
 
@@ -266,6 +298,7 @@ window.FF.partycup = {
     setCup: (c) => { cup = c; },
     pool: POOL,
     drawEvent,
+    partyLineup,
   },
 };
 })();

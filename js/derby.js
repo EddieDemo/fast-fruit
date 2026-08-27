@@ -200,25 +200,108 @@ function makePlace(seed) {
   };
 }
 
-// ---- THE WIRING BRAIN (not the AI — that stays deferred) ----------
-// Cruise's whole policy is "hold right forever"; in a pen that ends
-// pinned against the right wall. The one reflex wiring needs: drive
-// toward the centre you spawned facing, and when the wall has held
-// you stalled for ~3/4 s, turn around. Targeting, ramp timing and
-// avoidance are the LATER, ruled-deferred work.
+// ---- THE DERBY BRAIN (stage 6: the AI, no longer just wiring) -----
+// Three verbs and a reflex:
+//   HUNT   — nearest living opponent by distance, STICKY: re-asked
+//            only on a per-bot staggered cadence (or when the target
+//            dies), so the pack doesn't flip targets in unison.
+//   DRIVE  — full commit toward the target. Crossing the plateau to
+//            reach someone is how mid-air head-ons happen; no ramp
+//            choreography is scripted.
+//   BRACE  — the damage law is the tactic: shares run with DEADNESS
+//            (the stiffer body eats the bigger cut, pair restitution
+//            is min). So when a fast opponent closes inside the
+//            brace radius, flare BOUNCY and shed. But the check runs
+//            only every REACT ticks, per-bot staggered: a bot can be
+//            caught flat — imperfect defense IS the content, and the
+//            player's opening.
+//   ...and the wall-stall TURNAROUND stays, as an override — a
+//   pinned bot breaks the game loop no matter how smart it is.
+// PERSONALITY is seeded from canonIdx through mulberry32 (never the
+// shared stream — the brain law): aggression radius, cadences, and
+// brace threshold vary per bot, deterministically.
+// NO CTX (bare harnesses drive brains with a body alone): fall back
+// to the wiring behaviour — face the arena, turn at walls.
 if (FF.pilot && FF.pilot.register) {
   FF.pilot.register('derby', () => {
     let dir = 0, stall = 0;
+    let P = null;              // personality, derived on first drive
+    let targetIdx = -1;
+    let braced = 0;            // ticks of brace remaining
+    function personality(m) {
+      const r = FF.mulberry32(((m.canonIdx + 1) * 0x9e3779b9) >>> 0);
+      return {
+        reevalTicks: 45 + ((r() * 60) | 0),     // hunt cadence
+        reactTicks: 10 + ((r() * 14) | 0),      // brace check cadence
+        braceRadius: 420 + ((r() * 260) | 0),   // px
+        braceClose: 900 + ((r() * 500) | 0),    // px/s closing speed
+        braceHold: 18 + ((r() * 12) | 0),       // ticks of shed
+        stagger: (r() * 30) | 0,
+      };
+    }
+    function bodiesOf(state) {
+      const out = [state.players[0].melon];
+      for (const b of state.bots) out.push(b.melon);
+      return out;
+    }
     return {
       name: 'derby',
-      drive(m) {
-        if (dir === 0) dir = m.x > 0 ? -1 : 1;   // face the arena
+      drive(m, ctx) {
+        if (dir === 0) dir = m.x > 0 ? -1 : 1;
+        // The reflex, always armed: stalled against a wall, turn.
         if (m.vx * dir < 30) stall++; else stall = 0;
-        if (stall > 90) { dir = -dir; stall = 0; }   // the turnaround
-        return { axis: dir, bounce: 0 };
+        if (stall > 90) { dir = -dir; stall = 0; }
+
+        const state = ctx && ctx.state;
+        if (!state || m.canonIdx === undefined || m.canonIdx < 0) {
+          return { axis: dir, bounce: 0 };     // wiring fallback
+        }
+        if (!P) P = personality(m);
+        const tick = ctx.tick || 0;
+        const bodies = bodiesOf(state);
+
+        // HUNT (sticky, staggered cadence, re-ask on a dead target).
+        const t = bodies[targetIdx];
+        if (targetIdx < 0 || !t || !t.alive
+          || (tick + P.stagger) % P.reevalTicks === 0) {
+          let best = -1, bestD = Infinity;
+          for (let i = 0; i < bodies.length; i++) {
+            if (i === m.canonIdx || !bodies[i].alive) continue;
+            const d = Math.abs(bodies[i].x - m.x);
+            if (d < bestD) { bestD = d; best = i; }
+          }
+          targetIdx = best;
+        }
+
+        // DRIVE toward the target; the reflex's dir stands in when
+        // the field is empty (last-alive frames).
+        const tgt = bodies[targetIdx];
+        let axis = dir;
+        if (tgt && tgt.alive) {
+          axis = tgt.x > m.x ? 1 : -1;
+          dir = axis;   // the reflex tracks the hunt's heading
+        }
+
+        // BRACE: checked on the reaction cadence only.
+        if (braced > 0) braced--;
+        if ((tick + P.stagger) % P.reactTicks === 0) {
+          for (let i = 0; i < bodies.length; i++) {
+            if (i === m.canonIdx || !bodies[i].alive) continue;
+            const o = bodies[i];
+            const dx = o.x - m.x;
+            if (Math.abs(dx) > P.braceRadius) continue;
+            const closing = (o.vx - m.vx) * (dx > 0 ? -1 : 1);
+            if (closing > P.braceClose) { braced = P.braceHold; break; }
+          }
+        }
+        return { axis, bounce: braced > 0 ? 1 : 0 };
       },
-      save() { return { dir, stall }; },
-      load(s) { if (s) { dir = s.dir || 0; stall = s.stall || 0; } },
+      save() { return { dir, stall, targetIdx, braced }; },
+      load(s) {
+        if (s) { dir = s.dir || 0; stall = s.stall || 0;
+          targetIdx = s.targetIdx === undefined ? -1 : s.targetIdx;
+          braced = s.braced || 0; }
+      },
     };
   });
 }
