@@ -50,7 +50,7 @@ const P = {
   // Ramp A = law(base); ramp B = law(patternAnchor). The offset below
   // is the DEFAULT (the watermelon stripe); a species whose pattern is
   // a genuinely different material overrides it with ONE offset triple
-  // (FRUITS[x].patternOffset) — never a curve. Regions name a SLOT
+  // (OBJECTS[x].patternOffset) — never a curve. Regions name a SLOT
   // ('A2'), never a hex, so every melon's palette stays its own while
   // the assignment holds across the cast.
   rampLoDL: -30, rampLoDH: -30, rampLoDS: -10, // law: shadow end
@@ -435,7 +435,7 @@ function preSlot(hex, slot) {
 // continuously from its seed. The seed cannot lie, extended to
 // colour: no two racers need ever share a green, and the old
 // hand-picked elevens survive as the calibration envelope each band
-// was measured from (see fruits.js). Deterministic: mulberry32 over
+// was measured from (see objects.js). Deterministic: mulberry32 over
 // (seed x species-name hash), identical on every peer. Presentation
 // tier only — the sim never reads colours.
 // Sample a seeded band. Shared by the shell's anchorBand and the
@@ -463,7 +463,7 @@ function seededBandColor(band, key, seed) {
 }
 
 function anchorColor(species, seed) {
-  const F = window.FF.FRUITS && window.FF.FRUITS[species];
+  const F = window.FF.OBJECTS && window.FF.OBJECTS[species];
   const band = F && F.anchorBand;
   if (!band) return '#37a01c';
   let h = 2166136261;
@@ -480,7 +480,7 @@ function anchorColor(species, seed) {
 // 'A1'..'An' / 'B1'..'Bn'. Cached per (base colour + law + offset) so
 // a race of twelve melons solves twelve palettes, not twelve per frame.
 //
-// `patOff` is a species' PATTERN-ANCHOR offset (FRUITS[x].patternOffset)
+// `patOff` is a species' PATTERN-ANCHOR offset (OBJECTS[x].patternOffset)
 // — the one per-species colour fact: what the pattern pigment is,
 // relative to the body (a red star is not a lighting response of
 // orange). Falsy = the default offset in P (the watermelon stripe).
@@ -489,14 +489,29 @@ function anchorColor(species, seed) {
 // species may bring its own curve — the pattern anchor shades under
 // the same sun as the body it sits on.
 const paletteCache = new Map();
+// TWO PATTERN MECHANISMS (ruled 2026-08-27), one law:
+//   patternOffset  — RELATIVE: the pattern is a variation of the
+//     body's own material (watermelon stripes follow their seeded
+//     green). anchor = base + offset.
+//   patternPigment — ABSOLUTE: the pattern is a SECOND AUTHORED
+//     MATERIAL (a beach-ball panel, the eight ball's disc). anchor =
+//     the named canonical pigment (PIGMENTS lookup) or a hex. The
+//     offset route made every eight ball's "white" drift with its
+//     seeded charcoal — one pigment under many lights, never many
+//     pigments. The spec arrives as { pigment: 'WHITE' | '#hex' }.
+// EITHER WAY the same lighting law applies: B = law(anchor). No
+// species may bring its own curve.
+function resolvePigment(p) { return PIGMENTS[p] || p; }
 function palette(hex, patOff) {
   const n = 3; // three roles, three slots: shadow / base / highlight
   const o = patOff || { dL: P.rampBDL, dH: P.rampBDH, dS: P.rampBDS };
+  const pig = o.pigment ? resolvePigment(o.pigment) : null;
   const ck = [hex, P.rampLoDL, P.rampLoDH, P.rampLoDS,
-    P.rampHiDL, P.rampHiDH, P.rampHiDS, o.dL, o.dH, o.dS].join(',');
+    P.rampHiDL, P.rampHiDH, P.rampHiDS,
+    pig ? 'P:' + pig : [o.dL, o.dH, o.dS].join('/')].join(',');
   let pal = paletteCache.get(ck);
   if (pal) return pal;
-  const anchor = offsetColor(hex, o.dL, o.dH, o.dS); // the second material
+  const anchor = pig || offsetColor(hex, o.dL, o.dH, o.dS); // the second material
   pal = { slots: [], n };
   for (let i = 0; i < n; i++) {
     const t = n === 1 ? 0 : i / (n - 1);
@@ -686,7 +701,17 @@ function isoContour(angle, a, b, tau, spokes, taper) {
 // split to two hand-typed near-whites carrying opposite traces.
 // Consumers: decal art whites, the cloud lit face. Smoke keeps its
 // own grey — that is a material, not a failed white.
-const WHITE_HEX = '#f6f6f6';
+// THE PIGMENT TABLE (colour refactor, 2026-08-26ah): every
+// canonical pigment the game owns, in ONE place — "does a canonical
+// X exist" is answered by reading this table, not by grepping (the
+// lesson: the canonical white existed and was asserted absent).
+// Greys were considered and left where they live: renderer's world
+// tones are that module's authored art, not shared pigments.
+const PIGMENTS = {
+  WHITE: '#f6f6f6',   // ruled 2026-08-24 (headroom + colourless law above)
+  BLACK: '#000000',   // the void: sky, and nothing else so far
+};
+const WHITE_HEX = PIGMENTS.WHITE;
 const WHITE_RGB = [246, 246, 246];
 
 // ---- SPHERE TERMINATOR (rig S1, approved 2026-08-24) ----
@@ -875,7 +900,7 @@ function resetPalette() {
 // Seeds/pips stay species constants: they are not part of an
 // individual's identity, and seeding them would be noise.
 function pulpPalette(species, seed, bodyHex, patternOffset) {
-  const F = (window.FF.FRUITS && window.FF.FRUITS[species]) || {};
+  const F = (window.FF.OBJECTS && window.FF.OBJECTS[species]) || {};
   const shell = palette(bodyHex, patternOffset);
   const fleshAnchor = F.fleshBand
     ? seededBandColor(F.fleshBand, species + ':flesh', seed)
@@ -904,7 +929,7 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc, sphereContour, _sphereStats,
-  WHITE_HEX, WHITE_RGB,
+  WHITE_HEX, WHITE_RGB, PIGMENTS,
   rgbToHsl,
   // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
   // law's 4-L* rungs. A gradient is the one place a long ramp of

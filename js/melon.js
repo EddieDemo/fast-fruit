@@ -677,7 +677,7 @@ function setActive(i) {
 function stats(seed, fruit, wide) {
   const d = derive(seed, wide);
   const CONFIG = window.FF.CONFIG;
-  const F = (window.FF.FRUITS && window.FF.FRUITS[fruit]) || {};
+  const F = (window.FF.OBJECTS && window.FF.OBJECTS[fruit]) || {};
   const mult = F.sizeMult || 1;
   const aspect = F.aspect === undefined ? 0.78 : F.aspect;
   const taper = F.taper || 0;

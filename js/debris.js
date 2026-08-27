@@ -138,9 +138,10 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   // derived WITHOUT touching the rng stream.
   const bodyHex = m.bodyColor
     || (window.FF.racerColor ? window.FF.racerColor(state, bodyIndex) : '#37a01c');
-  const F = (window.FF.FRUITS && window.FF.FRUITS[m.fruit]) || {};
+  const F = (window.FF.OBJECTS && window.FF.OBJECTS[m.species]) || {};
   const pulp = (window.FF.shading && window.FF.shading.pulpPalette)
-    ? window.FF.shading.pulpPalette(m.fruit, colorSeedOf(m), bodyHex, F.patternOffset)
+    ? window.FF.shading.pulpPalette(m.species, colorSeedOf(m), bodyHex,
+        F.patternPigment ? { pigment: F.patternPigment } : F.patternOffset)
     : (F.pulp || { flesh: '#ff4757', fleshLight: '#ff6b7d', seed: '#222222' });
   const rindCol = pulp.rind;
   const slabCol = pulp.slab;
@@ -310,7 +311,7 @@ function makeShard(f, rng) {
 // — and it is pure arithmetic, so the rng stream is untouched (the
 // hazard that matters: debris runs inside the sim).
 function colorSeedOf(m) {
-  const s = String(m.bodyColor || m.patKey || m.name || m.fruit || 'x');
+  const s = String(m.bodyColor || m.patKey || m.name || m.species || 'x');
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   return h >>> 0;

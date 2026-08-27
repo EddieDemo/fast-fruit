@@ -188,7 +188,9 @@ function draw(ctx, state, cam, toScreenX, toScreenY, zoom) {
     const spd = state.spine.surfaceAt(dist);
     if (spd) {
       drawGhostAt(ctx, state, cam, toScreenX, toScreenY, zoom, spd.x, null, null,
-        challenge.name, dist, period, '#ffffff', challenge.melonSeed, spd.y);
+        challenge.name, dist, period,
+        (window.FF.shading && window.FF.shading.WHITE_HEX) || '#f6f6f6',  // canonical white (ruled 2026-08-27)
+        challenge.melonSeed, spd.y);
     }
   }
 

@@ -208,7 +208,7 @@ function draw(preview) {
   fit = (cvs.width / 2 - 6 * dpr) / Math.max(body.a, body.b);
   ctx.scale(fit, fit);
   window.FF.drawMelonStandalone(ctx, POSE, body.a, body.b, body.color,
-    body.patKey, body.fruit, fit, worn(), !!preview);
+    body.patKey, body.species, fit, worn(), !!preview);
   drawSelection(preview);
   ctx.restore();
 }
@@ -713,14 +713,14 @@ function open(done) {
   const spec = M.active();
   const d = M.deriveSpec(spec);
   const design = window.FF.studio && window.FF.studio.design;
-  const fruit = (design && design.fruit) || 'watermelon';
-  const F = window.FF.FRUITS[fruit] || {};
+  const fruit = (design && design.species) || 'watermelon';
+  const F = window.FF.OBJECTS[fruit] || {};
   const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
   body = {
     a, b: a * (F.aspect || 0.78),
     color: (design && design.color) || d.bodyColor,
     patKey: (design && design.patKey) || d.patternKey,
-    fruit, spec,
+    species: fruit, spec,
   };
 
   selected = -1;

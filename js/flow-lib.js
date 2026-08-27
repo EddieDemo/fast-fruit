@@ -66,7 +66,7 @@ function computeStandings(state, resolved) {
         : null),
     dnf: !!(resolved && resolved.byKey[window.FF.racerKey(m)] && resolved.byKey[window.FF.racerKey(m)].dnf
       && (m.finishTick === undefined || m.finishTick === null)),
-    fruit: m.fruit || 'watermelon',
+    species: m.species || 'watermelon',
     color: m.bodyColor || '#37a01c',
     patKey: m.patKey || m.name || 'x',
     // THE OUTFIT IS PART OF WHAT A MELON LOOKS LIKE (ruled
@@ -255,7 +255,7 @@ function spinLoop(now) {
     // The pattern raster is built for THIS destination: `fit` is
     // exactly device pixels per world pixel, which is the number the
     // renderer needs and the only place it can be known.
-    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.fruit, fit, s.decals);
+    draw(ctx, s.angle, s.a, s.b, s.color, s.patKey, s.species, fit, s.decals);
     ctx.restore();
   }
   // Keep the loop alive while ANY spinner exists, visible or not: the
@@ -276,11 +276,11 @@ function startSpinners() {
 function pushSpecPortrait(canvas, spec) {
   const M = window.FF.melon;
   const d = M.deriveSpec(spec);
-  const F = window.FF.FRUITS.watermelon || {};
+  const F = window.FF.OBJECTS.watermelon || {};
   const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
   spinners.push({ rate: 0.55, canvas, angle: 0,
     a, b: a * (F.aspect || 0.78),
-    color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon',
+    color: d.bodyColor, patKey: d.patternKey, species: 'watermelon',
     decals: spec.decals || null });
 }
 
@@ -288,8 +288,8 @@ function pushMelonPortrait(canvas) {
   const M = window.FF.melon;
   const d = M.deriveSpec(M.active());
   const design = window.FF.studio && window.FF.studio.design;
-  const fruit = (design && design.fruit) || 'watermelon';
-  const F = window.FF.FRUITS[fruit] || {};
+  const fruit = (design && design.species) || 'watermelon';
+  const F = window.FF.OBJECTS[fruit] || {};
   // Semi-major from CONFIG, not a hard-coded 46: the portrait must
   // track the same reference the sim uses if the tune panel moves it.
   const a = window.FF.CONFIG.semiMajor * d.scale * (F.sizeMult || 1);
@@ -306,7 +306,7 @@ function pushMelonPortrait(canvas) {
     // it too, so a bare seed here generated a DIFFERENT rind — the
     // melon on the menu was not the melon on the track.
     patKey: (design && design.patKey) || d.patternKey,
-    fruit,
+    species: fruit,
   });
 }
 
@@ -330,7 +330,7 @@ window.FF.flowLib = {
   pushSpecPortrait, pushMelonPortrait, addCSS,
   // The test hook's data: what the loop is actually drawing.
   spinnerDump: () => spinners.map(s => ({
-    a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, fruit: s.fruit,
+    a: +s.a.toFixed(2), color: s.color, patKey: s.patKey, species: s.species,
     decals: (s.decals || []).length })),
 };
 })();

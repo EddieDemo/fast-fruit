@@ -58,7 +58,7 @@ function now() {
 // The integrated fields, and only those.
 function packBody(m) {
   return {
-    f: m.fruit, s: +(m.a / window.FF.CONFIG.semiMajor).toFixed(6),
+    f: m.species, s: +(m.a / window.FF.CONFIG.semiMajor).toFixed(6),
     x: m.x, y: m.y, an: m.angle, vx: m.vx, vy: m.vy, w: m.omega,
     al: m.alive ? 1 : 0, rs: m.respawnAtTick, pt: m.protectTick,
     nm: m.name || '', pl: m.pilot || '', bc: m.bodyColor || null,

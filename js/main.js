@@ -169,11 +169,17 @@ function respawnRace(opts) {
     const spec = window.FF.melon.active();
     const d = window.FF.melon.deriveSpec(spec);
     window.FF.setBodyScale(state.melon, d.scale);
-    state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
-    state.melon.bodyColor = d.bodyColor; // and so does the green
+    if (!window.FF.devSpecies(null)) {
+      state.melon.patKey = d.patternKey; // rind follows the SEED, not the name
+      state.melon.bodyColor = d.bodyColor; // and so does the green
+    }
     if (spec.name) state.melon.name = spec.name;
-    // The outfit rides with the body, same as the rind and the green.
-    state.melon.decals = spec.decals || null;
+    // The outfit rides with the body, same as the rind and the green
+    // — unless the dev override is dressing a different SPECIES, in
+    // which case the wrap belongs to a melon that is not here (the
+    // applier owns that ruling; this build-time write must not
+    // re-dress the body behind it).
+    state.melon.decals = window.FF.devSpecies(null) ? null : (spec.decals || null);
   } else if (!netSession && exhibition && cast) {
     // THE MENU'S LOCAL BODY IS THE STAND-IN. Behind the panel the seat
     // the player will take is driven by its own character, so the
@@ -773,7 +779,24 @@ function frame(now) {
   // base colour and rind pattern all follow the stage. Re-applied every
   // frame so it survives respawns and track changes.
   const design = window.FF.studio && window.FF.studio.design;
-  if (design && state.melon) {
+  // THE SPECIES APPLIER RUNS UNCONDITIONALLY (fixed 2026-08-27d).
+  // It used to live INSIDE the `if (design)` gate below — so on any
+  // normal race (studio never opened, design null) the dev override
+  // never reached the player at all. The override is orthogonal to
+  // whether a melon has been dressed in the studio: applySpeciesDesign
+  // resolves want = override || design || current, and is idempotent,
+  // so this is a no-op on every frame that changes nothing.
+  // Solo only: a local body change in a lockstep race is a desync.
+  if (state.melon && !netSession) {
+    const spec0 = window.FF.melon.active();
+    const d0 = window.FF.melon.deriveSpec(spec0);
+    window.FF.applySpeciesDesign(state.melon,
+      (design && design.species) || null, d0.scale);
+  }
+  if (design && state.melon && !window.FF.devSpecies(null)) {
+    // (Gated on the override probe: these writes re-applied the SAVED
+    // pigment every frame and re-greened the beach ball — the decal
+    // stomp's colour twin, found on device 2026-08-27f.)
     if (design.color) state.melon.bodyColor = design.color;
     if (design.patKey) state.melon.patKey = design.patKey;
     // Wearing a species means wearing its BODY, not just its paint:
@@ -783,14 +806,9 @@ function frame(now) {
     // actual body, so an ellipse catches the sun differently than a
     // sphere), and wrong physics (tips that can smash on a "ball").
     // Solo only: in a lockstep race a local body change is a desync.
-    if (design.fruit && design.fruit !== state.melon.fruit && !netSession) {
-      state.melon.fruit = design.fruit;
-      const spec = window.FF.melon.active();
-      const d = window.FF.melon.deriveSpec(spec);
-      const mult = (window.FF.FRUITS[design.fruit] && window.FF.FRUITS[design.fruit].sizeMult) || 1;
-      // Same law as the bots: persistent physique scale x species mult.
-      window.FF.setBodyScale(state.melon, d.scale * mult);
-    }
+    // (The species application moved ABOVE this gate — see the
+    // comment there. A design's species reaches the door through the
+    // unconditional call; nothing species-related belongs here.)
   }
 
   const alpha = accumulator / stepDt;

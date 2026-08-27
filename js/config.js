@@ -220,7 +220,7 @@ const PRESETS = Object.freeze({
   botRoster: null,
 
   // BRAINS MOVED TO THE ROSTER (2026-08-14). A brain belongs to the
-  // PILOT, not to the fruit: driving skill is a property of the thing
+  // PILOT, not to the species: driving skill is a property of the thing
   // steering, and a melon is a body. roster.js now names every
   // character's pilot, melon and brain in one authored table, so the
   // clever racer cannot drift away from the melon it drives. This map
@@ -234,6 +234,11 @@ const PRESETS = Object.freeze({
   //     lower g leaves big melons torquey but slower to spool)
   //   sizeRevExp: rev limit ~ (1/s)^q — small wheels rev higher, as
   //     in every real vehicle; q=1 makes TOP SPEED size-neutral
+  //   THE ENGINE FOLLOWS THE MASS (ruled 2026-08-27g): engineK is
+  //     density x s^sizeEngineExp — equal to torque ~ m x r x s^-0.5,
+  //     one physical term and one authored term. Density-1 bodies are
+  //     bit-identical (raced path hashes proven across the change);
+  //     the annex species stop being outside the law.
   // Tournament-tuned (36-race win-rate harness, 2026-08-08): these
   // values balance WIN PERCENTAGE across the 0.85-1.18 size family
   // while keeping every physical character distinct — the whopper
@@ -255,7 +260,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-26ad';
+const BUILD = '2026-08-27g';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -366,4 +371,19 @@ window.FF.DEV_TERRAIN_COLORS = true;
 // pin is active so it cannot ship silently.
 // >>> PINNED TO 'derby' FOR THE CURRENT BUILD CYCLE — UNPIN LATER <<<
 window.FF.DEV_PARTY_OPENER = 'derby';
+// DEV FIELD SPECIES (2026-08-26af): spawn EVERY body as this
+// registered species — the whole-field meme dial ('beachball', etc).
+// null = off; registered names only (a typo falls through).
+// THE CONTRACT (ruled 2026-08-27d/e): the PLAYER converts live, on
+// the next frame — set it from the console mid-race and you become
+// one, and any saved decal wrap comes off (it belongs to your melon,
+// not to this body; clearing the flag restores it).
+// BOTS resolve at body creation, so an already-built field is
+// unchanged: SET IT, THEN RESTART THE RACE FROM THE PAUSE MENU
+// (that path rebuilds the field). A BROWSER RELOAD CLEARS THE FLAG —
+// it does NOT persist, by ruling: a dev dial that survives a reload
+// quietly becomes the game.
+// Deliberately not a live field rebuild — that would drag the world
+// door into a dev dial.
+window.FF.DEV_FIELD_SPECIES = null;
 })();

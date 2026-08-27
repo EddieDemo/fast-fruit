@@ -104,7 +104,7 @@ function describe(row) {
   const d = FF.melon ? FF.melon.derive(seed) : null;
   return {
     pilot, melon, brain, salt, seed,
-    fruit: SPECIES,
+    species: SPECIES,
     scale: d ? d.scale : 1,
     // Pigment and rind follow the same seed, so a character's whole
     // appearance is one fact. Falls back gracefully in headless

@@ -169,7 +169,7 @@ function buildMenu() {
   };
   const fillStats = () => {
     const design = window.FF.studio && window.FF.studio.design;
-    const fruit = (design && design.fruit) || 'watermelon';
+    const fruit = (design && design.species) || 'watermelon';
     // Both sources, indexed by key, then selected in the declared
     // order. Unknown keys are skipped rather than rendered blank, so
     // this list can name a row that a future species doesn't have.

@@ -801,13 +801,13 @@ const CN_U = 1.76 / 30;
 const CN = (gx, gy) => ({ x: -0.88 + gx * CN_U, y: -0.62 + gy * CN_U });
 const CN_BIG = CN(5, 5);
 const FLAGS = {
-  fr: { h: false, bands: [[0, 85, 164], [246, 246, 246], [239, 65, 53]] },
-  ie: { h: false, bands: [[22, 155, 98], [246, 246, 246], [255, 136, 62]] },
-  it: { h: false, bands: [[0, 140, 69], [246, 246, 246], [205, 33, 42]] },
+  fr: { h: false, bands: [[0, 85, 164], WHITE, [239, 65, 53]] },
+  ie: { h: false, bands: [[22, 155, 98], WHITE, [255, 136, 62]] },
+  it: { h: false, bands: [[0, 140, 69], WHITE, [205, 33, 42]] },
   de: { h: true, bands: [[24, 24, 24], [221, 0, 0], [255, 206, 0]] },
-  pl: { h: true, bands: [[246, 246, 246], [220, 20, 60]] },
+  pl: { h: true, bands: [WHITE, [220, 20, 60]] },
   // disc radius: 3/10 of flag height = 0.3 * 1.24
-  jp: { field: [246, 246, 246],
+  jp: { field: WHITE,
         disc: { x: 0, y: 0, r: 0.372, color: [188, 0, 45] } },
   // disc radius 1/5 of flag length = 0.2 * 1.76; centre 9/20 of the
   // length from the hoist, so it reads centred on a flying flag
@@ -818,14 +818,14 @@ const FLAGS = {
         stars: [{ x: 0, y: 0, r: 0.372, aim: null, color: [255, 222, 0] }] },
   // ---- WAVE A (2026-08-16, see docs/flag-roadmap.md) ---------------
   // Free with today's primitives, colours official-ish.
-  id: { h: true, bands: [[215, 25, 32], [246, 246, 246]] },           // Indonesia
-  nl: { h: true, bands: [[174, 28, 40], [246, 246, 246], [33, 70, 139]] },
-  ng: { h: false, bands: [[0, 135, 68], [246, 246, 246], [0, 135, 68]] },
-  hu: { h: true, bands: [[206, 42, 52], [246, 246, 246], [71, 112, 80]] },
-  at: { h: true, bands: [[237, 41, 57], [246, 246, 246], [237, 41, 57]] },
+  id: { h: true, bands: [[215, 25, 32], WHITE] },           // Indonesia
+  nl: { h: true, bands: [[174, 28, 40], WHITE, [33, 70, 139]] },
+  ng: { h: false, bands: [[0, 135, 68], WHITE, [0, 135, 68]] },
+  hu: { h: true, bands: [[206, 42, 52], WHITE, [71, 112, 80]] },
+  at: { h: true, bands: [[237, 41, 57], WHITE, [237, 41, 57]] },
   be: { h: false, bands: [[24, 24, 24], [253, 218, 36], [239, 51, 64]] },
   ro: { h: false, bands: [[0, 43, 127], [252, 209, 22], [206, 17, 38]] },
-  ci: { h: false, bands: [[247, 126, 0], [246, 246, 246], [0, 158, 96]] },
+  ci: { h: false, bands: [[247, 126, 0], WHITE, [0, 158, 96]] },
   // band + star: the emblem rides the middle band (overlays-first law)
   gh: { h: true, bands: [[206, 17, 38], [252, 201, 0], [0, 107, 63]],
         stars: [{ x: 0, y: 0, r: 0.2, aim: null, color: [24, 24, 24] }] },
@@ -839,15 +839,15 @@ const FLAGS = {
   co: { h: true, weights: [2, 1, 1],
         bands: [[252, 209, 22], [0, 56, 147], [206, 17, 38]] },
   th: { h: true, weights: [1, 1, 2, 1, 1],
-        bands: [[165, 25, 49], [246, 246, 246], [45, 42, 74],
-                [246, 246, 246], [165, 25, 49]] },
+        bands: [[165, 25, 49], WHITE, [45, 42, 74],
+                WHITE, [165, 25, 49]] },
   // USA (2026-08-16): 13 equal stripes; canton height = 7 stripes
   // exactly (7/13 of the letterbox), length 0.4 of the flag; 50 stars
   // in the official 9-row 6/5 alternation on the 12x10 canton grid,
   // generated, not typed. Star radius ~0.031 of flag height — dots at
   // sticker size, a star field at wrap size, both correct.
   us: (() => {
-    const RED = [178, 34, 52], WHT = [246, 246, 246], BLU = [60, 59, 110];
+    const RED = [178, 34, 52], WHT = WHITE, BLU = [60, 59, 110]; // WHT: the canonical pigment
     const bands = [];
     for (let i = 0; i < 13; i++) bands.push(i % 2 ? WHT : RED);
     const x0 = -0.88, y0 = -0.62;

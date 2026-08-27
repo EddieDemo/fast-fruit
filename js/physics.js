@@ -355,7 +355,7 @@ function makeCertificate(m, state, tick, sev, T, isPlayer, clPairE, clTicks) {
     airTicks: m.lastFlightTicks || 0,
     fallPx: m.lastFallPx || 0,
     toughness: damage.bodyToughness(m),
-    fruit: m.fruit || 'watermelon',
+    species: m.species || 'watermelon',
     vn: Math.abs(state.telemetry.lastImpactVn || 0),
     speed: Math.sqrt(m.vx * m.vx + m.vy * m.vy),
     // THE SPIN TERM: omega x (r x n) at the cluster's worst terrain
@@ -824,7 +824,27 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
     // measured: -49% distance even with deaths equalized). Player at
     // scale 1.0: engineK is exactly 1. Pinned ops only.
     const sRatio = m.a / CONFIG.semiMajor;
-    const engineK = sRatio === 1 ? 1 : dpow(sRatio, CONFIG.sizeEngineExp);
+    // THE ENGINE FOLLOWS THE MASS (ruled 2026-08-27g). The beautiful
+    // form of this law is: torque ~ mass x radius x size^-0.5 — one
+    // physical term (constant power-to-weight: every body in the
+    // universe gets identical linear acceleration) and ONE authored
+    // term (s^-0.5, the hare/freight-train character: small spools
+    // quick, big carries a higher ceiling via the untouched rev cap).
+    // COMPUTED as density x s^3.5 because the forms are equal —
+    // density is exactly the ratio by which mass departs from the
+    // s^3 assumption the old heuristic baked in — and this form is
+    // BIT-IDENTICAL for every density-1 body: x1.0 is exact, so the
+    // whole melon family, the eggs and the spheres keep their
+    // tournament-tuned numbers to the bit (the tau=0 fast-path
+    // precedent, applied again). What changes: bodies whose density
+    // departs from 1 stop being outside the law — the beach ball was
+    // receiving a big body's torque against 0.008 of the assumed
+    // inertia, ~90x the intended acceleration. The rev cap stays
+    // mass-free on purpose: top speed is a SIZE character (s^0.6),
+    // not a mass one.
+    const rho = window.FF.speciesDensity ? window.FF.speciesDensity(m.species) : 1;
+    const engineK = (sRatio === 1 && rho === 1) ? 1
+      : dpow(sRatio, CONFIG.sizeEngineExp) * rho;
     // Rev limit: small wheels rev higher (real vehicle mechanics).
     const revCap = CONFIG.maxAngVel * (sRatio === 1 ? 1 : dpow(sRatio, -CONFIG.sizeRevExp));
     const sameDir = axis * m.omega > 0;

@@ -32,7 +32,8 @@ function surfY(state, wx, refY) {
 }
 
 const COLORS = {
-  sky: '#000000',            // pure black background
+  sky: (window.FF.shading && window.FF.shading.PIGMENTS
+    && window.FF.shading.PIGMENTS.BLACK) || '#000000', // the canonical void
   grid: 'rgba(255, 255, 255, 0.08)', // background grid — visible but discreet
   terrainGrid: 'rgba(255, 255, 255, 0.06)', // ground grid — 2m squares, subtler
   ground: '#3a3a3a',         // ground fill
@@ -136,6 +137,23 @@ const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
 // Reused per-frame list of interpolated body poses (no per-frame GC).
 const drawList = [];
 
+
+// THE BEACH BALL painter (approved aesthetic, 2026-08-27): three
+// symmetric gores — red, white, red — converging at the poles, no
+// caps. The centre gore between the +/-30-degree meridians IS,
+// exactly, the full ellipse rx = a/2, ry = b: its two boundary arcs
+// are that ellipse's two halves. One fill. The raster is an alpha
+// MASK, so this paints INK — the white comes from the B slots, whose
+// anchor is the canonical pigment (patternPigment), lit under the
+// same sun as the red. Rotation is the body's own (baked frames).
+// MODULE SCOPE on purpose: pure (ctx-in), factory-independent, so
+// headless suites reach it without a canvas.
+function drawBeachGores(ctx, a, b) {
+  ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, a * 0.5, b, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
 
 function createRenderer(canvas) {
   const baseCtx = canvas.getContext('2d');
@@ -1336,7 +1354,7 @@ function createRenderer(canvas) {
         if (wyG0 !== null) {
           const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / 100);
           if (hM < RIG.P.castMaxM) {
-            const spT = (window.FF.FRUITS[d.melon.fruit] && window.FF.FRUITS[d.melon.fruit].taper) || 0;
+            const spT = (window.FF.OBJECTS[d.melon.species] && window.FF.OBJECTS[d.melon.species].taper) || 0;
             const shC = spT * d.melon.a / 4; // geometric center offset from the COM
             const fp = RIG.castFootprint(dxw + shC * Math.cos(d.angle), dyw + shC * Math.sin(d.angle),
               d.angle, d.melon.a, d.melon.b,
@@ -1393,7 +1411,7 @@ function createRenderer(canvas) {
           smeared = true;
         }
       }
-      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit, d.decals, dxw, dyw);
+      drawMelon(ctx, sx, sy, d.angle, d.squash, d.color, zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.species, d.decals, dxw, dyw);
       // ---- Contact shadow: the body darkens near its ground touch ----
       if (RIG.P.contactShadow && !pxMode) {
         const wyG = surfY(state, dxw, dyw);
@@ -1439,7 +1457,7 @@ function createRenderer(canvas) {
       // ordinary impact juice.
       if (d.isPlayer && state.fx.flash > 0.02) {
         ctx.globalAlpha = state.fx.flash;
-        drawMelon(ctx, sx, sy, d.angle, d.squash, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.fruit);
+        drawMelon(ctx, sx, sy, d.angle, d.squash, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.species);
         ctx.globalAlpha = 1;
       }
       drawPlace(ctx, sx, sy, d.place, zoom, d.isPlayer);
@@ -1879,7 +1897,7 @@ function createRenderer(canvas) {
   // sticks, so either caller may be first).
   let frameCounter = 0;
   let stickThemeFrame = -1;
-  let stickThemeCache = [246, 246, 246];
+  let stickThemeCache = (window.FF.shading && window.FF.shading.WHITE_RGB) || [246, 246, 246];
   function stickThemeMain() {
     const f = frameCounter;
     if (f === stickThemeFrame) return stickThemeCache;
@@ -1888,7 +1906,7 @@ function createRenderer(canvas) {
     stickGlass.blend += Math.sign(target - stickGlass.blend) * Math.min(0.09,
       Math.abs(target - stickGlass.blend));
     const GT = (window.FF.glass && window.FF.glass.STICK_THEMES)
-      || { LIGHT: { main: [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
+      || { LIGHT: { main: (window.FF.shading && window.FF.shading.WHITE_RGB) || [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
     const k = stickGlass.blend;
     const mixc = (a, b) => Math.round(a + (b - a) * k);
     stickThemeCache = [0, 1, 2].map((i) => mixc(GT.LIGHT.main[i], GT.DARK.main[i]));
@@ -2374,7 +2392,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (e !== undefined) return e;
     if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
     const spr = 2 * (rPx + PAD);
-    e = { spr, rPx, a, b, color, seedKey, fruit, decals, frames: new Map(),
+    e = { spr, rPx, a, b, color, seedKey, species: fruit, decals, frames: new Map(),
       big: null, btx: null };
     melonSprites.set(key, e);
     return e;
@@ -2425,7 +2443,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         squashAngle: (ax / SQ_AXES) * Math.PI * 2 }
       : null;
     drawMelonVector(btx, big / 2, big / 2, rot * 2 * Math.PI / SPRITE_ANGLES,
-      sq, e.color, zoomBake, e.seedKey, e.a, e.b, e.fruit, e.decals);
+      sq, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals);
     let src;
     try { src = btx.getImageData(0, 0, big, big); }
     catch (err) { bakeLodR = null; return null; }
@@ -3025,11 +3043,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   function shadeEllipse(ctx, angle, a, b, baseColor, seedKey, fruit, patternScale, decals, decalPreview) {
     const TAU2 = Math.PI * 2;
     // A species may carry ONE colour fact of its own — the pattern-
-    // anchor offset (FRUITS[x].patternOffset, e.g. a red star on
+    // anchor offset (OBJECTS[x].patternOffset, e.g. a red star on
     // orange). The lighting curve is global; shading.js applies it to
     // both anchors, so every species shades under the same law.
-    const SP = (window.FF.FRUITS && window.FF.FRUITS[fruit]) || null;
-    const spPat = SP && SP.patternOffset;
+    const SP = (window.FF.OBJECTS && window.FF.OBJECTS[fruit]) || null;
+    const spPat = SP && (SP.patternPigment
+      ? { pigment: SP.patternPigment } : SP.patternOffset);
     const taper = (SP && SP.taper) || 0;
     const B = RIG.bands();
     ctx.save();
@@ -3753,6 +3772,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (species === 'dragonBall') drawStar(octx, a, b);
     else if (species === 'yoshiEgg') drawSpots(octx, a, b, key);
     else if (species === 'eightBall') drawEightBall(octx, a, b);
+    else if (species === 'beachball') drawBeachGores(octx, a, b);
     else if (species === 'tennisBall') drawSeam(octx, a, b, key);
     else if (species === 'cantaloupe') drawNet(octx, a, b, key);
     else if (species === 'honeydew') drawCrackle(octx, a, b, key);
@@ -4494,5 +4514,5 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   return { render, resize };
 }
 
-Object.assign(window.FF, { createRenderer });
+Object.assign(window.FF, { createRenderer, painters: { beachGores: drawBeachGores } });
 })();

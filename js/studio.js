@@ -29,12 +29,12 @@ const studio = { active: false };
 // studio's frame loop, or the melon wears a different colour until the
 // studio has been opened once.
 function currentDesign() {
-  const fruit = FRUITS_CYCLE[fruitIdx];
-  const F = window.FF.FRUITS && window.FF.FRUITS[fruit];
+  const fruit = OBJECTS_CYCLE[speciesIdx];
+  const F = window.FF.OBJECTS && window.FF.OBJECTS[fruit];
   return {
     color: studioColor || stageAnchor(fruit),
     patKey: SEEDS[seedIdx] + '|' + fruit,
-    fruit,
+    species: fruit,
   };
 }
 let cv, ctx, panel, panelL, panelR, btn, tabBar;
@@ -84,8 +84,8 @@ function wireZoom(el) {
 }
 let seedIdx = 0;
 const SEEDS = ['StudioMelonA', 'StudioMelonB', 'StudioMelonC', 'm12345'];
-let fruitIdx = 0;
-const FRUITS_CYCLE = ['watermelon', 'cantaloupe', 'honeydew', 'dragonBall', 'yoshiEgg'];
+let speciesIdx = 0;
+const OBJECTS_CYCLE = ['watermelon', 'cantaloupe', 'honeydew', 'dragonBall', 'yoshiEgg', 'beachball'];
 let studioColor = null; // color-picker override for the pinned melon
 const paletteStrips = [];
 const slotSelects = [];
@@ -114,7 +114,7 @@ const ASSIGN_TARGETS = ['baseFill', 'basePat', 'shadowFill', 'shadowPat',
 // interpolated middles are read-only and greyed, so the interpolation
 // is visible rather than implied.
 // `key` is either a P key (string) or a {get, set} accessor — the
-// latter lets the B cell edit a SPECIES' patternOffset (fruits.js
+// latter lets the B cell edit a SPECIES' patternOffset (objects.js
 // data) with the identical widget, so the grid always edits whatever
 // the stage actually renders with.
 function numField(key, label, readOnly, value) {
@@ -174,8 +174,9 @@ function refreshPalette(baseColor, fruit) {
   // The grid shows the RESOLVED palette of the fruit on stage —
   // species pattern offset included — so what the swatches say and
   // what the stage renders can never disagree again.
-  const F = window.FF.FRUITS && window.FF.FRUITS[fruit];
-  const spOff = (F && F.patternOffset) || null;
+  const F = window.FF.OBJECTS && window.FF.OBJECTS[fruit];
+  const spOff = (F && (F.patternPigment
+    ? { pigment: F.patternPigment } : F.patternOffset)) || null;
   const off = spOff || { dL: P.rampBDL, dH: P.rampBDH, dS: P.rampBDS };
   const pal = RIG.palette(baseColor, spOff);
   const n = pal.n; // always 3: shadow / base / highlight
@@ -216,7 +217,7 @@ function refreshPalette(baseColor, fruit) {
         } else if (bEdit && isStart) {
           // B's editable cell edits the PATTERN-ANCHOR OFFSET — and it
           // targets whatever the stage renders with: the species' own
-          // patternOffset when it has one (live-mutating the FRUITS
+          // patternOffset when it has one (live-mutating the OBJECTS
           // entry; 'copy settings' exports it for committing), else the
           // shared default in P.
           const acc = (k) => spOff
@@ -330,27 +331,27 @@ function buildPanel() {
   copyBtn.addEventListener('click', () => {
     // Two labeled blocks, matching where each bakes back in: the
     // global rig state (shading.js P) and every species' pattern-
-    // anchor offset (fruits.js entries) — including any live edits
+    // anchor offset (objects.js entries) — including any live edits
     // made through the grid's B cell.
     const patternOffsets = {};
-    const FR = window.FF.FRUITS || {};
+    const FR = window.FF.OBJECTS || {};
     for (const k of Object.keys(FR)) {
       if (FR[k].patternOffset) patternOffsets[k] = FR[k].patternOffset;
     }
-    const json = JSON.stringify({ 'shading.js P': P, 'fruits.js patternOffset': patternOffsets }, null, 2);
+    const json = JSON.stringify({ 'shading.js P': P, 'objects.js patternOffset': patternOffsets }, null, 2);
     if (navigator.clipboard) navigator.clipboard.writeText(json).catch(() => {});
     copyBtn.textContent = 'copied!';
     setTimeout(() => { copyBtn.textContent = 'copy settings'; }, 900);
   });
   head.appendChild(copyBtn);
-  const fruitBtn = document.createElement('button');
-  fruitBtn.textContent = 'fruit: watermelon';
-  fruitBtn.addEventListener('click', () => {
-    fruitIdx = (fruitIdx + 1) % FRUITS_CYCLE.length;
-    fruitBtn.textContent = 'fruit: ' + FRUITS_CYCLE[fruitIdx];
+  const speciesBtn = document.createElement('button');
+  speciesBtn.textContent = 'species: watermelon';
+  speciesBtn.addEventListener('click', () => {
+    speciesIdx = (speciesIdx + 1) % OBJECTS_CYCLE.length;
+    speciesBtn.textContent = 'species: ' + OBJECTS_CYCLE[speciesIdx];
     studio.design = currentDesign();
   });
-  head.appendChild(fruitBtn);
+  head.appendChild(speciesBtn);
   const seedBtn = document.createElement('button');
   seedBtn.textContent = 'reroll pattern';
   seedBtn.addEventListener('click', () => { seedIdx = (seedIdx + 1) % SEEDS.length; studio.design = currentDesign(); });
@@ -602,17 +603,28 @@ function frame(dtFrame, inputAxis) {
     ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
   }
 
-  // A floor line ~0.9m under the melon so contact/cast shadows read.
+  // The species on stage resolves FIRST: the stage's geometry asks it.
+  const RIG = window.FF.shading;
+  const fruit = OBJECTS_CYCLE[speciesIdx];
+
+  // A floor line ~0.9m under the body so contact/cast shadows read.
   const CONFIG = window.FF.CONFIG;
-  const a = CONFIG.semiMajor, b = CONFIG.semiMinor;
+  // THE STAGE ASKS THE SPECIES (fixed 2026-08-27f): this was
+  // hardcoded melon geometry, so every species rendered melon-sized
+  // and melon-shaped — the sphere family has been squashed ellipses
+  // on this stage since it was built; the beach ball made it obvious.
+  // (First cut referenced `fruit` above its declaration — a temporal
+  // dead zone the syntax check cannot see; node --check is syntax
+  // only, the house already knew.)
+  const FSP = window.FF.OBJECTS && window.FF.OBJECTS[fruit];
+  const a = CONFIG.semiMajor * ((FSP && FSP.sizeMult) || 1);
+  const b = a * ((FSP && FSP.aspect) || (CONFIG.semiMinor / CONFIG.semiMajor));
   const floorY = cy + (b + 90) * zoom;
   ctx.strokeStyle = 'rgba(255,255,255,0.25)';
   ctx.beginPath(); ctx.moveTo(0, floorY); ctx.lineTo(w, floorY); ctx.stroke();
 
-  const RIG = window.FF.shading;
-  const fruit = FRUITS_CYCLE[fruitIdx];
   const key = SEEDS[seedIdx] + '|' + fruit;
-  const FR = window.FF.FRUITS[fruit];
+  const FR = window.FF.OBJECTS[fruit];
   const baseColor = studioColor || stageAnchor(fruit);
   refreshPalette(baseColor, fruit);
   studio.design = currentDesign(); // the stage IS the player's melon

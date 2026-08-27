@@ -80,7 +80,7 @@ const fieldStats = new Map();
 function statsFor(body) {
   let s = fieldStats.get(body);
   if (!s) fieldStats.set(body, s = {
-    name: body.name || '', fruit: body.fruit || '',
+    name: body.name || '', species: body.species || '',
     deaths: 0, biggestHit: 0, biggestSurvived: 0,
     bestAirTicks: 0, topSpeed: 0, distance: 0,
   });
@@ -360,7 +360,7 @@ function reset() {
 // stat, so those are dropped rather than shown.
 function fieldSummary() {
   const hz = (window.FF.CONFIG && window.FF.CONFIG.physicsHz) || 120;
-  const all = [...fieldStats.values()].filter(s => s.name || s.fruit);
+  const all = [...fieldStats.values()].filter(s => s.name || s.species);
   if (!all.length) return [];
   const best = (key, min) => {
     let top = null;

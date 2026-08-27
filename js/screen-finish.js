@@ -349,7 +349,7 @@ function openRacerCard(rows, idx) {
   panel.appendChild(prow);
   clearCanvas(cv);
   racerSpin = { canvas: cv, angle: (r.pos || 1) * 0.7, a: r.a, b: r.b,
-    color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals };
+    color: r.color, patKey: r.patKey, species: r.species, decals: r.decals };
   spinners.push(racerSpin);
 
   const stats = el('div', 'ff-stats');
@@ -359,7 +359,7 @@ function openRacerCard(rows, idx) {
     rowEl.appendChild(el('div', 'v', v));
     stats.appendChild(rowEl);
   };
-  stat('SPECIES', (r.fruit || 'watermelon').toUpperCase());
+  stat('SPECIES', (r.species || 'watermelon').toUpperCase());
   if (r.kg != null) stat('WEIGHT', r.kg.toFixed(1) + ' kg');
   const res = r.dnf ? 'DNF'
     : r.pos + ordinalSuffix(r.pos)
@@ -571,7 +571,7 @@ flow.register('finish', {
       rows.appendChild(row);
       clearCanvas(c);
       spinners.push({ canvas: c, angle: r.pos * 0.7, a: r.a, b: r.b,
-        color: r.color, patKey: r.patKey, fruit: r.fruit, decals: r.decals });
+        color: r.color, patKey: r.patKey, species: r.species, decals: r.decals });
     }
     fillFacts();
     fillSummary();
@@ -770,13 +770,13 @@ function fillCup() {
         }
       }
       spinners.push({ canvas: cv, angle: r.pos * 0.7, a: s.a, b: s.b,
-        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
+        color: s.color, patKey: s.patKey, species: s.species, decals: s.decals });
       // The card for a cup row: the CUP's standing (pos, points,
       // cumulative time) wearing this race's body — same one-source
       // rule the row itself follows.
       const cardIdx = cardRows.length;
       cardRows.push({ name: s.name, pilot: s.pilot, isPlayer: s.isPlayer,
-        fruit: s.fruit, kg: s.kg, a: s.a, b: s.b, color: s.color,
+        species: s.species, kg: s.kg, a: s.a, b: s.b, color: s.color,
         patKey: s.patKey, decals: s.decals,
         pos: r.pos, timeSec: r.timeSec, dnf: false, points: r.points });
       row.style.cursor = 'pointer';
@@ -834,7 +834,7 @@ function fillPartyCup(cupRows) {
     const s = look.get(r.name);
     if (s) {
       spinners.push({ canvas: cv, angle: r.place * 0.7, a: s.a, b: s.b,
-        color: s.color, patKey: s.patKey, fruit: s.fruit, decals: s.decals });
+        color: s.color, patKey: s.patKey, species: s.species, decals: s.decals });
     }
   }
 }

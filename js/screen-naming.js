@@ -115,10 +115,10 @@ function openRelease(spec, then) {
     });
     grid.appendChild(cell);
     clearCanvas(cv);
-    const F = window.FF.FRUITS.watermelon || {};
+    const F = window.FF.OBJECTS.watermelon || {};
     const a = window.FF.CONFIG.semiMajor * d.scale;
     spinners.push({ canvas: cv, angle: i * 0.7, a, b: a * 0.78,
-      color: d.bodyColor, patKey: d.patternKey, fruit: 'watermelon', rate: 0.4 });
+      color: d.bodyColor, patKey: d.patternKey, species: 'watermelon', rate: 0.4 });
   });
   elRelease._cancel.onclick = () => {
     elRelease.style.display = 'none';
@@ -345,7 +345,7 @@ function buildNaming() {
   elNaming._keep = keep;
   elNaming._refresh = () => {
     const design = window.FF.studio && window.FF.studio.design;
-    const fruit = (design && design.fruit) || 'watermelon';
+    const fruit = (design && design.species) || 'watermelon';
     const byKey = new Map();
     for (const r of (M.stats ? M.stats(M.active().seed, fruit, M.active().wide) : [])) byKey.set(r.key, r);
     const rows = [];

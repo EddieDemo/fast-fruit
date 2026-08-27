@@ -41,7 +41,7 @@
 global.window = global.window || { FF: {} };
 require('./js/dmath.js');
 require('./js/config.js');
-require('./js/fruits.js');
+require('./js/objects.js');
 require('./js/state.js');
 require('./js/terrain.js');
 require('./js/strand.js');
@@ -78,7 +78,7 @@ const SPAWN_X = 0;                           // the start line (main.js SPAWN)
 // experiment rather than whatever the roster module currently fields.
 const DEFAULT_ROSTER = [
   'watermelon', 'honeydew', 'cantaloupe', 'watermelon',
-  { fruit: 'watermelon', brain: 'oracle' },
+  { species: 'watermelon', brain: 'oracle' },
   'honeydew', 'watermelon', 'cantaloupe', 'watermelon',
   'honeydew', 'watermelon',
 ];

@@ -109,13 +109,36 @@ function createState() {
 
 // Shape lookup: b/a for a species, defaulting to the CONFIG ellipse.
 const REF_VOL = CONFIG.semiMajor * CONFIG.semiMinor * CONFIG.semiMinor;
-function fruitAspect(species) {
-  const F = window.FF.FRUITS;
+function speciesAspect(species) {
+  const F = window.FF.OBJECTS;
   return (F && F[species] && F[species].aspect) || (CONFIG.semiMinor / CONFIG.semiMajor);
 }
-function fruitTaper(species) {
-  const F = window.FF.FRUITS;
+function speciesTaper(species) {
+  const F = window.FF.OBJECTS;
   return (F && F[species] && F[species].taper) || 0;
+}
+// THE PHYSICAL ANNEX, third entry (ruled 2026-08-26): DENSITY is a
+// SPECIES CONSTANT — intrinsic, never varying with an individual's
+// size. mass = density x volume (x the melon calibration): two beach
+// balls of different sizes share one density and differ in mass by
+// volume alone. Unit: relative to the implicit melon density
+// (CONFIG.mass / REF_VOL is the 1.0) — and a real watermelon is
+// roughly water, so real-world relative densities port straight in.
+// Default 1.0, and x1.0 is bit-exact: every pre-annex body's mass is
+// unchanged to the bit (suite-held).
+function speciesDensity(species) {
+  const F = window.FF.OBJECTS;
+  const d = F && F[species] && F[species].density;
+  return d === undefined ? 1 : d;
+}
+function speciesToughnessMult(species) {
+  const F = window.FF.OBJECTS;
+  const t = F && F[species] && F[species].toughnessMult;
+  return t === undefined ? 1 : t;
+}
+function speciesRestitutionFloor(species) {
+  const F = window.FF.OBJECTS;
+  return (F && F[species] && F[species].restitutionFloor) || 0;
 }
 
 // Tapered-body physique (the egg). Uniform density over the profile
@@ -133,16 +156,81 @@ function fruitTaper(species) {
 // Convention note: 2D dynamics (COM, inertia) follow the LAMINA and
 // mass magnitude follows the VOLUME law — the same mixed convention
 // the ellipse bodies already use (volume mass, lamina inertia).
-function taperedMassInertia(a, b, taper) {
-  const mass = CONFIG.mass * (a * b * b) / REF_VOL * (1 + taper * taper / 5);
+function taperedMassInertia(a, b, taper, _density) {
+  if (_density === undefined) _density = 1;
+  const mass = CONFIG.mass * (a * b * b) / REF_VOL * (1 + taper * taper / 5) * _density;
   const sh = a * taper / 4;
   const inertia = mass * ((a * a + b * b * (1 + taper * taper / 2)) / 4 - sh * sh);
   return { mass, inertia, sh };
 }
 
+// THE DEV OVERRIDE, resolved in ONE place (fixed 2026-08-27c).
+// It shipped honouring only createBody — but the frame loop's design
+// path re-applies the player's SAVED species every frame and stomped
+// it, and the bot paths computed sizeMult from the pre-override name,
+// so an overridden body would have worn the wrong scale. Every site
+// that resolves a species now asks here. Registered-only: a typo
+// falls through, never a crash.
+function devSpecies(name) {
+  const ov = window.FF.DEV_FIELD_SPECIES;
+  return (ov && window.FF.OBJECTS && window.FF.OBJECTS[ov]) ? ov : name;
+}
+// THE UNIFORM LAW (ruled 2026-08-27f): under the override every body
+// is THAT species — "not a version of the beachball with certain
+// characteristics of themselves carried over" (Eddie). One canonical
+// scale (1 x sizeMult), one pigment (the species anchor at one fixed
+// seed). The device found the gap: roster bodies kept their authored
+// melon greens and per-character scales — a field of green,
+// different-sized "beach balls".
+const DEV_SPECIES_SEED = 0xB07;
+function devPigment(species) {
+  const SH = window.FF.shading;
+  return (SH && SH.anchorColor) ? SH.anchorColor(species, DEV_SPECIES_SEED) : null;
+}
+
+// THE SPECIES APPLIER: wearing a species means wearing its BODY —
+// species tag AND its sizeMult-scaled physique. Idempotent via
+// _appliedSpecies, so the frame loop calls it freely; returns true
+// only when it actually changed something. Exported because main's
+// design path is a frame loop that no headless suite can drive: this
+// is the real door BOTH the game and the suite go through.
+function applySpeciesDesign(melon, wantRaw, baseScale) {
+  const want = devSpecies(wantRaw || melon.species);
+  const overridden = !!devSpecies(null);
+  // THE OUTFIT FOLLOWS THE BODY (ruled 2026-08-27e): under the dev
+  // override a saved wrap is your MELON's outfit, not this body's —
+  // a beach ball in a national flag is unreadable (you cannot tell
+  // whether the gores are lighting correctly under a wrap). Stashed,
+  // not destroyed: clearing the flag restores it. Purely a dev-dial
+  // behaviour; normal decal law is untouched.
+  if (overridden && melon.decals) {
+    melon._decalsStash = melon.decals;
+    melon.decals = null;
+  } else if (!overridden && melon._decalsStash) {
+    melon.decals = melon._decalsStash;
+    melon._decalsStash = null;
+  }
+  if (!want || melon._appliedSpecies === want) return false;
+  const F = window.FF.OBJECTS;
+  melon.species = want;
+  const mult = (F && F[want] && F[want].sizeMult) || 1;
+  // Uniform law: the override ignores the personal physique scale.
+  setBodyScale(melon, (overridden ? 1 : (baseScale || 1)) * mult);
+  if (overridden) {
+    if (melon._pigmentStash === undefined) melon._pigmentStash = melon.bodyColor || null;
+    const pig = devPigment(want);
+    if (pig) melon.bodyColor = pig;
+  } else if (melon._pigmentStash !== undefined) {
+    melon.bodyColor = melon._pigmentStash;
+    melon._pigmentStash = undefined;
+  }
+  melon._appliedSpecies = want;
+  return true;
+}
+
 function createBody(x, y, scale, fruit) {
   const sc = scale || 1;
-  const species = fruit || 'watermelon';
+  const species = devSpecies(fruit || 'watermelon');
   // ---- Per-body mass & inertia: the fruit-roster foundation, done ----
   // Density normalized so the scale-1.0 player has EXACTLY the tuned
   // mass (CONFIG.mass): every existing number stays calibrated for
@@ -155,21 +243,22 @@ function createBody(x, y, scale, fruit) {
   // a dragon ball is a sphere, an egg brings `taper` and with it the
   // tapered physique above. taper = 0 takes the ORIGINAL expressions
   // verbatim, so every melon's mass and inertia are bit-identical.
-  const aspect = fruitAspect(species);
-  const taper = fruitTaper(species);
+  const aspect = speciesAspect(species);
+  const taper = speciesTaper(species);
   const a = CONFIG.semiMajor * sc;
   const b = a * aspect;
+  const _density = speciesDensity(species);
   let mass, inertia, sh;
   if (taper) {
-    ({ mass, inertia, sh } = taperedMassInertia(a, b, taper));
+    ({ mass, inertia, sh } = taperedMassInertia(a, b, taper, _density));
   } else {
-    mass = CONFIG.mass * (a * b * b) / REF_VOL;
+    mass = CONFIG.mass * (a * b * b) / REF_VOL * _density;
     inertia = mass * (a * a + b * b) / 4;
     sh = 0;
   }
   return {
     a, b,
-    fruit: species,      // registry tag: shape, palette and pulp
+    species: species,      // registry tag: shape, palette and pulp
     taper,               // 0 = ellipse (exact legacy path everywhere)
     sh,                  // geometric center's offset in the COM frame
     squash: 0,           // per-body deformation (strain), presentation-tier
@@ -373,13 +462,17 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
   for (let i = 0; i < count; i++) {
     const entry = cast && cast[i];
     if (entry) {
-      const F = window.FF.FRUITS;
-      const fruit = entry.fruit || 'watermelon';
+      const F = window.FF.OBJECTS;
+      const ovB = devSpecies(null);
+      const fruit = devSpecies(entry.species || 'watermelon');
       const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
-      const melon = createBody(x, y, (entry.scale || 1) * mult, fruit);
+      // Uniform law under the override: the authored per-character
+      // scale and pigment belong to a body that is not here.
+      const melon = createBody(x, y, ovB ? mult : (entry.scale || 1) * mult, fruit);
       melon.name = entry.melon || '';
       melon.pilot = entry.pilot || '';
-      if (entry.color) melon.bodyColor = entry.color;
+      if (entry.color && !ovB) melon.bodyColor = entry.color; // (!ovB is belt-and-braces: the uniform write below also wins — M66 equivalent-mutant record)
+      if (ovB) melon.bodyColor = devPigment(fruit) || melon.bodyColor;
       if (entry.patKey) melon.patKey = entry.patKey;
       gridPlace(state, melon, g0 + i, x, y);
       melon.protectTick = state.tick + CONFIG.spawnProtectTicks;
@@ -424,7 +517,7 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
       // parallel array that can fall out of sync with it.
       const entry = roster[i % roster.length];
       if (entry && typeof entry === 'object') {
-        fruit = entry.fruit || 'watermelon';
+        fruit = entry.species || 'watermelon';
         brainName = entry.brain || 'cruise';   // per-slot override (harnesses)
       } else {
         fruit = entry;
@@ -436,16 +529,20 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
       if (fruit === 'honeydew' && !CONFIG.botHoneydew) fruit = 'watermelon';
     }
     const u = (srng() + srng()) / 2; // triangular: middles common, extremes rare
-    const F = window.FF.FRUITS;
+    const F = window.FF.OBJECTS;
+    fruit = devSpecies(fruit);
+    const ovB = devSpecies(null);   // uniform law: draw u regardless
+    // (the stream is sacred), ignore it under the override.
     const mult = (F && F[fruit] && F[fruit].sizeMult) || 1;
-    const melon = createBody(x, y, (0.85 + u * 0.33) * mult, fruit);
+    const melon = createBody(x, y, (ovB ? 1 : (0.85 + u * 0.33)) * mult, fruit);
     // The bot's PIGMENT: its own colour seed (pure arithmetic off the
     // race's cast seed — no srng draw, so the sacred stream and the
     // size deal are untouched), pushed through the species' anchor
     // band. Presentation data riding on the body, like the player's.
     const cseed = (((sizeSeed === undefined ? 0xB07 : sizeSeed) >>> 0) + Math.imul(i + 1, 2654435761)) >>> 0;
     if (window.FF.shading && window.FF.shading.anchorColor) {
-      melon.bodyColor = window.FF.shading.anchorColor(fruit, (cseed ^ 0xC010A) >>> 0);
+      melon.bodyColor = window.FF.shading.anchorColor(fruit,
+        ovB ? DEV_SPECIES_SEED : (cseed ^ 0xC010A) >>> 0);
     } else if (typeof console !== 'undefined' && !resetBots._warned) {
       // Headless suites legitimately run without shading.js; a BROWSER
       // without it is a stale partial copy — say so LOUDLY, because
@@ -487,18 +584,19 @@ function snapshotPrev(state) {
 // melon's spec.
 function setBodyScale(m, scale) {
   const sc = scale || 1;
+  const _density = speciesDensity(m.species);
   m.a = CONFIG.semiMajor * sc;
-  m.b = m.a * fruitAspect(m.fruit);
-  const taper = fruitTaper(m.fruit);
+  m.b = m.a * speciesAspect(m.species);
+  const taper = speciesTaper(m.species);
   m.taper = taper;
   if (taper) {
-    const { mass, inertia, sh } = taperedMassInertia(m.a, m.b, taper);
+    const { mass, inertia, sh } = taperedMassInertia(m.a, m.b, taper, _density);
     m.sh = sh;
     m.invM = 1 / mass;
     m.invI = 1 / inertia;
   } else {
     m.sh = 0;
-    const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL;
+    const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL * _density;
     m.invM = 1 / mass;
     m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
   }
@@ -571,5 +669,5 @@ function applyGridSlots(state, slots, lineX, fallbackY) {
 
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
 })();

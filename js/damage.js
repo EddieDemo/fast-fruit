@@ -93,7 +93,14 @@ const SEV_SCALE = 1 / 1000;
 
 // The restitution a body brings to a contact (Phase-B hook).
 function bodyRestitution(m) {
-  return m.restitution === undefined ? CONFIG.restitution : m.restitution;
+  const e = m.restitution === undefined ? CONFIG.restitution : m.restitution;
+  // THE RESTITUTION FLOOR (annex): some species are bouncy by
+  // NATURE — flare can add bounce but never remove what the material
+  // is (beach ball: 0.6). Default floor 0: max(e, 0) is bit-exact
+  // for every legal e.
+  const F = window.FF.OBJECTS;
+  const fl = (F && F[m.species] && F[m.species].restitutionFloor) || 0;
+  return e > fl ? e : fl;
 }
 
 // ---- SHAPE TOUGHNESS (2026-08-11, replacing per-contact stress
@@ -159,7 +166,15 @@ function dissipated(vn, kn, e) {
 // Severity of a contact for body m: energy times the body's SHAPE
 // toughness — orientation-independent by design.
 function severityFromE(E, m) {
-  return E * bodyToughness(m);
+  // THE TOUGHNESS DIAL (annex, 2026-08-26af): a species multiplier
+  // on severity. x1 default is bit-exact. AT ZERO the species is
+  // indestructible BUT NOT INTANGIBLE — impulses, shoves and
+  // breadcrumbs all live above this line; only the damage ledger
+  // goes deaf (beach ball, ruled; un-zero the dial to make it
+  // poppable later).
+  const F = window.FF.OBJECTS;
+  const tm = F && F[m.species] && F[m.species].toughnessMult;
+  return E * bodyToughness(m) * (tm === undefined ? 1 : tm);
 }
 
 // Pair energy shares by compliance: proportional to each body's own

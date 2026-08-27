@@ -54,9 +54,13 @@ function plan(raceSeed, pilots) {
 }
 
 // ---- the bubbles --------------------------------------------------------
+// THE CANONICAL WHITE (ruled 2026-08-27): the bubble's off-white
+// carried a faint green trace nobody authored — the exact class the
+// trace law (verify-arch A13) exists for. Repinned to the pigment.
+const EMOTE_WHITE = (window.FF.shading && window.FF.shading.WHITE_HEX) || '#f6f6f6';
 const CSS = `
 .ff-emote { position: absolute; z-index: 5; pointer-events: none;
-  background: #f2f4ee; color: #16210f; border-radius: 999px;
+  background: ${EMOTE_WHITE}; color: #16210f; border-radius: 999px;
   padding: 4px 10px; font-weight: var(--fw-bold);
   font-size: var(--fs-label); letter-spacing: var(--tr-label);
   opacity: 0; transform: translateY(6px) scale(0.6);

@@ -1566,7 +1566,7 @@ function sunFor(role) {
 let MARKS = null;
 function melonMarks() {
   if (MARKS) return MARKS;
-  const sh = G.FF.shading, F = G.FF.FRUITS;
+  const sh = G.FF.shading, F = G.FF.OBJECTS;
   const out = [];
   if (sh && F) {
     for (const n of Object.keys(F)) {
