@@ -130,6 +130,13 @@ function step(state, dt) {
   // part of the law, not a nicety.
 
   bodyList.length = 0;
+  // CANONICAL INDEX, refreshed every step on EVERY body (dead ones
+  // included — a dead killer must still be findable): the pair
+  // pass's breadcrumb currency. Recomputed rather than trusted,
+  // so joins and substitutions can never leave a stale identity.
+  { let ci = 0;
+    for (const pl of state.players) pl.melon.canonIdx = ci++;
+    for (const b of state.bots) b.melon.canonIdx = ci++; }
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
   sortBodiesCanonical(bodyList);
@@ -140,7 +147,18 @@ function step(state, dt) {
     for (let iter = 0; iter < PAIR_ITERS; iter++) {
       for (let i = 0; i < bodyList.length; i++) {
         for (let j = i + 1; j < bodyList.length; j++) {
-          resolveMelonPair(bodyList[i], bodyList[j], period);
+          if (resolveMelonPair(bodyList[i], bodyList[j], period)) {
+            // THE CONTACT BREADCRUMB (blessed telemetry): both
+            // parties remember each other and the tick. Alive-only
+            // by construction (bodyList holds the living); repeated
+            // iters re-stamp the same tick, harmless. With three in
+            // contact the pair-law order decides who is "last" —
+            // deterministic because the order is law.
+            bodyList[i].lastContactIdx = bodyList[j].canonIdx;
+            bodyList[j].lastContactIdx = bodyList[i].canonIdx;
+            bodyList[i].lastContactTick = tick;
+            bodyList[j].lastContactTick = tick;
+          }
         }
       }
     }
@@ -655,6 +673,9 @@ function resolveMelonPair(A, B, period) {
     A.x -= nx * corr * wA; A.y -= ny * corr * wA;
     B.x += nx * corr * wB; B.y += ny * corr * wB;
   }
+  // Real contact happened (the pen<=0 early-out returned undefined
+  // above): report it so the pair pass can stamp the breadcrumb.
+  return true;
 }
 
 // Advance one body. `sink` is the state object for the PLAYER body

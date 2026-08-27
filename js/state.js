@@ -193,6 +193,19 @@ function createBody(x, y, scale, fruit) {
     protectTick: 0,    // smash-immune until tick exceeds this
     hitSeverity: 0,    // TOTAL terrain severity this step (all contacts)
     pairSeverity: 0,   // TOTAL melon-contact severity this step
+    // THE CONTACT BREADCRUMB (derby stage 3, blessed 2026-08-26):
+    // neutral sim telemetry in the flightTicks mold — WHO last
+    // touched this body (CANONICAL INDEX: player first, bots in
+    // spawn order — physics refreshes canonIdx every step), and
+    // when. The first cut stamped racerKey and the suite caught the
+    // class: keys are names, names can collide, and a colliding
+    // breadcrumb credits SOMEBODY — a signal that cannot say "I
+    // don't know". The index is unique by construction. Stamped by
+    // the pair pass on real contact; read by mode law (fatal-blow
+    // attribution), never by physics itself. Plain scalars.
+    canonIdx: -1,
+    lastContactIdx: -1,
+    lastContactTick: -1,
     pairWorst: 0,      // the single worst pair blow (blame breadcrumbs ride it)
     hitNx: 0, hitNy: -1,   // escape normal of the worst terrain blow
     pairNx: 0, pairNy: -1, // escape normal of the worst rival blow

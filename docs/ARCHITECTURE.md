@@ -86,6 +86,25 @@ AND mutations. Hard-won rules, each paid for:
 - Zips are GATED on a green battery inside the batch; failed asserts
   abort before any write; verify state after any batch error.
 
+**The integration-sibling law (amendment 2026-08-26w).** A spy that
+REPLACES the real door tests the module and UNTESTS the integration —
+three shipped bugs hid behind exactly this (the TDZ observer site,
+the clone fence, the bus signature drift: all green under spies,
+all broken on device). The law: every suite that bypasses a real
+door — a replacing spy over a registration door, or driving a module
+through its `_test` door — must have a real-door integration sibling
+that exercises the same seam through the game's own wire. `_test`
+STATE INJECTION is permitted where the wire under test is real; such
+suites are declared setup-only. Wrapping spies that delegate to the
+real door are not bypasses — the wire fires. Enforced as a ratchet
+in `verify-arch` A7–A9: bypass suites are discovered from source and
+must be enrolled with their sibling or declared setup-only; known
+uncovered seams are named REMAINDERS, each with its cure, pinned to
+the marker in the suite that states the limit; the sets only shrink.
+Current remainders: partycup's leg advance (cure: Wrong Way's
+`race:over` suite drives it over the real bus) and input's autopilot
+subscription (cure: the input harness).
+
 ## The screen contract (flow split, step 3 — landed 2026-08-26)
 flow.js is the ~200-line machine plus its organs (confirm, fade,
 countdown, settle, the race/pause registrations, the dev lane); the

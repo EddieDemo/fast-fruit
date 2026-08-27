@@ -72,8 +72,24 @@ function begin(state, opts) {
     // CONVEYOR policy: how fast a dead body returns. Read by
     // reviveIfDue as an override; the walk-back placement law is
     // unchanged — the conveyor changes WHEN, not WHERE.
+    // Infinity = DEATHS ARE PERMANENT (derby's elimination law,
+    // 2026-08-26): tick + Infinity never comes due, so reviveIfDue
+    // never fires. The law rides the conveyor's own dial — physics
+    // is untouched (the | 0 coercion used to flatten Infinity to 0,
+    // which would have been an INSTANT conveyor: the exact opposite).
     respawnDelayTicks: opts.respawnDelayTicks === undefined
-      ? 60 : (opts.respawnDelayTicks | 0),
+      ? 60 : (opts.respawnDelayTicks === Infinity
+        ? Infinity : (opts.respawnDelayTicks | 0)),
+    // THE CUSTOMER TICK (derby stage 3): an event may register its
+    // own deterministic per-tick law — run by update() below, inside
+    // the fixed step, after ranks, BEFORE the clock, so a law that
+    // ends the session still sees its final tick.
+    onTick: typeof opts.onTick === 'function' ? opts.onTick : null,
+    // THE NAMED MOMENT: an event may name its own end announcement
+    // ('derby:over'); main's frame boundary emits it right after
+    // session:over, same latch, with announceData as the payload.
+    announce: opts.announce || null,
+    announceData: null,
   };
   return state.session;
 }
@@ -112,6 +128,8 @@ function update(state) {
     return a - b;
   });
   for (let r = 0; r < idx.length; r++) s.rank[idx[r]] = r + 1;
+  // 2.5) the customer's own law (see begin): may end the session.
+  if (s.onTick) s.onTick(state, s);
   // 3) the clock.
   if (s.durTicks > 0 && state.tick - s.tick0 >= s.durTicks) s.over = true;
 }

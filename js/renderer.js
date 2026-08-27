@@ -344,7 +344,15 @@ function createRenderer(canvas) {
 
   function render(state, alpha, dtFrame) {
     trackRespawns(state);
-    const m = state.melon, p = state.prevMelon;
+    // THE SPECTATE SEAM (derby stage 5): in elimination play a dead
+    // player's camera follows the chain (linger -> grudge -> manual)
+    // instead of the wreck. Resolved at CALL time (the trampoline
+    // rule); null means the normal follow — which includes every
+    // race and every conveyor session, untouched.
+    let m = state.melon, p = state.prevMelon;
+    const _spec = (window.FF.spectate && window.FF.spectate.pose)
+      ? window.FF.spectate.pose(state) : null;
+    if (_spec) { m = _spec.m; p = _spec.p; }
 
     // Interpolated body pose for this frame.
     const ix = p.x + (m.x - p.x) * alpha;

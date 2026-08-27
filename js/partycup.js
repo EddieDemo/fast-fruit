@@ -46,10 +46,17 @@ function registerEvent(a) {
   return a.id;
 }
 
-// The draw: curated by slot when the pool grows; today every slot
-// draws the one event we have.
-const POOL = ['skijump'];
-function drawEvent() { return POOL[0]; }
+// The draw (grown 2026-08-26z, derby stage 4): TWO events now, so
+// "every slot draws the one event" is over. Each leg draws SEEDED
+// from the pool — deterministic per cup seed, distinct stream per
+// leg, both events reachable across parties. Slot CURATION (opener/
+// closer character) arrives with the third event, as planned.
+const POOL = ['skijump', 'derby'];
+function drawEvent() {
+  if (POOL.length === 1) return POOL[0];
+  const r = window.FF.mulberry32((cup.seed ^ ((cup.leg + 1) * 0x85ebca6b)) >>> 0)();
+  return POOL[(r * POOL.length) | 0];
+}
 
 let cup = null;   // { leg, legRows: [][], points: {key: n}, handledOver }
 
@@ -258,6 +265,7 @@ window.FF.partycup = {
     getCup: () => cup,
     setCup: (c) => { cup = c; },
     pool: POOL,
+    drawEvent,
   },
 };
 })();

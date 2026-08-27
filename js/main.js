@@ -463,6 +463,15 @@ window.FF.world._install({
   // start, and hand each body exactly its own spot back. "Back at the
   // start" means YOUR start.
   const bodies0 = [state.players[0].melon].concat(state.bots.map((b) => b.melon));
+  // THE PLACEMENT LAW (derby stage 2, 2026-08-26x): a session may
+  // carry its own spawn arrangement — sessionOpts.place(bodies,
+  // state) runs HERE, after the default grid line, BEFORE the
+  // respawn anchors are captured below, so "back at the start" means
+  // your PACK spot, not the race grid's. Absent place, nothing
+  // changes: every existing session spawns exactly as before.
+  if (sessionOpts && typeof sessionOpts.place === 'function') {
+    sessionOpts.place(bodies0, state);
+  }
   s.respawnX = SPAWN.x;                       // legacy fallback
     s.respawnXs = bodies0.map((m) => m.x);
     s.respawnYs = bodies0.map((m) => m.y);
@@ -732,7 +741,16 @@ function frame(now) {
     // per session end; the latch resets when a new session begins.
     if (state.session && state.session.over && !state.session._announced) {
       state.session._announced = true;
-      if (window.FF.events) window.FF.events.emit('session:over', {}, state);
+      if (window.FF.events) {
+        window.FF.events.emit('session:over', {}, state);
+        // THE NAMED MOMENT (derby stage 3): an event that named its
+        // end ('derby:over') gets it announced here too — same
+        // latch, same boundary, delivery (data, event, state).
+        if (state.session.announce) {
+          window.FF.events.emit(state.session.announce,
+            state.session.announceData || {}, state);
+        }
+      }
     }
     if (window.FF.flow) window.FF.flow.onFrame(state);
     // A race in progress is saved on a heartbeat. Only while actually
