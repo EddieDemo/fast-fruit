@@ -273,7 +273,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-27i';
+const BUILD = '2026-08-27j';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -379,6 +379,15 @@ window.FF.DEV_TERRAIN_COLORS = true;
 // pin is active so it cannot ship silently.
 // >>> PINNED TO 'derby' FOR THE CURRENT BUILD CYCLE — UNPIN LATER <<<
 window.FF.DEV_PARTY_OPENER = 'derby';
+// SPAWN FURNITURE (2026-08-27j) — STATED-TEMPORARY transition gate.
+// Furniture is a PERMANENT part of the game by ruling; this Boolean
+// exists only until the track recipe owns placement, and dies then
+// (the bounceMax lesson: a constant describing a world that no
+// longer exists). One beach ball per track, seeded from the track
+// seed via a salted stream, met once per lap and progressively
+// displaced by the field — the track becomes STATEFUL, on purpose.
+window.FF.spawnFurniture = true;
+CONFIG.spawnFurniture = true;   // mirrored into CONFIG for sim-side reads
 // DEV FIELD SPECIES (2026-08-26af): spawn EVERY body as this
 // registered species — the whole-field meme dial ('beachball', etc).
 // null = off; registered names only (a typo falls through).

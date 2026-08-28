@@ -143,6 +143,12 @@ function respawnRace(opts) {
   const cast = (R && !netSession && !explicitField) ? R.field() : null;
   resetBots(state, cast ? cast.length : botCount,
     SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans, cast);
+  // Track furniture (27j): minted AFTER the field so canonical
+  // indices append; placed from the salted stream; dropped in and
+  // settled by gravity during the countdown.
+  window.FF.mintFurniture(state, (state.race.seed || 0) >>> 0,
+    state.race.lapLengthPx || 40000, SPAWN.x);
+
 
   // A CUP KEEPS ITS CAST. With the permanent roster this is now true
   // by construction — the field is the same twelve characters on every

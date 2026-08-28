@@ -114,6 +114,15 @@ function step(state, dt) {
       stepBody(b.melon, b.input, state.terrain, dt, null, state);
     }
   }
+  // Furniture steps ONCE per tick with its own inert input: gravity,
+  // terrain, damping — no brain, no drive, no revive (reviveIfDue
+  // walks players and bots only, so a prop off the world is simply
+  // gone, as ruled). (The first cut sat INSIDE the per-bot alive
+  // block — stepped once PER BOT, and never with an empty field. A
+  // brace is a scope, and node --check cannot see intent.)
+  for (const p of state.props || []) {
+    if (p.alive) stepBody(p, p.input, state.terrain, dt, null, state);
+  }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----
   // THE CANONICAL CONTACT ORDER, pair half (stage 1, spec §3): pair
@@ -136,9 +145,13 @@ function step(state, dt) {
   // so joins and substitutions can never leave a stale identity.
   { let ci = 0;
     for (const pl of state.players) pl.melon.canonIdx = ci++;
-    for (const b of state.bots) b.melon.canonIdx = ci++; }
+    for (const b of state.bots) b.melon.canonIdx = ci++;
+    // Props index AFTER every seat: no racer's canonical identity
+    // moves when furniture appears (suite-held).
+    for (const p of state.props || []) p.canonIdx = ci++; }
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
+  for (const p of state.props || []) if (p.alive) bodyList.push(p);
   sortBodiesCanonical(bodyList);
   for (const m of bodyList) { m.pairSeverity = 0; m.pairWorst = 0; }
   if (bodyList.length > 1) {
@@ -237,6 +250,17 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     // field (v + w x r) at the instant of death.
     debris.spawnFromBody(m, state, tick, bodyIndex);
     m.alive = false;
+    // KO BY: BEACH BALL (ruled 27j): if the last shove came from a
+    // PROP within the assist window, the death is ENVIRONMENT WITH
+    // FLAVOUR — never a racer's kill, but the furniture gets its
+    // name in the story.
+    m.deathByProp = null;
+    if (state.props && state.props.length
+      && m.lastContactTick && (tick - m.lastContactTick) <= 360) {
+      for (const pp of state.props) {
+        if (pp.canonIdx === m.lastContactIdx) { m.deathByProp = pp.name || 'FURNITURE'; break; }
+      }
+    }
     // THE CONVEYOR (session chassis, 2026-08-25): an open session may
     // override HOW SOON a dead body returns — Ski Jump's whole loop is
     // die, respawn, go again. Placement law unchanged; no session, no

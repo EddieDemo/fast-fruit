@@ -53,7 +53,8 @@ function createState() {
     // Hold-right bots: same body shape, same physics path, inputs
     // pinned to full right. Unlike the old single ghost, bots DO
     // collide — with the player and with each other.
-    bots: [], // filled by resetBots: { melon, prevMelon, input }
+    bots: [],
+    props: [],            // track furniture: bodies without seats (27j) // filled by resetBots: { melon, prevMelon, input }
 
     // Terrain is a list of polylines (arrays of {x, y} points).
     terrain: [],
@@ -567,6 +568,51 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
 
 // Called at the top of every physics step so the renderer can
 // interpolate between the previous and current state.
+// TRACK FURNITURE (ruled 2026-08-27j): props are BODIES WITHOUT
+// SEATS — state.props, their own list (never bots: 52 sites assume
+// state.bots means racers, and threading an exception through all of
+// them forever is how a beach ball reaches a podium). A prop:
+//  - joins the physics (bodyList + canonIdx, appended AFTER players
+//    and bots so no existing index ever shifts — breadcrumbs and
+//    path hashes are untouched by construction);
+//  - is excluded from everything else BY LIST MEMBERSHIP: standings,
+//    respawns, spectate, tags, puffs all enumerate players+bots and
+//    simply never see it. Exclusion is free; only inclusion is code.
+//  - does not respawn: knocked off the world is GONE (ruled);
+//  - places from a SALTED stream derived from the track seed — never
+//    the generator's own sequence, so terrain geometry is
+//    bit-identical with furniture on or off (suite-held);
+//  - kills as ENVIRONMENT WITH FLAVOUR: the pair pass stamps its
+//    canonIdx like anyone's; the death site resolves a prop-shoved
+//    death to m.deathByProp (the comedy is the point).
+function mintFurniture(state, trackSeed, lapLengthPx, spawnX) {
+  state.props = [];
+  if (!window.FF.CONFIG.spawnFurniture) return;
+  // The salted stream: same track, same spot, forever; and zero
+  // draws from any stream the generator owns.
+  const rng = window.FF.mulberry32(((trackSeed >>> 0) ^ 0xBA11BA11) >>> 0);
+  const frac = 0.25 + rng() * 0.6;   // somewhere mid-lap, never on the grid
+  const x = (spawnX || 0) + 800 + frac * (lapLengthPx || 40000);
+  const FOB = window.FF.OBJECTS;
+  const p = createBody(x, -4000,
+    (FOB && FOB.beachball && FOB.beachball.sizeMult) || 1, 'beachball');
+  // Dropped from height and settled by ordinary gravity during the
+  // countdown: deterministic, and it lands ON the terrain without a
+  // surface solver here.
+  p.name = 'BEACH BALL';
+  // The furniture's pigment: the species anchor, seeded from the
+  // SAME salted stream (the seed owns the red).
+  if (window.FF.shading && window.FF.shading.anchorColor) {
+    p.bodyColor = window.FF.shading.anchorColor('beachball',
+      (rng() * 0xFFFFFFFF) >>> 0);
+  }
+  p.pilot = '';
+  p.isProp = true;
+  p.input = { rawAxis: 0, rawBounce: 0, torqueAxis: 0, bounceAxis: 0,
+    hopEligible: false, hopPending: 0, hopBuffer: 0 };
+  state.props.push(p);
+}
+
 function snapshotPrev(state) {
   for (const pl of state.players) {
     const gm = pl.melon, gp = pl.prevMelon;
@@ -575,6 +621,10 @@ function snapshotPrev(state) {
   for (const b of state.bots) {
     const gm = b.melon, gp = b.prevMelon;
     gp.x = gm.x; gp.y = gm.y; gp.angle = gm.angle;
+  }
+  for (const p of state.props || []) {
+    if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
+    p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
   }
 }
 
@@ -669,5 +719,5 @@ function applyGridSlots(state, slots, lineX, fallbackY) {
 
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, mintFurniture, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
 })();

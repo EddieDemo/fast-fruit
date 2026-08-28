@@ -1192,6 +1192,21 @@ function createRenderer(canvas) {
     // Bots are OPAQUE — they're physical rivals. Transparency is
     // reserved for future non-colliding ghosts.
     drawList.length = 0;
+    for (const pp of state.props || []) {
+      if (!pp.alive) continue;
+      const pv = pp.prev || pp;
+      drawList.push({
+        melon: pp,
+        x: pv.x + (pp.x - pv.x) * alpha,
+        y: pv.y + (pp.y - pv.y) * alpha,
+        angle: pv.angle + (pp.angle - pv.angle) * alpha,
+        color: pp.bodyColor,
+        squash: pp,
+        name: '',          // furniture wears no tag
+        pilot: '',
+        decals: null,
+      });
+    }
     for (let i = 0; i < state.bots.length; i++) {
       if (!state.bots[i].melon.alive) continue; // smashed: absent until respawn
       const gm = state.bots[i].melon, gp = state.bots[i].prevMelon;
