@@ -585,20 +585,39 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
 //  - kills as ENVIRONMENT WITH FLAVOUR: the pair pass stamps its
 //    canonIdx like anyone's; the death site resolves a prop-shoved
 //    death to m.deathByProp (the comedy is the point).
-function mintFurniture(state, trackSeed, lapLengthPx, spawnX) {
+function mintFurniture(state, trackSeed, lapArc, spawnX) {
   state.props = [];
   if (!window.FF.CONFIG.spawnFurniture) return;
   // The salted stream: same track, same spot, forever; and zero
-  // draws from any stream the generator owns.
+  // draws from any stream the generator owns. DRAW ORDER IS LAW:
+  // candidates first, then the pigment seed — reordering the draws
+  // re-rolls every shipped track.
   const rng = window.FF.mulberry32(((trackSeed >>> 0) ^ 0xBA11BA11) >>> 0);
-  const frac = 0.25 + rng() * 0.6;   // somewhere mid-lap, never on the grid
-  const x = (spawnX || 0) + 800 + frac * (lapLengthPx || 40000);
+  // WAKE CANDIDATES (ruled 2026-08-27k): the dice are ALL thrown at
+  // mint — N candidate ARCS in the mid-lap band, sorted ascending so
+  // the walk meets them in travel order. Arc, not x: terrain
+  // STREAMS, and "the ground at x" is multivalued under a fold —
+  // spine.surfaceAt(s) is single-valued on the riding surface, walls
+  // skipped, the same convention the respawn fallback trusts. (The
+  // v311 mint added an arc fraction to a world X — the ball could
+  // sit over void at build and fall off the world; module suites on
+  // a flat infinite poly could not see it.)
+  const FCFG = window.FF.CONFIG.furniture;
+  const arc = lapArc || 40000;
+  const cands = [];
+  for (let i = 0; i < FCFG.candidates; i++) {
+    cands.push((0.25 + rng() * 0.6) * arc);
+  }
+  cands.sort((a, b) => a - b);
   const FOB = window.FF.OBJECTS;
-  const p = createBody(x, -4000,
+  // Minted DORMANT: a record, parked far above the void it must
+  // never touch — no stepping, no bodyList, no render until the
+  // wake law (physics.js tryWakeProp) places it against streamed
+  // ground. The placement solve happens ONLY at wake time.
+  const p = createBody((spawnX || 0), -100000,
     (FOB && FOB.beachball && FOB.beachball.sizeMult) || 1, 'beachball');
-  // Dropped from height and settled by ordinary gravity during the
-  // countdown: deterministic, and it lands ON the terrain without a
-  // surface solver here.
+  p.dormant = true;
+  p.wake = { cands, idx: 0 };
   p.name = 'BEACH BALL';
   // The furniture's pigment: the species anchor, seeded from the
   // SAME salted stream (the seed owns the red).

@@ -143,9 +143,10 @@ function respawnRace(opts) {
   const cast = (R && !netSession && !explicitField) ? R.field() : null;
   resetBots(state, cast ? cast.length : botCount,
     SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans, cast);
-  // Track furniture (27j): minted AFTER the field so canonical
-  // indices append; placed from the salted stream; dropped in and
-  // settled by gravity during the countdown.
+  // Track furniture (27k): minted DORMANT after the field so
+  // canonical indices append; candidate ARCS from the salted stream;
+  // placed by the wake law (physics.js tryWakeProp) when the leader
+  // closes in — never against unstreamed ground.
   window.FF.mintFurniture(state, (state.race.seed || 0) >>> 0,
     state.race.lapLengthPx || 40000, SPAWN.x);
 

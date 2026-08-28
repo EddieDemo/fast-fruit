@@ -273,7 +273,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-27j';
+const BUILD = '2026-08-27k';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -388,6 +388,33 @@ window.FF.DEV_PARTY_OPENER = 'derby';
 // displaced by the field — the track becomes STATEFUL, on purpose.
 window.FF.spawnFurniture = true;
 CONFIG.spawnFurniture = true;   // mirrored into CONFIG for sim-side reads
+// FURNITURE WAKE LAW (ruled 2026-08-27k, wake law B): a prop mints
+// DORMANT and wakes when the leader's ARC PROGRESS closes to within
+// wakeAhead of a candidate arc — a pure function of body state,
+// NEVER of streaming coverage. Coverage timing is frame-dependent
+// (provider.update runs per frame; a lockstep catch-up burst runs
+// many ticks against one window), so a coverage-gated wake is a
+// desync by construction. wakeAhead 1200 + max burst drift (~360 px
+// at 12 clamped steps) sits far inside GEN_AHEAD 3600, so the
+// surface solve at wake time is guaranteed streamed.
+CONFIG.furniture = {
+  candidates: 8,     // wake candidates precomputed at mint (salted stream)
+  wakeAhead: 1200,   // arc distance ahead of the leader at which a candidate fires
+  wakeGap: 30,       // px between the placed ball's bottom and the riding surface
+  probeMargin: 4,    // clearance beyond the body radius a face may not enter
+  fallbackLift: 800, // generous height for the all-candidates-fouled placement
+  // PERIOD RE-HOMING (ruled 2026-08-27k, option A): the provider
+  // tiles RACER periods only, so a placed prop's ground is pruned
+  // once the field clears its period. The prop rides the world's own
+  // period symmetry instead: when the backmarker passes the prop's
+  // period end by rehomeMargin, translate it by (+L, +D) — an exact
+  // symmetry, so the nearest-image pair math and the prop's local
+  // displacement are unchanged by construction. Margin < KEEP_BEHIND
+  // 2600 - burst drift (~360), so source AND destination periods are
+  // both streamed at fire time; and >= 2000 keeps the jump far
+  // behind every camera.
+  rehomeMargin: 2000,
+};
 // DEV FIELD SPECIES (2026-08-26af): spawn EVERY body as this
 // registered species — the whole-field meme dial ('beachball', etc).
 // null = off; registered names only (a typo falls through).

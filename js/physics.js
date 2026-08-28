@@ -64,6 +64,129 @@ const SEG_B = { x: 0, y: 0 };
 // stays deterministic.
 const NEAR_MISS_RATIO = 0.85; // flash the player above this fraction of lethal
 
+// ---- THE FURNITURE WAKE LAW (wake law B, ruled 2026-08-27k) -------
+// A dormant prop wakes when the leader's ARC PROGRESS closes to
+// within wakeAhead of the current candidate — a pure function of
+// body state, identical on every peer and every run. NEVER
+// coverage-gated: provider.update runs per FRAME, so which polys
+// exist at a given tick is frame-timing dependent (a lockstep
+// catch-up burst runs many ticks against one stale window) — a wake
+// that reads coverage is a desync by construction. wakeAhead 1200
+// (+ ~360 px max burst drift) sits far inside GEN_AHEAD 3600, and
+// arc distance bounds x distance, so streamed coverage at the
+// candidate is guaranteed by the time the law fires; the null-
+// surface branch below is the streaming contract BROKEN, not a
+// path — dev-loud, retried, and suite-held never to fire on a real
+// provider.
+//
+// Placement is STRAND-AWARE by construction: spine.surfaceAt(s) is
+// the riding surface at arc s — single-valued per strand, walls
+// skipped, the respawn fallback's own convention. (The dead v312
+// draft's propFloorAt picked the highest x-spanning segment of ANY
+// strand: against a branch deck it parked the ball inside the slab,
+// and the solver depenetrates toward the NEAREST face — out the
+// bottom, 600 px below the surface it "placed against".)
+const WAKE_CAND = new Int32Array(256);
+function tryWakeProp(state, p) {
+  const spine = state.spine;
+  const w = p.wake;
+  if (!spine || !spine.surfaceAt || !w || w.idx >= w.cands.length) return;
+  const FCFG = CONFIG.furniture;
+  // The leader, in arc: max progress over every seat. Dead bodies
+  // keep their position and cannot lead, but including them costs
+  // nothing and keeps the scan branch-free.
+  let maxS = -Infinity;
+  for (const pl of state.players) {
+    const s = spine.progressOf(pl.melon);
+    if (s > maxS) maxS = s;
+  }
+  for (const b of state.bots) {
+    const s = spine.progressOf(b.melon);
+    if (s > maxS) maxS = s;
+  }
+  const sCand = w.cands[w.idx];
+  if (maxS < sCand - FCFG.wakeAhead) return; // not yet — the law waits
+  const sp = spine.surfaceAt(sCand);
+  if (!sp) {
+    // The streaming contract is broken (harness with a hand window,
+    // or a real bug): retry next tick, loudly, once.
+    if (!w.starved) { w.starved = true;
+      console.warn('tryWakeProp: no streamed surface at arc', sCand); }
+    return;
+  }
+  const r = p.a * (1 + (p.taper || 0));
+  const cx = sp.x;
+  const cy = sp.y - r - FCFG.wakeGap;
+  // THE CLEARANCE PROBE: the whole inflated circle against every
+  // nearby face (canonical query order; point-vs-segment distance).
+  // One check catches the whole class — overhead decks, wall faces,
+  // slab interiors: a face inside the circle means this spot puts
+  // the ball where the solver would have to eject it.
+  const world = slab.worldFor(state.terrain);
+  const R = r + FCFG.probeMargin;
+  const n = world.query(cx - R, cy - R, cx + R, cy + R, WAKE_CAND);
+  let foul = false;
+  for (let i = 0; i < n && !foul; i++) {
+    const fi = WAKE_CAND[i];
+    const ax = world.fax[fi], ay = world.fay[fi];
+    const bx = world.fbx[fi], by = world.fby[fi];
+    const abx = bx - ax, aby = by - ay;
+    const len2 = abx * abx + aby * aby;
+    let t = len2 > 0 ? ((cx - ax) * abx + (cy - ay) * aby) / len2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const dx = cx - (ax + abx * t), dy = cy - (ay + aby * t);
+    if (dx * dx + dy * dy < R * R) foul = true;
+  }
+  if (foul && w.idx < w.cands.length - 1) {
+    // Burn the candidate; the next one's arc is larger, so it waits
+    // on its own wake condition. Dice were thrown at mint — this is
+    // a walk, never a re-roll.
+    w.idx++;
+    return;
+  }
+  // Place: clean spot, or the FINAL candidate fouled — the stated
+  // fallback, generous height over the surface, never a loop.
+  p.x = cx;
+  p.y = foul ? sp.y - r - FCFG.fallbackLift : cy;
+  p.vx = 0; p.vy = 0; p.omega = 0;
+  if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
+  p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
+  p.dormant = false;
+  p.wakeTick = state.tick; // telemetry breadcrumb (suite-read)
+}
+
+// ---- PERIOD RE-HOMING (option A, ruled 2026-08-27k) ---------------
+// The prop rides the world's period symmetry. Racer x grows
+// unwrapped; the provider tiles racer periods only; the pair pass
+// meets the prop through its nearest period image (resolveMelonPair
+// wraps by round(dx/L)). So the prop's PHASE is its identity, and
+// its unwrapped x may follow the field: when the backmarker clears
+// the prop's period end by rehomeMargin, translate by (+L, +D).
+// Exact world symmetry — geometry, pair math, and the prop's local
+// displacement are all invariant; prev translates with it so the
+// interpolated pose carries no streak. Decision reads sim state
+// only (deterministic); both periods are streamed at fire time by
+// the margin arithmetic (config.js).
+function rehomeProp(state, p) {
+  const per = state.period;
+  if (!per || !per.L) return false;
+  let minX = Infinity;
+  for (const pl of state.players) if (pl.melon.x < minX) minX = pl.melon.x;
+  for (const b of state.bots) if (b.melon.x < minX) minX = b.melon.x;
+  if (minX === Infinity) return false;
+  const margin = CONFIG.furniture.rehomeMargin;
+  // A while, but self-limiting: each pass moves the prop one whole
+  // period toward the field; at most one fires per lap in play.
+  let moved = false;
+  while (minX > (Math.floor(p.x / per.L) + 1) * per.L + margin) {
+    p.x += per.L; p.y += per.D;
+    if (p.prev) { p.prev.x += per.L; p.prev.y += per.D; }
+    p.rehomes = (p.rehomes || 0) + 1; // telemetry breadcrumb (suite-read)
+    moved = true;
+  }
+  return moved;
+}
+
 function step(state, dt) {
   snapshotPrev(state);
   state.tick++;
@@ -120,8 +243,18 @@ function step(state, dt) {
   // gone, as ruled). (The first cut sat INSIDE the per-bot alive
   // block — stepped once PER BOT, and never with an empty field. A
   // brace is a scope, and node --check cannot see intent.)
+  // A DORMANT prop is a record: the wake law below is the only thing
+  // that touches it, and only a placed prop enters the sim.
   for (const p of state.props || []) {
-    if (p.alive) stepBody(p, p.input, state.terrain, dt, null, state);
+    // else-if: the placement tick is the placement — a freshly woken
+    // prop takes its first step NEXT tick, so the placed pose (gap
+    // exactly wakeGap) is a real, observable state.
+    if (p.alive && p.dormant) tryWakeProp(state, p);
+    else if (p.alive) {
+      // the re-home tick is the re-home (same law as placement):
+      // the translated pose is a real, observable state.
+      if (!rehomeProp(state, p)) stepBody(p, p.input, state.terrain, dt, null, state);
+    }
   }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----
@@ -151,7 +284,7 @@ function step(state, dt) {
     for (const p of state.props || []) p.canonIdx = ci++; }
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
-  for (const p of state.props || []) if (p.alive) bodyList.push(p);
+  for (const p of state.props || []) if (p.alive && !p.dormant) bodyList.push(p);
   sortBodiesCanonical(bodyList);
   for (const m of bodyList) { m.pairSeverity = 0; m.pairWorst = 0; }
   if (bodyList.length > 1) {

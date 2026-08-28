@@ -1193,7 +1193,7 @@ function createRenderer(canvas) {
     // reserved for future non-colliding ghosts.
     drawList.length = 0;
     for (const pp of state.props || []) {
-      if (!pp.alive) continue;
+      if (!pp.alive || pp.dormant) continue; // a dormant prop is a record, not a body
       const pv = pp.prev || pp;
       drawList.push({
         melon: pp,
