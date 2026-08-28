@@ -708,6 +708,40 @@ window.FF._grant = (id) => {
     hide: () => { kbtn.style.display = 'none'; },
   });
 
+  // FIELD SPECIES cycle (dev), lane slot 10. The console was the only
+  // way to drive DEV_FIELD_SPECIES, which on mobile Safari means no
+  // way at all — and a flag you cannot see the state of wasted a
+  // morning. This button IS the state: it always says what is set.
+  // Cycles OFF -> every registered species -> OFF.
+  const spbtn = document.createElement('button');
+  spbtn.id = 'ff-species-btn';
+  spbtn.title = 'Field species override (dev)';
+  spbtn.style.cssText = 'position:fixed;z-index:30;'
+    + 'top:calc(var(--dev-top) + var(--dev-step) * 10);left:var(--lane-l);'
+    + 'background:var(--panel-bg,#161616);color:var(--panel-fg,#ddd);'
+    + 'border:none;border-radius:10px;padding:8px 10px;cursor:pointer;'
+    + 'font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:var(--fs-body);display:none;';
+  const speciesOrder = () => [null].concat(Object.keys(window.FF.OBJECTS || {}));
+  const paintSpecies = () => {
+    const cur = window.FF.DEV_FIELD_SPECIES;
+    // The label carries the CONTRACT, not just the value: bots only
+    // change when the field is rebuilt, so the button says so.
+    spbtn.textContent = '\u26bd ' + (cur ? cur + ' \u21ba restart' : 'off');
+  };
+  paintSpecies();
+  document.body.appendChild(spbtn);
+  spbtn.addEventListener('click', () => {
+    const order = speciesOrder();
+    const i = order.indexOf(window.FF.DEV_FIELD_SPECIES || null);
+    window.FF.DEV_FIELD_SPECIES = order[(i + 1) % order.length];
+    paintSpecies();
+  });
+  window.FF.devtools.register({
+    show: () => { spbtn.style.display = ''; },
+    hide: () => { spbtn.style.display = 'none'; },
+  });
+
   // Shadow debug (Phase 5.5), lane slot 8: paints the cast flat —
   // magenta shadowed, green lit — and reports the hour and the sun's
   // bearing, so a capture answers "is the shadow in the right place"

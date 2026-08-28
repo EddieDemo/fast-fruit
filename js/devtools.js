@@ -55,8 +55,8 @@ function isOn() { return on; }
 // PLAYER UI can step around it rather than each element hard-coding a
 // dev-aware offset. Zero when the gate is shut, which is the only
 // state a player ever sees.
-const LANE_SLOTS = 10;  // tune, cockpit, studio, grant-all, px-capture,
-                        // light, hour, shadow, sky, + headroom
+const LANE_SLOTS = 11;  // tune, cockpit, studio, grant-all, px-capture,
+                        // light, hour, shadow, sky, species, + headroom
 
 function publishLane() {
   if (typeof document === 'undefined' || !document.documentElement) return;

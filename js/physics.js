@@ -755,7 +755,7 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
     // of feeling dropped. A fresh tap refills the buffer.
     if (inp.hopPending) {
       inp.hopPending = 0;
-      inp.hopBuffer = (CONFIG.pump && CONFIG.pump.bufferTicks) || 12;
+      inp.hopBuffer = (CONFIG.hop && CONFIG.hop.bufferTicks) || 12;
     }
     const H = CONFIG.hop;
     const groundedNow = (m.airTicks || 0) <= (H.coyoteTicks || 0);

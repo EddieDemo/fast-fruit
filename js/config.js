@@ -86,7 +86,20 @@ const DEFAULTS = Object.freeze({
                            // kills as held but flare saves it; red =
                            // no stick position survives, steer. Moving
                            // the flare mid-air re-answers it live.
-  bounceMax: 0.7,          // full-flare ceiling — capped well below 1: e=1
+  // THE SPLIT (ruled 2026-08-27i): bounceMax used to be BOTH the
+  // flare's physical top AND the damage judgment's resilience cap —
+  // and its comment went stale the day the pump band pushed the
+  // physical top past it. Two jobs, two names:
+  //   flareCeil  — the PHYSICAL top: full up is a PERFECT bounce
+  //                (e = 1.0, nothing lost, nothing gained). Energy
+  //                GAIN now lives only in the tap-hop.
+  //   bounceMax  — the JUDGMENT cap: resilience credited never
+  //                exceeds this ("never 100% protected", Eddie's
+  //                standing ruling). At e = 1 dissipation is zero,
+  //                so this clamp is what keeps full-up from being
+  //                free invulnerability. LOAD-BEARING.
+  flareCeil: 1.0,
+  bounceMax: 0.7,          // judgment/resilience cap — NOT the flare top
                            // is immortality under the energy law, and big
                            // drops must still demand the multi-bounce bleed
   restitutionThreshold: 90,// impacts slower than this don't bounce (px/s)
@@ -154,7 +167,7 @@ const PRESETS = Object.freeze({
     motorTorque: 80000, maxAngVel: 60, brakeBoost: 1.3,
     airTorqueScale: 1, inputResponse: 24, bounceResponse: 48,
     friction: 0.9, rollingResistance: 0.018,
-    restitution: 0.34, restitutionThreshold: 55,
+    restitution: 0.3,   // ruled 2026-08-27i (was 0.34) restitutionThreshold: 55,
     linearDamping: 0.028, angularDamping: 0.09,
     squashStrength: 0.00008, cameraLerp: 4.5,
     // Severity = contact impulse x (R_flat / R_contact)^curvExponent.
@@ -260,7 +273,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-27g';
+const BUILD = '2026-08-27i';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -270,25 +283,20 @@ const CONFIG = {
   // frames until ruled a real phase. All dials are prototype dials.
   hopProto: true,
   hop: {
-    mag: 620,          // normal launch, delta-v px/s
+    mag: 600,          // normal launch, delta-v px/s (ruled 2026-08-27i)
     mu: 0.9,           // friction cone cap (tangential <= mu * normal)
     coyoteTicks: 17,   // ~140ms at 120Hz: grounded-recently window
-    tapMs: 150,        // max press duration to read as a tap
+    tapMs: 120,        // max press duration to read as a tap (ruled 27i:
+                       // shrinks the window where a slow tap steers)
     tapDriftPx: 6,     // max drift (CSS px) to read as a tap
     upBlend: 0,        // 0 = pure contact normal, 1 = world-up
-  },
-  // ---- PUMP BAND (hop prototype phase 2, ruled 2026-08-25) ----
-  // The top of flare travel crosses e=1: a self-exciting bouncer the
-  // hop seeds. Sub-band travel is BIT-IDENTICAL to the passive curve;
-  // flag off, the whole curve is. Resilience SATURATES (Eddie's
-  // ruling: never 100% protected): judgment clamps e at bounceMax,
-  // so pumped landings are charged as if at max passive flare —
-  // which is what builds the exponential brake and the cliff.
-  pump: {
-    eMax: 1.25,        // restitution at full flare-up
-    bandStart: 0.8,    // flare axis where the >1 band begins
     bufferTicks: 12,   // ~100ms: a mid-air tap waits for touchdown
-  }, ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
+  },
+  // (THE PUMP BAND IS RETIRED, 2026-08-27i: the stick's top no
+  // longer crosses e=1 — holding up cannot self-excite. Energy gain
+  // is the TAP's job alone: hop.mag, additive, no cooldown. The
+  // band's buffer survives as hop.bufferTicks.)
+  ...DEFAULTS, ...PRESETS[DEFAULT_PRESET] };
 let activePreset = DEFAULT_PRESET;
 
 function applyPreset(name) {
@@ -374,6 +382,9 @@ window.FF.DEV_PARTY_OPENER = 'derby';
 // DEV FIELD SPECIES (2026-08-26af): spawn EVERY body as this
 // registered species — the whole-field meme dial ('beachball', etc).
 // null = off; registered names only (a typo falls through).
+// THE DEV LANE HAS A BUTTON FOR THIS (2026-08-27h): the species
+// cycle, lane slot 10 — no console needed, and the label always
+// shows what is set (mobile Safari has no console at all).
 // THE CONTRACT (ruled 2026-08-27d/e): the PLAYER converts live, on
 // the next frame — set it from the console mid-race and you become
 // one, and any saved decal wrap comes off (it belongs to your melon,
