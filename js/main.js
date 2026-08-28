@@ -148,7 +148,7 @@ function respawnRace(opts) {
   // placed by the wake law (physics.js tryWakeProp) when the leader
   // closes in — never against unstreamed ground.
   window.FF.mintFurniture(state, (state.race.seed || 0) >>> 0,
-    state.race.lapLengthPx || 40000, SPAWN.x);
+    state.race.lapLengthPx || 40000, SPAWN.x, provider.restSites);
 
 
   // A CUP KEEPS ITS CAST. With the permanent roster this is now true

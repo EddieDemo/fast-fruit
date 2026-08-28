@@ -153,6 +153,11 @@ function tryWakeProp(state, p) {
   p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
   p.dormant = false;
   p.wakeTick = state.tick; // telemetry breadcrumb (suite-read)
+  // DEV SCAFFOLD (27l): pin at the wake pose so the ball can be
+  // found and eyeballed on device. The pin machinery is the grid's
+  // own (held after integration AND after contacts, so a shove
+  // cannot walk it off either).
+  if (CONFIG.devPinFurniture) { p.pinX = p.x; p.pinY = p.y; }
 }
 
 // ---- PERIOD RE-HOMING (option A, ruled 2026-08-27k) ---------------
@@ -181,6 +186,9 @@ function rehomeProp(state, p) {
   while (minX > (Math.floor(p.x / per.L) + 1) * per.L + margin) {
     p.x += per.L; p.y += per.D;
     if (p.prev) { p.prev.x += per.L; p.prev.y += per.D; }
+    // the dev pin is a POSE, so it travels with the symmetry too —
+    // a pinned ball is met in the same spot on every lap
+    if (p.pinX !== null && p.pinX !== undefined) { p.pinX += per.L; p.pinY += per.D; }
     p.rehomes = (p.rehomes || 0) + 1; // telemetry breadcrumb (suite-read)
     moved = true;
   }

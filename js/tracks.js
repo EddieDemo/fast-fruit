@@ -119,10 +119,33 @@ function createTrackProvider(def) {
   const lapArc = template[template.length - 1].s;
   const tplBranches = template.branches || [];
 
+  // ---- REST SITES (ruled 2026-08-27, furniture placement) ----------
+  // Where the WORLD will hold a ball still. A dip is a point where
+  // the surface stops descending and starts rising: a true local
+  // minimum in travel, so a body placed there at rest has nowhere
+  // to roll. Furniture is placed where the ground holds it rather
+  // than held by a rule — a ball parked mid-slope runs thousands of
+  // px downhill (measured: 29k-32k on the steepest ground), which
+  // is why the arbitrary-arc draw never survived to be met.
+  //
+  // Computed from the TEMPLATE, at construction: the whole lap
+  // exists before the race starts (streaming only TILES it), so
+  // this is a pure question with a pure answer, no coverage
+  // involved. Arc-keyed, so a site is the same site on every lap.
+  const restSites = [];
+  for (let i = 1; i < template.length - 1; i++) {
+    const dyA = template[i].y - template[i - 1].y;      // + = descending (y down)
+    const dyB = template[i + 1].y - template[i].y;
+    if (dyA > 0 && dyB <= 0) {
+      restSites.push({ s: template[i].s, k: template[i].k || 'runway' });
+    }
+  }
+
   const provider = {
     def,
     period: { L, D },
     lapArc,
+    restSites,            // dips the world holds a body in (furniture)
     _template: template,  // verification surface: copy-vs-copy
                           // comparison masks SYMMETRIC field drops
                           // (mat was dropped at every period alike);

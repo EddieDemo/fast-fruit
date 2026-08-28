@@ -273,7 +273,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-27k';
+const BUILD = '2026-08-27m';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -399,7 +399,13 @@ CONFIG.spawnFurniture = true;   // mirrored into CONFIG for sim-side reads
 // surface solve at wake time is guaranteed streamed.
 CONFIG.furniture = {
   candidates: 8,     // wake candidates precomputed at mint (salted stream)
-  wakeAhead: 1200,   // arc distance ahead of the leader at which a candidate fires
+  // 2400 (was 1200, raised 27m): the wake lead is also the ball's
+  // SETTLING TIME. At 1200 the leader arrived 0.5 s after placement
+  // and met a ball still moving at 16-68 px/s from its placement
+  // drop; 2400 buys ~1.1-1.3 s and 2-47 px/s — a few percent of race
+  // pace, i.e. still. Kept well inside GEN_AHEAD 3600 (2400 + ~360
+  // burst drift leaves 840 px of slack; 3000 would leave 240).
+  wakeAhead: 2400,
   wakeGap: 30,       // px between the placed ball's bottom and the riding surface
   probeMargin: 4,    // clearance beyond the body radius a face may not enter
   fallbackLift: 800, // generous height for the all-candidates-fouled placement
@@ -415,6 +421,21 @@ CONFIG.furniture = {
   // behind every camera.
   rehomeMargin: 2000,
 };
+// >>> DEV SCAFFOLD — STATED-TEMPORARY, DEFAULT ON FOR THIS BUILD <<<
+// PIN THE FURNITURE (2026-08-27l): on placement, the prop is pinned
+// at its wake pose and stays there — no rolling, no runaway, no
+// bouncing off the mountain. This exists ONLY so the ball can be
+// FOUND on device and its spawn eyeballed while the energy-sink
+// ruling is open (an indestructible body on a permanent downhill
+// has no dissipation and always escapes eventually — measured:
+// 1360-1662 px/s vs a field at ~530).
+// TURN THIS OFF (or delete it) WHEN THE SINK IS RULED. A pinned
+// beach ball is not the game.
+// OFF as of 27m: the ball now parks in a dip the world holds it in,
+// so nothing needs pinning. Kept (not deleted) as a finding tool —
+// flip to true to freeze furniture wherever it lands.
+window.FF.DEV_PIN_FURNITURE = false;
+CONFIG.devPinFurniture = false;  // mirrored for sim-side reads
 // DEV FIELD SPECIES (2026-08-26af): spawn EVERY body as this
 // registered species — the whole-field meme dial ('beachball', etc).
 // null = off; registered names only (a typo falls through).

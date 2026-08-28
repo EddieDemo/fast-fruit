@@ -585,7 +585,7 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
 //  - kills as ENVIRONMENT WITH FLAVOUR: the pair pass stamps its
 //    canonIdx like anyone's; the death site resolves a prop-shoved
 //    death to m.deathByProp (the comedy is the point).
-function mintFurniture(state, trackSeed, lapArc, spawnX) {
+function mintFurniture(state, trackSeed, lapArc, spawnX, restSites) {
   state.props = [];
   if (!window.FF.CONFIG.spawnFurniture) return;
   // The salted stream: same track, same spot, forever; and zero
@@ -604,9 +604,36 @@ function mintFurniture(state, trackSeed, lapArc, spawnX) {
   // a flat infinite poly could not see it.)
   const FCFG = window.FF.CONFIG.furniture;
   const arc = lapArc || 40000;
+  // CANDIDATES ARE REST SITES (ruled 2026-08-27): dips the world
+  // holds a body in, computed from the lap template at provider
+  // construction (tracks.js restSites). An arbitrary arc is usually
+  // a HILLSIDE — a ball placed there rolls away long before anyone
+  // arrives (measured: 1360-1662 px/s, gone from the streamed window
+  // in 12-15 s), which is why furniture was never met on device. A
+  // dip needs no pin, no drag, no exemption: the ordinary solver
+  // holds it. What happens AFTER the first strike is the game's, not
+  // ours — a punted ball is a punted ball.
+  const band = (restSites || []).filter((q) =>
+    q.s > 0.15 * arc && q.s < 0.9 * arc);   // never on the grid or the closer
   const cands = [];
-  for (let i = 0; i < FCFG.candidates; i++) {
-    cands.push((0.25 + rng() * 0.6) * arc);
+  if (band.length) {
+    // Draw without replacement from the band, seeded: a shuffled
+    // walk, so a fouled site is followed by an unrelated one rather
+    // than its neighbour 40 px along the same trough.
+    const pool = band.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    for (let i = 0; i < FCFG.candidates && i < pool.length; i++) {
+      cands.push(pool[i].s);
+    }
+  } else {
+    // STATED FALLBACK: no rest sites offered (harness worlds, a
+    // mode whose provider has no template). The old band draw —
+    // honest about being a hillside, and the survey says no real
+    // track lands here (8 seeds, 30-45 sites each, none barren).
+    for (let i = 0; i < FCFG.candidates; i++) cands.push((0.25 + rng() * 0.6) * arc);
   }
   cands.sort((a, b) => a - b);
   const FOB = window.FF.OBJECTS;
