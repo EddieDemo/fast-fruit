@@ -141,11 +141,48 @@ function createTrackProvider(def) {
     }
   }
 
+  // ---- FLAT SITES (rectangular props, phase 3) ---------------------
+  // Where the world will hold a BOX still. A sphere wants a dip; a box
+  // wants a RUN — a stretch of near-level ground long enough that its
+  // whole footprint sits on one grade. A box placed at a dip would
+  // bridge the vee and rock on two corners; a box placed at the edge
+  // of a flat run would hang half over the drop.
+  //
+  // Same construction-time, template-only, arc-keyed law as restSites
+  // above. A run is a maximal span of consecutive segments whose grade
+  // stays inside flatGrade; the site is the MIDDLE of the run, and the
+  // run's arc length rides along so the mint can refuse a run too
+  // short for a given species' footprint.
+  const flatSites = [];
+  {
+    const FG = window.FF.CONFIG.furniture.flatGrade;
+    let i = 0;
+    while (i < template.length - 1) {
+      let j = i;
+      while (j < template.length - 1) {
+        const dx = template[j + 1].x - template[j].x;
+        const dy = template[j + 1].y - template[j].y;
+        if (dx === 0 || Math.abs(dy / dx) > FG) break;
+        j++;
+      }
+      if (j > i) {
+        const len = template[j].s - template[i].s;
+        if (len >= window.FF.CONFIG.furniture.flatMinRun) {
+          flatSites.push({ s: (template[i].s + template[j].s) * 0.5,
+            k: template[i].k || 'runway', len,
+            s0: template[i].s, s1: template[j].s });   // the run it claims
+        }
+      }
+      i = j + 1;
+    }
+  }
+
   const provider = {
     def,
     period: { L, D },
     lapArc,
     restSites,            // dips the world holds a body in (furniture)
+    flatSites,            // level runs a BOX can sit flat on (phase 3)
     _template: template,  // verification surface: copy-vs-copy
                           // comparison masks SYMMETRIC field drops
                           // (mat was dropped at every period alike);

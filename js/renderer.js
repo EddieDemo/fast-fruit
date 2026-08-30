@@ -155,6 +155,122 @@ function drawBeachGores(ctx, a, b) {
   ctx.fill();
 }
 
+// ---- THE BOX PAINTER (rectangular props, phase 4) ------------------
+// A box is not a sphere with corners. shadeEllipse solves Lambert
+// isocontours over a parametric ellipse — a curved surface rolling
+// under a fixed sun — and clipping that solve to a square would paint
+// a sphere's terminator onto a flat plate. A plate has ONE normal:
+// its face is uniformly lit, and everything that reads as "box" comes
+// from its EDGES and its seams.
+//
+// So: flat face, bevelled edges (lit on the sun side, dark away from
+// it — which is what makes the rotation honest, since the bevels swap
+// as it turns), a taped seam, and an ink outline.
+//
+// MODULE SCOPE on purpose, like drawBeachGores: pure (ctx-in, colours
+// and sun passed as parameters), factory-independent, so a headless
+// suite reaches it without a renderer.
+//   verts   — body-frame vertex pairs, already scaled and COM-centred
+//   angle   — body rotation, radians
+//   sun     — unit vector toward the light, world frame
+//   C       — { face, lit, dark, ink } resolved tones
+//   bevel   — world px; the apparent thickness of the cardboard
+function drawBoxKraft(ctx, verts, angle, sun, C, bevel) {
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const n = verts.length;
+  const W = [];
+  for (let i = 0; i < n; i++) {
+    W.push([verts[i][0] * ca - verts[i][1] * sa,
+      verts[i][0] * sa + verts[i][1] * ca]);
+  }
+  const pathAll = () => {
+    ctx.beginPath();
+    ctx.moveTo(W[0][0], W[0][1]);
+    for (let i = 1; i < n; i++) ctx.lineTo(W[i][0], W[i][1]);
+    ctx.closePath();
+  };
+  // The face.
+  pathAll();
+  ctx.fillStyle = C.face;
+  ctx.fill();
+  ctx.save();
+  pathAll();
+  ctx.clip();
+  // The bevels. Each edge gets a strip inset toward the centre; its
+  // tone is decided by that edge's own outward normal against the sun.
+  // Canonically wound (positive area), so the outward normal of edge
+  // (dx, dy) is (dy, -dx) — the same convention state.js uses.
+  for (let i = 0; i < n; i++) {
+    const p = W[i], q = W[(i + 1) % n];
+    const dx = q[0] - p[0], dy = q[1] - p[1];
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    const nx = dy / len, ny = -dx / len;
+    const facing = nx * sun.x + ny * sun.y;   // +1 = straight at the light
+    if (Math.abs(facing) < 0.12) continue;    // edge-on: no strip to see
+    ctx.fillStyle = facing > 0 ? C.lit : C.dark;
+    // Inset along -n, and overshoot the ends so neighbouring strips
+    // meet without a seam of base colour between them.
+    const ox = -nx * bevel, oy = -ny * bevel;
+    const ex = (dx / len) * bevel, ey = (dy / len) * bevel;
+    ctx.beginPath();
+    ctx.moveTo(p[0] - ex, p[1] - ey);
+    ctx.lineTo(q[0] + ex, q[1] + ey);
+    ctx.lineTo(q[0] + ex + ox, q[1] + ey + oy);
+    ctx.lineTo(p[0] - ex + ox, p[1] - ey + oy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // THE SEAM. A cardboard box reads as cardboard because of the fold
+  // where its flaps meet: ONE line, full width, drawn in body frame so
+  // it turns with the box — the whole point of "honest 2D rotation".
+  //
+  // RULED 2026-08-28 (Eddie), from the device shot: no flap TICKS and
+  // no ink OUTLINE. The two short ticks off the centre line read as
+  // clutter at race scale, and the outline was doing a job the bevels
+  // already do — the box's boundary against the terrain is now the
+  // dark bevel on its away-from-sun edges and the light bevel on the
+  // others, which is one mechanism instead of two arguing.
+  let hx = 0;
+  for (const v of verts) if (Math.abs(v[0]) > hx) hx = Math.abs(v[0]);
+  const rot = (x, y) => [x * ca - y * sa, x * sa + y * ca];
+  ctx.strokeStyle = C.ink;
+  ctx.lineWidth = Math.max(1, bevel * 0.55);
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  {
+    const A0 = rot(-hx, 0), B0 = rot(hx, 0);
+    ctx.moveTo(A0[0], A0[1]); ctx.lineTo(B0[0], B0[1]);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Registry vertices scaled to a body's half-extents, COM-centred. The
+// renderer is handed a and b, not the body, so the scale is recovered
+// from the registry's own half-width.
+function speciesVerts(fruit, a) {
+  const SP = (window.FF.OBJECTS && window.FF.OBJECTS[fruit]) || null;
+  if (!SP || !SP.poly || SP.poly.length < 3) return null;
+  let hx = 0;
+  for (const v of SP.poly) if (Math.abs(v[0]) > hx) hx = Math.abs(v[0]);
+  if (hx <= 0) return null;
+  const k = a / hx;
+  return SP.poly.map((v) => [v[0] * k, v[1] * k]);
+}
+
+// The bound a SPRITE must reserve: a box's corners reach further than
+// its half-extent, so a sprite sized on `a` would clip them off at 45
+// degrees. Same quantity as the body's physics boundR, recomputed
+// here from the registry because the renderer is handed a and b only.
+function spriteBoundR(fruit, a, b) {
+  const V = speciesVerts(fruit, a);
+  if (!V) return a;
+  let r = 0;
+  for (const v of V) { const d = Math.hypot(v[0], v[1]); if (d > r) r = d; }
+  return r;
+}
+
 function createRenderer(canvas) {
   const baseCtx = canvas.getContext('2d');
   let ctx = baseCtx;   // render() rebinds to the pixelation offscreen
@@ -1204,6 +1320,18 @@ function createRenderer(canvas) {
         squash: pp,
         name: '',          // furniture wears no tag
         pilot: '',
+        tagged: false,     // ...NOR AN ORDINAL. The ranking roster is
+                           // players+bots, so placeOf.get(prop) is
+                           // undefined and the ordinal formatter's
+                           // `|| 'th'` default rendered "undefined th"
+                           // over the ball (device, 27m). Exclusion by
+                           // list membership held everywhere it was
+                           // read and leaked at the one site that
+                           // draws for every drawList entry: the tag
+                           // pass. Gated here rather than by teaching
+                           // ordinalSuffix to swallow undefined —
+                           // that hides the leak for the NEXT system
+                           // that hangs UI on bodies.
         decals: null,
       });
     }
@@ -1475,7 +1603,7 @@ function createRenderer(canvas) {
         drawMelon(ctx, sx, sy, d.angle, d.squash, '#ffffff', zoom, d.melon.patKey || d.name || d.color, d.melon.a, d.melon.b, d.melon.species);
         ctx.globalAlpha = 1;
       }
-      drawPlace(ctx, sx, sy, d.place, zoom, d.isPlayer);
+      if (d.tagged !== false) drawPlace(ctx, sx, sy, d.place, zoom, d.isPlayer);
     }
 
     // ---- Speed lines: streaks behind the player at terminal pace ----
@@ -2407,7 +2535,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (e !== undefined) return e;
     if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
     const spr = 2 * (rPx + PAD);
-    e = { spr, rPx, a, b, color, seedKey, species: fruit, decals, frames: new Map(),
+    // bR: the world radius rPx was sized from. Equals `a` for every
+    // smooth species (so their bakes are byte-unmoved) and the
+    // circumradius for a polygon, whose corners rPx had to grow to
+    // hold. The bake scale must divide by the SAME quantity, or a box
+    // would be drawn sqrt(2) too large inside its own sprite.
+    e = { spr, rPx, bR: spriteBoundR(fruit, a, b), a, b, color, seedKey, species: fruit, decals, frames: new Map(),
       big: null, btx: null };
     melonSprites.set(key, e);
     return e;
@@ -2439,7 +2572,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       e.btx = e.big.getContext('2d');
     }
     const btx = e.btx;
-    const zoomBake = (e.rPx * SS) / e.a;
+    const zoomBake = (e.rPx * SS) / (e.bR || e.a);
     const half = (SS * SS) * 0.45;
     const quarter = (SS * SS) * 0.25;
     bakeLodR = e.rPx;                  // Phase 2.1: painters simplify
@@ -2664,7 +2797,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       const sy0World = worldY !== undefined ? worldY : 0;
       const a = bodyA || CONFIG.semiMajor;
       const b = bodyB || CONFIG.semiMinor;
-      const rPx = Math.max(3, Math.round(a * zoom));
+      // THE SPRITE MUST HOLD THE CORNERS (phase 4). A box's corners
+      // reach sqrt(2) further than its half-extent, so a sprite sized
+      // on `a` clips them clean off at 45 degrees. spriteBoundR is the
+      // circumradius for a polygon species and exactly `a` for every
+      // smooth one, so the existing sprites are byte-unmoved.
+      const rPx = Math.max(3, Math.round(spriteBoundR(fruit, a, b) * zoom));
       const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
       const slot = squashSlot(squash);
       if (e) {
@@ -2765,6 +2903,26 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       ctx.rotate(squash.squashAngle + Math.PI / 2);
       ctx.scale(1 + squash.squash, 1 - squash.squash);
       ctx.rotate(-(squash.squashAngle + Math.PI / 2));
+    }
+
+    // A POLYGON BODY TAKES THE BOX PATH (phase 4). Not a detour
+    // around shadeEllipse for convenience: shadeEllipse solves a
+    // curved body's terminator, and a flat plate has no terminator to
+    // solve. Species without a `poly` reach exactly the call they
+    // always did.
+    const V = speciesVerts(fruit, a);
+    if (V) {
+      const sunV = RIG && RIG.sun ? RIG.sun() : { x: 0, y: -1 };
+      const sl = Math.hypot(sunV.x, sunV.y) || 1;
+      const base = color || COLORS.rind;
+      drawBoxKraft(ctx, V, angle, { x: sunV.x / sl, y: sunV.y / sl }, {
+        face: RIG.slotColor(base, RIG.P.baseFillSlot),
+        lit: RIG.slotColor(base, RIG.P.highlightFillSlot),
+        dark: RIG.slotColor(base, RIG.bands()[0].fillSlot),
+        ink: RIG.slotColor(base, RIG.bands()[0].fillSlot),
+      }, Math.max(2, a * 0.14));
+      ctx.restore();
+      return;
     }
 
     // Cel-shaded body: world-fixed sun, terminator the surface rolls
@@ -4529,5 +4687,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   return { render, resize };
 }
 
-Object.assign(window.FF, { createRenderer, painters: { beachGores: drawBeachGores } });
+Object.assign(window.FF, { createRenderer,
+  painters: { beachGores: drawBeachGores, boxKraft: drawBoxKraft },
+  _speciesVerts: speciesVerts, _spriteBoundR: spriteBoundR });
 })();

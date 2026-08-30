@@ -122,8 +122,26 @@ function bodyRestitution(m) {
 // fall's fate is sealed at launch except for the flare — which is
 // what makes the practice-mode splat predictor honest.
 const concCache = new Map();
+// THE KEY CARRIES THE SHAPE (2026-08-28). shapeToughness quadrates
+// over the PARAMETRIC ellipse/egg boundary; a polygon's boundary is
+// not that curve at all. Untagged, a polygon body whose (a, b)
+// happened to match an ellipse body's would silently collect that
+// body's cached toughness — a wrong answer with no symptom, since
+// both shapes return the SAME number today and the collision would
+// only surface once the polygon earned its own quadrature.
+//
+// Lifted out of bodyToughness so the tag can be checked at all: with
+// the key inlined, a suite could only observe the VALUE, which is
+// identical either way — the check would have passed with the tag
+// removed. A signal that cannot say "I don't know" says "yes".
+// The tag is PREPENDED, so no existing body's computed value moves;
+// only the string that indexes it does.
+function toughnessKey(m) {
+  return (m.shape || 'ellipse') + ',' + m.a + ',' + m.b + ','
+    + (m.taper || 0) + ',' + CONFIG.curvExponent;
+}
 function bodyToughness(m) {
-  const key = m.a + ',' + m.b + ',' + (m.taper || 0) + ',' + CONFIG.curvExponent;
+  const key = toughnessKey(m);
   let c = concCache.get(key);
   if (c === undefined) {
     c = shapeToughness(m.a, m.b, m.taper || 0);
@@ -297,5 +315,5 @@ function restitutionToSurvive(sev, T, e0) {
   return Math.sqrt(need2);
 }
 
-window.FF.damage = { bodyRestitution, bodyToughness, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, clusterStep, resetCluster, SEV_SCALE, CLUSTER_ROLL_TICKS, CLUSTER_GAP_TICKS };
+window.FF.damage = { bodyRestitution, bodyToughness, toughnessKey, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, clusterStep, resetCluster, SEV_SCALE, CLUSTER_ROLL_TICKS, CLUSTER_GAP_TICKS };
 })();

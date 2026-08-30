@@ -140,15 +140,20 @@ function respawnRace(opts) {
   // a desync, and the handshake does not carry specs yet.
   const R = window.FF.roster;
   const explicitField = !!(CONFIG.botRoster && CONFIG.botRoster.length);
-  const cast = (R && !netSession && !explicitField) ? R.field() : null;
-  resetBots(state, cast ? cast.length : botCount,
+  // soloRace (DEV): the field is just you. The cast is skipped, not
+  // dealt-and-discarded — raceInit is outside every gate, so the
+  // stream-is-sacred law has no jurisdiction here, and an empty
+  // field IS the point of the flag.
+  const cast = (R && !netSession && !explicitField && !CONFIG.soloRace) ? R.field() : null;
+  resetBots(state, CONFIG.soloRace ? 0 : (cast ? cast.length : botCount),
     SPAWN.x, -CONFIG.semiMinor - 200, (castSeed ^ 0x51ED) >>> 0, humans, cast);
   // Track furniture (27k): minted DORMANT after the field so
   // canonical indices append; candidate ARCS from the salted stream;
   // placed by the wake law (physics.js tryWakeProp) when the leader
   // closes in — never against unstreamed ground.
   window.FF.mintFurniture(state, (state.race.seed || 0) >>> 0,
-    state.race.lapLengthPx || 40000, SPAWN.x, provider.restSites);
+    state.race.lapLengthPx || 40000, SPAWN.x,
+    provider.restSites, provider.flatSites);
 
 
   // A CUP KEEPS ITS CAST. With the permanent roster this is now true

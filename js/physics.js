@@ -38,13 +38,33 @@ const dsin = dmath.sin, dcos = dmath.cos, dpow = dmath.pow;
 const { snapshotPrev } = window.FF;
 
 // Scratch object reused every contact test to avoid GC churn.
-const contact = {
-  hit: false,
-  px: 0, py: 0,   // contact point (on segment), world
-  nx: 0, ny: 0,   // contact normal, world, pointing INTO the melon
-  pen: 0,         // penetration depth along normal (px)
-  curvR: 1,       // ellipse curvature radius at the contact (px)
-};
+// THE MANIFOLD (phase 2, 2026-08-28): two pre-allocated slots, not
+// one. The smooth families fill slot 0 and report a count of 1, so
+// their path is unchanged; a polygon face resting on a segment fills
+// both. Pre-allocated rather than returned as a fresh array, because
+// this runs per body per face per solver iteration.
+function makeContact() {
+  return {
+    hit: false,
+    px: 0, py: 0,   // contact point (on segment), world
+    nx: 0, ny: 0,   // contact normal, world, pointing INTO the melon
+    pen: 0,         // penetration depth along normal (px)
+    // POSITIONAL CORRECTION SHARE (P2-B, ruled 2026-08-28).
+    // resolveContact ejects by pen x positionCorrection PER CALL, so a
+    // flat face returning two points would eject a box twice as far as
+    // a curve returning one — over-ejection, and the most likely
+    // source of the humming box. The manifold divides one correction
+    // between its points. Always 1 for the smooth families, so their
+    // arithmetic is untouched.
+    corrShare: 1,
+  };
+}
+// curvR REMOVED 2026-08-28: written by both collide routines, read
+// by nobody since the certificate dropped it (see makeCertificate).
+// A polygon has zero curvature along a face and a singularity at a
+// corner, so a third writer could only have lied. Deleted rather
+// than given a placeholder — dead code is not a safety net.
+const MANIFOLD = [makeContact(), makeContact()];
 
 // Slab-query scratch (stage 1): candidate face indices, and the two
 // endpoint shells the narrowphase reads — reused every test, same
@@ -52,6 +72,23 @@ const contact = {
 const CAND = [];
 const SEG_A = { x: 0, y: 0 };
 const SEG_B = { x: 0, y: 0 };
+
+// The terrain-contact ACCUMULATOR (PHASE-6 §5.4). These five lived as
+// locals across stepBody's iteration loop; the unified pass drives
+// terrain sweeps from OUTSIDE the body's own step, so they now ride
+// an explicit accumulator with their semantics preserved exactly —
+// sumE ADDS, strongestE takes a MAX and owns the impact direction and
+// the m.hit* breadcrumbs, grounded is a sticky OR. One module-level
+// scratch, reset by stepBody per body per tick: stepBody never nests
+// (stepBodyClone IS stepBody), so reuse is the file's own no-churn
+// discipline, not a risk.
+const TACC = {
+  grounded: false,
+  strongestE: 0,
+  sumE: 0,
+  impactNormalAngle: 0,
+  impactVn: 0,
+};
 
 // step() advances every body through the IDENTICAL simulation path.
 // This is the fairness guarantee for the bots: same stepBody, same
@@ -89,6 +126,29 @@ const NEAR_MISS_RATIO = 0.85; // flash the player above this fraction of lethal
 const WAKE_CAND = new Int32Array(256);
 function tryWakeProp(state, p) {
   const spine = state.spine;
+  // AN UPPER TIER OF A STACK (2026-08-30): no walk of its own — it
+  // wakes the tick its base wakes, placed straight up the column from
+  // the base's wake pose. Same-tick is guaranteed by mint order (the
+  // base precedes its tiers in state.props, and this sweep clears the
+  // base's dormant flag before any tier asks), so the base has been
+  // PLACED and not yet STEPPED: the authored gap is exact, and the
+  // base's clearance probe already cleared this tier's spot (it
+  // probes the whole column — see below).
+  if (p.stackBase) {
+    const base = p.stackBase;
+    if (base.dormant || !base.alive) return;   // a dead-at-wake base strands its tiers dormant, honestly
+    const FC = CONFIG.furniture;
+    const pitch = supportRadius(p, 0, 1) * 2 + FC.stackGap;
+    p.x = base.x;
+    p.y = base.y - p.stackTier * pitch;
+    p.vx = 0; p.vy = 0; p.omega = 0;
+    if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
+    p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
+    p.dormant = false;
+    p.wakeTick = state.tick; // telemetry breadcrumb (suite-read)
+    if (CONFIG.devPinFurniture) { p.pinX = p.x; p.pinY = p.y; }
+    return;
+  }
   const w = p.wake;
   if (!spine || !spine.surfaceAt || !w || w.idx >= w.cands.length) return;
   const FCFG = CONFIG.furniture;
@@ -114,28 +174,53 @@ function tryWakeProp(state, p) {
       console.warn('tryWakeProp: no streamed surface at arc', sCand); }
     return;
   }
-  const r = p.a * (1 + (p.taper || 0));
+  // ONE SYMBOL, TWO JOBS — SPLIT 2026-08-28 (RECTANGULAR-PROPS.md §7).
+  // This used to be a single `r = p.a * (1 + taper)` doing both of the
+  // below. They coincide for a sphere and diverge for a box, and the
+  // phase 0 note had the direction backwards: with a/b as honest
+  // half-extents the old expression gave 50 px against a box's 70.71
+  // px circumradius — UNDER-inflated, which is the dangerous way. It
+  // would have accepted spots a rotated box does not fit.
+  //   clearR — how much room the body needs. The circumradius: the
+  //            probe inflates a CIRCLE, so it must be the enclosing
+  //            one. Conservative; it can only refuse.
+  //   restH  — how high the body's centre sits above the surface it
+  //            rests on. The support along world-down at the wake
+  //            pose, which for a box is the half-extent and for a
+  //            sphere is the radius (so the ball is bit-unmoved).
+  const clearR = p.boundR;
+  const restH = supportRadius(p, 0, 1);
   const cx = sp.x;
-  const cy = sp.y - r - FCFG.wakeGap;
+  const cy = sp.y - restH - FCFG.wakeGap;
   // THE CLEARANCE PROBE: the whole inflated circle against every
   // nearby face (canonical query order; point-vs-segment distance).
   // One check catches the whole class — overhead decks, wall faces,
   // slab interiors: a face inside the circle means this spot puts
   // the ball where the solver would have to eject it.
   const world = slab.worldFor(state.terrain);
-  const R = r + FCFG.probeMargin;
-  const n = world.query(cx - R, cy - R, cx + R, cy + R, WAKE_CAND);
+  const R = clearR + FCFG.probeMargin;
+  // THE COLUMN PROBE (2026-08-30): a stack's base probes one circle
+  // PER TIER, straight up the column — a stack under an overhead deck
+  // must refuse the site just as a lone ball beside a wall does. For
+  // a lone prop stackTiers is absent and this is exactly the one
+  // circle it always probed.
+  const probeTiers = p.stackTiers || 1;
+  const pitch = probeTiers > 1 ? supportRadius(p, 0, 1) * 2 + FCFG.stackGap : 0;
   let foul = false;
-  for (let i = 0; i < n && !foul; i++) {
-    const fi = WAKE_CAND[i];
-    const ax = world.fax[fi], ay = world.fay[fi];
-    const bx = world.fbx[fi], by = world.fby[fi];
-    const abx = bx - ax, aby = by - ay;
-    const len2 = abx * abx + aby * aby;
-    let t = len2 > 0 ? ((cx - ax) * abx + (cy - ay) * aby) / len2 : 0;
-    t = t < 0 ? 0 : (t > 1 ? 1 : t);
-    const dx = cx - (ax + abx * t), dy = cy - (ay + aby * t);
-    if (dx * dx + dy * dy < R * R) foul = true;
+  for (let tier = 0; tier < probeTiers && !foul; tier++) {
+    const py = cy - tier * pitch;
+    const n = world.query(cx - R, py - R, cx + R, py + R, WAKE_CAND);
+    for (let i = 0; i < n && !foul; i++) {
+      const fi = WAKE_CAND[i];
+      const ax = world.fax[fi], ay = world.fay[fi];
+      const bx = world.fbx[fi], by = world.fby[fi];
+      const abx = bx - ax, aby = by - ay;
+      const len2 = abx * abx + aby * aby;
+      let t = len2 > 0 ? ((cx - ax) * abx + (py - ay) * aby) / len2 : 0;
+      t = t < 0 ? 0 : (t > 1 ? 1 : t);
+      const dx = cx - (ax + abx * t), dy = py - (ay + aby * t);
+      if (dx * dx + dy * dy < R * R) foul = true;
+    }
   }
   if (foul && w.idx < w.cands.length - 1) {
     // Burn the candidate; the next one's arc is larger, so it waits
@@ -147,7 +232,7 @@ function tryWakeProp(state, p) {
   // Place: clean spot, or the FINAL candidate fouled — the stated
   // fallback, generous height over the surface, never a loop.
   p.x = cx;
-  p.y = foul ? sp.y - r - FCFG.fallbackLift : cy;
+  p.y = foul ? sp.y - restH - FCFG.fallbackLift : cy;
   p.vx = 0; p.vy = 0; p.omega = 0;
   if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
   p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
@@ -193,6 +278,171 @@ function rehomeProp(state, p) {
     moved = true;
   }
   return moved;
+}
+
+// ---- PROP ISLANDS (PHASE-6 §5.2/§5.3, 2026-08-29) ----------------
+// THE ISLAND RULE, law: an island qualifies for the unified pass only
+// if every member is a prop and no live racer is within contact range
+// of any member. Racer arithmetic is untouched by CONSTRUCTION, not
+// by care — no racer body ever reaches the unified code path (ratchet
+// A23), so gate-hash.js stays byte-identical and the 144-race balance
+// cannot move. Islands of ONE stay on the legacy path: a lone prop
+// already works (exp-restpose: 0.27 px / 60 s) and fewer things move.
+//
+// NAMED DEFECT D6-1: a stack a racer is crashing into is disqualified
+// and reverts to legacy sequencing for that tick. Acceptable because
+// the failure phase 6 fixes is a RESTING failure — a stack standing
+// still — and the racer-contact tick is not that. If device play
+// shows stacks bursting on contact rather than under their own
+// weight, D6-1 is the suspect. The rehome tick is the same seam.
+
+const PROP_STEP = [];   // steppable props this tick (list order = canonical)
+const ISL_PARENT = [];  // union-find scratch
+// True only while unifiedIslandPass drives sweeps — the terrain-side
+// angular correction's gate (see resolveContact and the note in
+// unifiedIslandPass). Module-scoped control flow, deterministic.
+let UNIFIED_ACTIVE = false;
+
+// Nearest-image proximity, the pair solver's own wrap convention
+// (resolveMelonPair): in track mode B's image nearest to A is the one
+// judged. Range is each body's broad-phase circle — boundR plus the
+// same 32 px slack the terrain query inflates by — so any CONTACTING
+// pair is linked by construction, with slack to spare.
+function bodiesInRange(A, B, period) {
+  let ox = 0, oy = 0;
+  if (period) {
+    const k = Math.round((B.x - A.x) / period.L);
+    if (k !== 0) { ox = -k * period.L; oy = -k * period.D; }
+  }
+  const dx = B.x + ox - A.x, dy = B.y + oy - A.y;
+  const R = A.boundR + B.boundR + 64;
+  return dx * dx + dy * dy < R * R;
+}
+
+// buildPropIslands(state, steppable) — union-find over the steppable
+// props, O(n^2) links: props are few, and a spatial structure is not
+// worth its determinism surface without a measurement saying so.
+// Returns ONLY the qualifying islands (>= 2 members, no live racer in
+// range of any member), each an array of prop refs. Islands come back
+// ordered by their lowest member index and members by index — the
+// steppable list is state.props order, which IS canonical order
+// (props index after every seat), so this is the sortBodiesCanonical
+// law, not an iteration accident. Marks p.islandId on every member of
+// a qualifying island; every other steppable prop keeps the -1 the
+// caller reset.
+function buildPropIslands(state, steppable) {
+  const n = steppable.length;
+  const out = [];
+  if (n < 2) return out;
+  const period = state.period;
+  for (let i = 0; i < n; i++) ISL_PARENT[i] = i;
+  const find = (i) => {
+    while (ISL_PARENT[i] !== i) { ISL_PARENT[i] = ISL_PARENT[ISL_PARENT[i]]; i = ISL_PARENT[i]; }
+    return i;
+  };
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (bodiesInRange(steppable[i], steppable[j], period)) {
+        const ri = find(i), rj = find(j);
+        // the smaller index is always the root, so a component's root
+        // is its lowest member — canonical by construction
+        if (ri < rj) ISL_PARENT[rj] = ri;
+        else if (rj < ri) ISL_PARENT[ri] = rj;
+      }
+    }
+  }
+  // Group by root, walking ascending: islands emerge ordered by
+  // lowest member, members ascending within each.
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (r === i) { steppable[i]._islRoot = out.length; out.push([steppable[i]]); }
+    else out[steppable[r]._islRoot].push(steppable[i]);
+  }
+  // Qualification: size >= 2, and no LIVE racer within range of any
+  // member. A racer in range disqualifies the WHOLE island — load
+  // crosses every contact in it, so half an island is not an island.
+  const keep = [];
+  for (const isl of out) {
+    if (isl.length < 2) continue;
+    let racerNear = false;
+    for (const pl of state.players) {
+      if (!pl.melon.alive) continue;
+      for (const m of isl) if (bodiesInRange(pl.melon, m, period)) { racerNear = true; break; }
+      if (racerNear) break;
+    }
+    if (!racerNear) for (const b of state.bots) {
+      if (!b.melon.alive) continue;
+      for (const m of isl) if (bodiesInRange(b.melon, m, period)) { racerNear = true; break; }
+      if (racerNear) break;
+    }
+    if (racerNear) continue;
+    for (const m of isl) m.islandId = keep.length;
+    keep.push(isl);
+  }
+  return keep;
+}
+
+// ---- THE UNIFIED PASS (PHASE-6 §5.1) -----------------------------
+// One iterated loop over the island's whole contact set: each member
+// takes ONE terrain sweep, then each pair takes ONE pair sweep,
+// unifiedIters times — instead of every terrain sweep for a body
+// completing before any pair contact is applied. This is the stack
+// blocker (§11.4 finding 3, evidenced by exp-shelf): the old
+// sequencing let the bottom box settle against the ground before the
+// weight above it arrived, so load propagated down a stack at one
+// contact per tick.
+//
+// Each member gets its own accumulator for the whole pass (the
+// module scratch TACC is per-body-per-call and cannot survive the
+// interleave), with the same semantics: sumE adds, strongestE takes
+// the max and owns the m.hit* breadcrumbs, grounded is a sticky OR.
+const UACC = [];
+function makeUacc() {
+  return { grounded: false, strongestE: 0, sumE: 0,
+    impactNormalAngle: 0, impactVn: 0, wasGrounded: false };
+}
+
+function unifiedIslandPass(state, isl, dt) {
+  const world = slab.worldFor(state.terrain);
+  const period = state.period;
+  const n = isl.length;
+  while (UACC.length < n) UACC.push(makeUacc());
+  for (let i = 0; i < n; i++) {
+    const m = isl[i];
+    integrateBody(m, m.input, dt);
+    const acc = UACC[i];
+    acc.wasGrounded = m.grounded;   // last tick's truth, stepBody's own capture point
+    acc.grounded = false;
+    acc.strongestE = 0;
+    acc.sumE = 0;
+    acc.impactNormalAngle = 0;
+    acc.impactVn = 0;
+    m.hitSeverity = 0;
+  }
+  // The terrain-side ANGULAR correction is a property of THIS pass
+  // (see resolveContact): measured exact here (exp-shelf 0.00 px) and
+  // a measured creep on the legacy path (exp-restpose: 5.30 px
+  // mid-segment, 53.5 px on a seam — the same numbers that got it
+  // reverted pre-unified). The flag is pure control flow, cleared on
+  // the way out; no legacy sweep ever sees it set.
+  UNIFIED_ACTIVE = true;
+  for (let it = 0; it < CONFIG.unifiedIters; it++) {
+    for (let i = 0; i < n; i++) sweepTerrainContacts(isl[i], isl[i].input, world, UACC[i]);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (resolveMelonPair(isl[i], isl[j], period)) {
+          // THE CONTACT BREADCRUMB, the legacy pair loop's own law:
+          // both parties remember each other and the tick.
+          isl[i].lastContactIdx = isl[j].canonIdx;
+          isl[j].lastContactIdx = isl[i].canonIdx;
+          isl[i].lastContactTick = state.tick;
+          isl[j].lastContactTick = state.tick;
+        }
+      }
+    }
+  }
+  UNIFIED_ACTIVE = false;
+  for (let i = 0; i < n; i++) finishBody(isl[i], null, state, UACC[i], UACC[i].wasGrounded);
 }
 
 function step(state, dt) {
@@ -253,7 +503,42 @@ function step(state, dt) {
   // brace is a scope, and node --check cannot see intent.)
   // A DORMANT prop is a record: the wake law below is the only thing
   // that touches it, and only a placed prop enters the sim.
+  //
+  // ---- CANONICAL INDEX, refreshed every step on EVERY body (dead
+  // ones included — a dead killer must still be findable): the pair
+  // pass's breadcrumb currency. Recomputed rather than trusted, so
+  // joins and substitutions can never leave a stale identity.
+  // HOISTED above the prop pass (PHASE-6, 2026-08-29): the island
+  // pass stamps contact breadcrumbs with partner canonIdx, so the
+  // identities must be fresh BEFORE props move. Idempotent arithmetic
+  // read by nothing between here and its old seat — both gates held
+  // the hoist byte-identical.
+  { let ci = 0;
+    for (const pl of state.players) pl.melon.canonIdx = ci++;
+    for (const b of state.bots) b.melon.canonIdx = ci++;
+    // Props index AFTER every seat: no racer's canonical identity
+    // moves when furniture appears (suite-held).
+    for (const p of state.props || []) p.canonIdx = ci++; }
+  //
+  // THE SPLIT PROP PASS (PHASE-6 §5.2/§5.3). Wake and rehome first —
+  // per-prop independent decisions, byte-identical to the old
+  // interleaved loop because stepBody is terrain-only and cannot
+  // influence another prop's wake or rehome within the tick. Then the
+  // island partition decides each steppable prop's route:
+  //   islandId < 0  — LEGACY: stepBody here, in list order, exactly
+  //                   the arithmetic that shipped;
+  //   islandId >= 0 — UNIFIED: stepped later by unifiedIslandPass,
+  //                   AFTER the pairSeverity reset below, so island
+  //                   pair contacts survive to be read this tick.
+  // A prop that REHOMED this tick does not step (the re-home tick is
+  // the re-home — unchanged law) and takes no island: if its stack
+  // rehomed with it, that stack runs legacy sequencing for this one
+  // tick, the same shape as the racer-contact seam D6-1 records.
+  PROP_STEP.length = 0;
   for (const p of state.props || []) {
+    p.islandId = -1;   // reset unconditionally: a stale id on a
+                       // rehomed or dying prop must not skip its
+                       // legacy pair contacts below
     // else-if: the placement tick is the placement — a freshly woken
     // prop takes its first step NEXT tick, so the placed pose (gap
     // exactly wakeGap) is a real, observable state.
@@ -261,8 +546,12 @@ function step(state, dt) {
     else if (p.alive) {
       // the re-home tick is the re-home (same law as placement):
       // the translated pose is a real, observable state.
-      if (!rehomeProp(state, p)) stepBody(p, p.input, state.terrain, dt, null, state);
+      if (!rehomeProp(state, p)) PROP_STEP.push(p);
     }
+  }
+  const propIslands = buildPropIslands(state, PROP_STEP);
+  for (const p of PROP_STEP) {
+    if (p.islandId < 0) stepBody(p, p.input, state.terrain, dt, null, state);
   }
 
   // ---- Melon-vs-melon contacts (living bodies only) ----
@@ -280,27 +569,36 @@ function step(state, dt) {
   // part of the law, not a nicety.
 
   bodyList.length = 0;
-  // CANONICAL INDEX, refreshed every step on EVERY body (dead ones
-  // included — a dead killer must still be findable): the pair
-  // pass's breadcrumb currency. Recomputed rather than trusted,
-  // so joins and substitutions can never leave a stale identity.
-  { let ci = 0;
-    for (const pl of state.players) pl.melon.canonIdx = ci++;
-    for (const b of state.bots) b.melon.canonIdx = ci++;
-    // Props index AFTER every seat: no racer's canonical identity
-    // moves when furniture appears (suite-held).
-    for (const p of state.props || []) p.canonIdx = ci++; }
+  // (Canonical-index refresh HOISTED above the prop pass — see there.)
   for (const pl of state.players) if (pl.melon.alive) bodyList.push(pl.melon);
   for (const b of state.bots) if (b.melon.alive) bodyList.push(b.melon);
   for (const p of state.props || []) if (p.alive && !p.dormant) bodyList.push(p);
   sortBodiesCanonical(bodyList);
   for (const m of bodyList) { m.pairSeverity = 0; m.pairWorst = 0; }
+  // ---- THE UNIFIED PASS (PHASE-6 §5.1), qualifying prop islands ----
+  // Placed AFTER the pairSeverity reset above and BEFORE the legacy
+  // pair loop below, so an island's pair contacts write into the same
+  // per-tick ledger a legacy contact writes into, and nothing wipes
+  // them. Membership is the island rule (§5.2): every member a prop,
+  // no live racer in contact range — racers reach this line having
+  // already taken their whole legacy step, untouched by construction.
+  for (const isl of propIslands) unifiedIslandPass(state, isl, dt);
   if (bodyList.length > 1) {
     const PAIR_ITERS = 3;
     const period = state.period; // set in track mode, null in endless
     for (let iter = 0; iter < PAIR_ITERS; iter++) {
       for (let i = 0; i < bodyList.length; i++) {
         for (let j = i + 1; j < bodyList.length; j++) {
+          // A pair the unified pass already solved is DONE: both in
+          // the same qualifying island means their contact was
+          // resolved interleaved with their terrain sweeps. Solving
+          // it again here would eject a resting stack a second time
+          // per tick — the M137 defect, arrived at by routing.
+          // Cross-island, island-to-lone and racer-to-prop pairs all
+          // still land here (link slack covers contact range, so a
+          // CONTACTING prop pair is never split across islands).
+          if (bodyList[i].islandId >= 0
+            && bodyList[i].islandId === bodyList[j].islandId) continue;
           if (resolveMelonPair(bodyList[i], bodyList[j], period)) {
             // THE CONTACT BREADCRUMB (blessed telemetry): both
             // parties remember each other and the tick. Alive-only
@@ -681,6 +979,21 @@ function supportRadius(m, nx, ny) {
   const bx = nx * c + ny * s;   // direction component along major axis
   const by = -nx * s + ny * c;  // along minor axis
   const a = m.a, b = m.b;
+  if (m.shape === 'poly') {
+    // EXACT for a polygon, where the smooth families are only close:
+    // the support is the largest projection over the vertices, and a
+    // vertex list is finite. Body frame, so the direction is rotated
+    // in rather than the hull rotated out. Note this is a radius
+    // along a DIRECTION, not the circumradius — returning the latter
+    // would inflate every pair contact to the corner distance.
+    const P = m.poly;
+    let best = -Infinity;
+    for (let i = 0; i < P.length; i++) {
+      const d = P[i][0] * bx + P[i][1] * by;
+      if (d > best) best = d;
+    }
+    return best;
+  }
   if (m.taper) {
     // Tapered radial distance from the COM — NOT symmetric: the fat
     // end reaches less far than the point (COM sits nearer the fat
@@ -704,18 +1017,78 @@ function supportRadius(m, nx, ny) {
 // neither velocities nor contact geometry, the impulses apply to the
 // real B unchanged. This is what makes "lapping" another melon a
 // physical event: a rival one lap back meets you through its image.
+// ---- THE PAIR ROUTE TABLE (P5-A, ruled 2026-08-28g) ---------------
+// Contact GENERATION for a pair is dispatched on the SHAPE PAIR, and
+// the table is DATA rather than an if-chain, for one reason: the
+// cells that are still approximate must be VISIBLE. An if-chain
+// records only what was implemented; a table records what was
+// decided, and the empty cells are the standing defect list.
+//
+//            ellipse      egg          poly
+//   ellipse  centres      centres      centres  (D5-1)
+//   egg      centres      centres      centres  (D5-1)
+//   poly     centres      centres      SAT
+//
+// 'centres' is the line-of-centres solve: each body's exact support
+// radius along the centre line. It is right for two smooth convex
+// bodies and WRONG against a flat face, because a flat face's normal
+// does not point at its owner's centre.
+//
+// D5-1 — THE POLY-VS-SMOOTH CELL IS A MEASURED DEFECT, NOT AN
+// APPROVED APPROXIMATION. A melon resting on the flat top of a 1 m
+// box, offset 30 px from centre, is given a normal 19.2 degrees off
+// the true face normal and 9.4 px of penetration THAT DOES NOT EXIST
+// (measured, exp-pairnormal.js). At 40 px offset it is 24.9 degrees.
+// It is the same defect as the box-vs-box detonation this build
+// fixes, one order of magnitude smaller, and it is scheduled as the
+// next build — poly-vs-ellipse is exactly tractable by the affine
+// trick ellipseVsSegment already uses (scale the melon to a circle;
+// an affine map takes the polygon to another convex polygon).
+// It is NOT fixed in this build because it moves racer trajectories,
+// so it needs its own re-baselined gate and its own balance
+// measurement. Landing it here would destroy the one property that
+// makes THIS build checkable: that the melon-vs-melon arithmetic is
+// provably untouched.
+const PAIR_ROUTE = { 'poly|poly': 'sat' };
+function pairRoute(A, B) {
+  return PAIR_ROUTE[A.shape + '|' + B.shape] || 'centres';
+}
+
+// Pair-contact scratch. Separate from MANIFOLD on purpose: MANIFOLD
+// belongs to stepBody's terrain loop, and stepBodyClone can run that
+// loop from a prediction call. Two owners of one buffer is a bug
+// waiting for the day the passes interleave.
+const PAIR_MANIFOLD = [makeContact(), makeContact()];
+const PAIR_C = makeContact();
+
 function resolveMelonPair(A, B, period) {
-  // True two-body dynamics: each side brings its OWN invM/invI. The
-  // impulse split follows the mass ratio — the heavy fruit barely
-  // recoils, the light one flies. Pack bullying as emergent physics.
-  const invMA = A.invM, invIA = A.invI;
-  const invMB = B.invM, invIB = B.invI;
   let ox = 0, oy = 0;
   if (period) {
     const k = Math.round((B.x - A.x) / period.L);
     if (k !== 0) { ox = -k * period.L; oy = -k * period.D; }
   }
   const BxI = B.x + ox, ByI = B.y + oy; // B's nearest image to A
+  if (pairRoute(A, B) === 'sat') {
+    const n = polyVsPoly(A, B, BxI, ByI, PAIR_MANIFOLD);
+    if (n === 0) return;
+    // TWO REAL CONTACTS ARE TWO REAL CONTACTS (P5-C, the pair half of
+    // the terrain ruling P2-C): the whole per-contact block runs per
+    // point — impulse, friction, dissipation, blame — because that is
+    // how the energy actually arrives. Only the POSITIONAL correction
+    // is shared, via corrShare, since one overlap must be undone once.
+    // A TWO-point manifold solves as a BLOCK (2026-08-29): sequential
+    // per-point resolution injects signed spin on a symmetric stack —
+    // see applyPairBlock2 for the measurement.
+    if (n === 2) applyPairBlock2(A, B, BxI, ByI, PAIR_MANIFOLD[0], PAIR_MANIFOLD[1]);
+    else for (let k = 0; k < n; k++) applyPairContact(A, B, BxI, ByI, PAIR_MANIFOLD[k]);
+    return true;
+  }
+  return resolvePairCentres(A, B, BxI, ByI);
+}
+
+// The line-of-centres solve, unchanged from the day it was written.
+// Its arithmetic is held byte-for-byte by gate-hash.js.
+function resolvePairCentres(A, B, BxI, ByI) {
   let dx = BxI - A.x, dy = ByI - A.y;
   let dist = Math.sqrt(dx * dx + dy * dy);
   if (dist < 1e-6) { dx = 0.01; dy = -0.01; dist = Math.sqrt(dx * dx + dy * dy); }
@@ -730,8 +1103,230 @@ function resolveMelonPair(A, B, period) {
   if (pen <= 0) return;
 
   // Contact point midway between the two overlapping surfaces.
-  const cx = A.x + nx * (rA - pen * 0.5);
-  const cy = A.y + ny * (rA - pen * 0.5);
+  PAIR_C.nx = nx; PAIR_C.ny = ny; PAIR_C.pen = pen;
+  PAIR_C.px = A.x + nx * (rA - pen * 0.5);
+  PAIR_C.py = A.y + ny * (rA - pen * 0.5);
+  PAIR_C.corrShare = 1;   // a centre-line contact is its own manifold
+  applyPairContact(A, B, BxI, ByI, PAIR_C);
+  // Real contact happened (the pen<=0 early-out returned undefined
+  // above): report it so the pair pass can stamp the breadcrumb.
+  return true;
+}
+
+// ---- THE PAIR CHARGE (extracted 2026-08-29, gate-proven pure) ----
+// Dissipation, compliance shares, severity accumulation and traffic
+// blame for ONE pair contact. Factored out of applyPairContact so the
+// two-point block solve below charges through the SAME lines — a
+// second copy of blame bookkeeping is how pairShare and pairWorst
+// would drift apart by the second edit.
+function chargePairContact(A, B, nx, ny, vn, k, jn, eA, eB) {
+  const e = eA < eB ? eA : eB;
+  // --- Smash severity, evaluated PER BODY ---
+  // The pair dissipates ONE quantity of energy (using the pair's e);
+  // it is SHARED BY COMPLIANCE — each body's share tracks its own
+  // deadness (equal e -> half each) — then each share is judged by
+  // that body's OWN local curvature penalty: a melon struck on its
+  // pointy tip suffers more than the one that hit flat. Same
+  // collision, different fates. Deadening a pack hit on purpose
+  // means eating the larger share: armour that costs.
+  const E = damage.dissipated(vn, k, e);
+  const [shA, shB] = damage.pairShares(eA, eB);
+  const sevA = damage.severityFromE(shA * E, A);
+  const sevB = damage.severityFromE(shB * E, B);
+  // ---- TRAFFIC BLAME (presentation breadcrumb) ----
+  // The pair's restitution is min(eA, eB): ONE body deadened this
+  // collision for both. And shares run with deadness, so the
+  // stiffer body eats the bigger cut of the energy. Recording both
+  // facts turns "TRAFFIC INCIDENT" into an accurate accusation —
+  // either your own rigidity cost you, or a rival's took the bounce
+  // out from under you. Written every pair contact, read only by
+  // the certificate.
+  const aStiffer = eA <= eB;
+  // Severity ACCUMULATES (2026-08-13): every pair contact in the
+  // tick adds into the body's total — two rivals sandwiching one
+  // melon are charged together, as the energy actually arrives.
+  // Iterations can't double-count: a resolved contact's vn is
+  // non-negative on the next pass and dissipates zero.
+  A.pairSeverity += sevA;
+  B.pairSeverity += sevB;
+  // Blame rides with the DOMINANT contact only (tracked separately
+  // in pairWorst now that pairSeverity is a sum). A deep overlap
+  // produces a second contact point in the same tick whose approach
+  // speed is tiny — the restitution gate zeroes both bodies' e
+  // there, so writing blame unconditionally let that trivial touch
+  // overwrite the real collision's story with a meaningless 50/50
+  // (measured: a rigid player's share read 0.50 instead of 0.53).
+  if (sevA > A.pairWorst) {
+    A.pairWorst = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn;
+    A.pairOtherName = B.name || '';
+    A.pairOtherE = eB;
+    A.pairIStiffened = aStiffer;
+    A.pairShare = shA;
+  }
+  if (sevB > B.pairWorst) {
+    B.pairWorst = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn;
+    B.pairOtherName = A.name || '';
+    B.pairOtherE = eA;
+    B.pairIStiffened = !aStiffer;
+    B.pairShare = shB;
+  }
+}
+
+// ---- THE TWO-POINT BLOCK SOLVE (PHASE-6, 2026-08-29) --------------
+// Both normal impulses of a two-point face manifold, solved
+// SIMULTANEOUSLY from the same pre-state. Sequential per-point
+// resolution injects a SIGNED torque every tick on a bit-symmetric
+// stack — measured, not argued: exp-onetick-probe reads dOmega
+// +6.297e-6 and dVx +7.054e-4 per tick on a configuration physics
+// cannot pick a sign for, because the canonical order resolves the
+// left point first and the right point then sees a velocity the left
+// impulse already changed. That injection, amplified by the
+// offset->torque->ramp feedback, is the residual stack killer
+// (exp-lean-probe: exponential, ~1.3x/s).
+//
+// THIS IS NOT THE KILLED BLOCK-SOLVER HYPOTHESIS of §11.4 finding 1.
+// That test convicted ITERATION COUNT (more sweeps converge, tilt
+// residual stays) and is recorded so it is not walked again. This is
+// SIMULTANEITY: fresh evidence (a per-tick signed injection on a
+// symmetric configuration) that no amount of sequential iteration
+// removes, because each iteration re-commits the same ordered bias.
+//
+// The solve is the standard 2x2 LCP enumeration, FIXED case order
+// (full solve; point-1-only; point-2-only; neither), closed form,
+// deterministic. Friction: both tangent impulses computed from ONE
+// shared post-normal state, then both applied — symmetric by
+// construction. Charging and blame go through chargePairContact per
+// point, the same lines the one-point solver charges through.
+function applyPairBlock2(A, B, BxI, ByI, c1, c2) {
+  const invMA = A.invM, invIA = A.invI;
+  const invMB = B.invM, invIB = B.invI;
+  // Both points of a reference-face clip carry the SAME normal.
+  const nx = c1.nx, ny = c1.ny;
+  const ra1x = c1.px - A.x, ra1y = c1.py - A.y;
+  const rb1x = c1.px - BxI, rb1y = c1.py - ByI;
+  const ra2x = c2.px - A.x, ra2y = c2.py - A.y;
+  const rb2x = c2.px - BxI, rb2y = c2.py - ByI;
+  const ra1n = ra1x * ny - ra1y * nx, rb1n = rb1x * ny - rb1y * nx;
+  const ra2n = ra2x * ny - ra2y * nx, rb2n = rb2x * ny - rb2y * nx;
+
+  // Relative normal velocity at each point, both from the PRE-state.
+  const va1x = A.vx - A.omega * ra1y, va1y = A.vy + A.omega * ra1x;
+  const vb1x = B.vx - B.omega * rb1y, vb1y = B.vy + B.omega * rb1x;
+  const vn1 = (vb1x - va1x) * nx + (vb1y - va1y) * ny;
+  const va2x = A.vx - A.omega * ra2y, va2y = A.vy + A.omega * ra2x;
+  const vb2x = B.vx - B.omega * rb2y, vb2y = B.vy + B.omega * rb2x;
+  const vn2 = (vb2x - va2x) * nx + (vb2y - va2y) * ny;
+
+  // Per-point restitution, the pair law per point (P5-C).
+  const g1 = vn1 < 0 && -vn1 > CONFIG.restitutionThreshold;
+  const g2 = vn2 < 0 && -vn2 > CONFIG.restitutionThreshold;
+  const eA1 = g1 ? damage.bodyRestitution(A) : 0;
+  const eB1 = g1 ? damage.bodyRestitution(B) : 0;
+  const eA2 = g2 ? damage.bodyRestitution(A) : 0;
+  const eB2 = g2 ? damage.bodyRestitution(B) : 0;
+  const e1 = eA1 < eB1 ? eA1 : eB1;
+  const e2 = eA2 < eB2 ? eA2 : eB2;
+
+  const mSum = invMA + invMB;
+  const k11 = mSum + ra1n * ra1n * invIA + rb1n * rb1n * invIB;
+  const k22 = mSum + ra2n * ra2n * invIA + rb2n * rb2n * invIB;
+  const k12 = mSum + ra1n * ra2n * invIA + rb1n * rb2n * invIB;
+  const b1 = vn1 < 0 ? -(1 + e1) * vn1 : 0;
+  const b2 = vn2 < 0 ? -(1 + e2) * vn2 : 0;
+
+  // 2x2 LCP, fixed enumeration.
+  let j1 = 0, j2 = 0;
+  const det = k11 * k22 - k12 * k12;
+  let solved = false;
+  if (b1 > 0 && b2 > 0 && det > 1e-12) {
+    const t1 = (b1 * k22 - b2 * k12) / det;
+    const t2 = (b2 * k11 - b1 * k12) / det;
+    if (t1 >= 0 && t2 >= 0) { j1 = t1; j2 = t2; solved = true; }
+  }
+  if (!solved && b1 > 0) {
+    const t1 = b1 / k11;
+    if (k12 * t1 >= b2) { j1 = t1; j2 = 0; solved = true; }
+  }
+  if (!solved && b2 > 0) {
+    const t2 = b2 / k22;
+    if (k12 * t2 >= b1) { j1 = 0; j2 = t2; solved = true; }
+  }
+  // (neither: j1 = j2 = 0 stands)
+
+  if (j1 > 0 || j2 > 0) {
+    const jSum = j1 + j2;
+    const aTw = ra1n * j1 + ra2n * j2;
+    const bTw = rb1n * j1 + rb2n * j2;
+    A.vx -= jSum * nx * invMA; A.vy -= jSum * ny * invMA; A.omega -= aTw * invIA;
+    B.vx += jSum * nx * invMB; B.vy += jSum * ny * invMB; B.omega += bTw * invIB;
+  }
+
+  // --- Friction: both points from ONE shared post-normal state ---
+  if (j1 > 0 || j2 > 0) {
+    const tx = -ny, ty = nx;
+    const wa1x = A.vx - A.omega * ra1y, wa1y = A.vy + A.omega * ra1x;
+    const wb1x = B.vx - B.omega * rb1y, wb1y = B.vy + B.omega * rb1x;
+    const vt1 = (wb1x - wa1x) * tx + (wb1y - wa1y) * ty;
+    const wa2x = A.vx - A.omega * ra2y, wa2y = A.vy + A.omega * ra2x;
+    const wb2x = B.vx - B.omega * rb2y, wb2y = B.vy + B.omega * rb2x;
+    const vt2 = (wb2x - wa2x) * tx + (wb2y - wa2y) * ty;
+    const ra1t = ra1x * ty - ra1y * tx, rb1t = rb1x * ty - rb1y * tx;
+    const ra2t = ra2x * ty - ra2y * tx, rb2t = rb2x * ty - rb2y * tx;
+    const kt1 = mSum + ra1t * ra1t * invIA + rb1t * rb1t * invIB;
+    const kt2 = mSum + ra2t * ra2t * invIA + rb2t * rb2t * invIB;
+    let jt1 = j1 > 0 ? -vt1 / kt1 : 0;
+    let jt2 = j2 > 0 ? -vt2 / kt2 : 0;
+    const max1 = CONFIG.rindFriction * j1;
+    const max2 = CONFIG.rindFriction * j2;
+    if (jt1 > max1) jt1 = max1; else if (jt1 < -max1) jt1 = -max1;
+    if (jt2 > max2) jt2 = max2; else if (jt2 < -max2) jt2 = -max2;
+    const jtSum = jt1 + jt2;
+    const aTw = ra1t * jt1 + ra2t * jt2;
+    const bTw = rb1t * jt1 + rb2t * jt2;
+    A.vx -= jtSum * tx * invMA; A.vy -= jtSum * ty * invMA; A.omega -= aTw * invIA;
+    B.vx += jtSum * tx * invMB; B.vy += jtSum * ty * invMB; B.omega += bTw * invIB;
+  }
+
+  // --- Charge: per point, through the one charge function ---
+  if (vn1 < 0 && j1 > 0) chargePairContact(A, B, nx, ny, vn1, k11, j1, eA1, eB1);
+  if (vn2 < 0 && j2 > 0) chargePairContact(A, B, nx, ny, vn2, k22, j2, eA2, eB2);
+
+  // --- Positional correction, translation split per point ---
+  // (Pair-side ANGULAR correction is a measured NOT-YET — see the
+  // note in applyPairContact.) Spelled with a ternary, not Math.max,
+  // so the M142 anchor in applyPairContact stays UNIQUE: a shadowed
+  // anchor silently skips its mutation, which is the trap the
+  // handover names. The block path carries its own mutation sibling.
+  const wA = invMA / (invMA + invMB), wB = 1 - wA;
+  const over1 = c1.pen - CONFIG.penetrationSlop;
+  const corr1 = over1 > 0 ? over1 * CONFIG.positionCorrection * c1.corrShare : 0;
+  if (corr1 > 0) {
+    A.x -= nx * corr1 * wA; A.y -= ny * corr1 * wA;
+    B.x += nx * corr1 * wB; B.y += ny * corr1 * wB;
+  }
+  const over2 = c2.pen - CONFIG.penetrationSlop;
+  const corr2 = over2 > 0 ? over2 * CONFIG.positionCorrection * c2.corrShare : 0;
+  if (corr2 > 0) {
+    A.x -= nx * corr2 * wA; A.y -= ny * corr2 * wA;
+    B.x += nx * corr2 * wB; B.y += ny * corr2 * wB;
+  }
+}
+
+// ---- THE ONE PAIR SOLVER ------------------------------------------
+// Impulse, friction, severity, blame and positional correction for
+// ONE contact between two bodies. Both routes above end here, so the
+// restitution law, the compliance share and the traffic breadcrumb
+// exist once. A second copy of this block for the polygon path was
+// offered and rejected: it would have been safe on the day and drifted
+// by the second edit, which is the buildLapTemplate lesson.
+function applyPairContact(A, B, BxI, ByI, c) {
+  // True two-body dynamics: each side brings its OWN invM/invI. The
+  // impulse split follows the mass ratio — the heavy fruit barely
+  // recoils, the light one flies. Pack bullying as emergent physics.
+  const invMA = A.invM, invIA = A.invI;
+  const invMB = B.invM, invIB = B.invI;
+  const nx = c.nx, ny = c.ny, pen = c.pen;
+  const cx = c.px, cy = c.py;
   const rax = cx - A.x, ray = cy - A.y;
   const rbx = cx - BxI, rby = cy - ByI; // lever arm from the image center
 
@@ -760,56 +1355,8 @@ function resolveMelonPair(A, B, period) {
     jn = (-(1 + e) * vn) / k;
     A.vx -= jn * nx * invMA; A.vy -= jn * ny * invMA; A.omega -= raCn * jn * invIA;
     B.vx += jn * nx * invMB; B.vy += jn * ny * invMB; B.omega += rbCn * jn * invIB;
-
-    // --- Smash severity, evaluated PER BODY ---
-    // The pair dissipates ONE quantity of energy (using the pair's e);
-    // it is SHARED BY COMPLIANCE — each body's share tracks its own
-    // deadness (equal e -> half each) — then each share is judged by
-    // that body's OWN local curvature penalty: a melon struck on its
-    // pointy tip suffers more than the one that hit flat. Same
-    // collision, different fates. Deadening a pack hit on purpose
-    // means eating the larger share: armour that costs.
-    const E = damage.dissipated(vn, k, e);
-    const [shA, shB] = damage.pairShares(eA, eB);
-    const sevA = damage.severityFromE(shA * E, A);
-    const sevB = damage.severityFromE(shB * E, B);
-    // ---- TRAFFIC BLAME (presentation breadcrumb) ----
-    // The pair's restitution is min(eA, eB): ONE body deadened this
-    // collision for both. And shares run with deadness, so the
-    // stiffer body eats the bigger cut of the energy. Recording both
-    // facts turns "TRAFFIC INCIDENT" into an accurate accusation —
-    // either your own rigidity cost you, or a rival's took the bounce
-    // out from under you. Written every pair contact, read only by
-    // the certificate.
-    const aStiffer = eA <= eB;
-    // Severity ACCUMULATES (2026-08-13): every pair contact in the
-    // tick adds into the body's total — two rivals sandwiching one
-    // melon are charged together, as the energy actually arrives.
-    // Iterations can't double-count: a resolved contact's vn is
-    // non-negative on the next pass and dissipates zero.
-    A.pairSeverity += sevA;
-    B.pairSeverity += sevB;
-    // Blame rides with the DOMINANT contact only (tracked separately
-    // in pairWorst now that pairSeverity is a sum). A deep overlap
-    // produces a second contact point in the same tick whose approach
-    // speed is tiny — the restitution gate zeroes both bodies' e
-    // there, so writing blame unconditionally let that trivial touch
-    // overwrite the real collision's story with a meaningless 50/50
-    // (measured: a rigid player's share read 0.50 instead of 0.53).
-    if (sevA > A.pairWorst) {
-      A.pairWorst = sevA; A.pairNx = -nx; A.pairNy = -ny; A.pairJn = jn;
-      A.pairOtherName = B.name || '';
-      A.pairOtherE = eB;
-      A.pairIStiffened = aStiffer;
-      A.pairShare = shA;
-    }
-    if (sevB > B.pairWorst) {
-      B.pairWorst = sevB; B.pairNx = nx; B.pairNy = ny; B.pairJn = jn;
-      B.pairOtherName = A.name || '';
-      B.pairOtherE = eA;
-      B.pairIStiffened = !aStiffer;
-      B.pairShare = shB;
-    }
+    // Severity, shares and blame: the one charge (see chargePairContact).
+    chargePairContact(A, B, nx, ny, vn, k, jn, eA, eB);
   }
 
   // --- Friction impulse (melon rind on melon rind) ---
@@ -832,15 +1379,29 @@ function resolveMelonPair(A, B, period) {
   }
 
   // --- Positional correction, split by inverse mass ---
-  const corr = Math.max(pen - CONFIG.penetrationSlop, 0) * CONFIG.positionCorrection;
+  // ...and by the contact's SHARE OF ITS MANIFOLD (P5-B, the pair
+  // half of P2-B). Two points of one flat contact must separate the
+  // pair exactly as far as one point of a curved contact, or a box
+  // resting on a box is ejected twice per tick and climbs. corrShare
+  // is 1 on the centre-line route, and multiplying by 1 is exact, so
+  // the smooth arithmetic is untouched — which the gate proves.
+  const corr = Math.max(pen - CONFIG.penetrationSlop, 0)
+    * CONFIG.positionCorrection * c.corrShare;
   if (corr > 0) {
+    // PAIR-SIDE ANGULAR CORRECTION: measured and NOT shipped. With
+    // the pair form live (A/B.angle nudged through the pair Jacobian)
+    // a FREE 2-stack goes exponentially unstable — every off-centre
+    // positional fix injects rotation, the boxes tilt into a growing
+    // ramp, and the burst moves from 26.1 s to 3.4 s (exp-lean-probe:
+    // dx and tilt growing ~1.3x per second in lockstep). The pinned
+    // shelf it made exact returns to its acceptable 0.33 px under
+    // translation. Terrain-side keeps the angular form (see
+    // resolveContact); the pair cell is recorded NOT-YET, with this
+    // measurement as the reason.
     const wA = invMA / (invMA + invMB), wB = 1 - wA;
     A.x -= nx * corr * wA; A.y -= ny * corr * wA;
     B.x += nx * corr * wB; B.y += ny * corr * wB;
   }
-  // Real contact happened (the pen<=0 early-out returned undefined
-  // above): report it so the pair pass can stamp the breadcrumb.
-  return true;
 }
 
 // Advance one body. `sink` is the state object for the PLAYER body
@@ -901,12 +1462,46 @@ function hopImpulse(m, H) {
   };
 }
 
+// ---- THE SPLIT (PHASE-6 §5.4, 2026-08-29) ----
+// stepBody owned integration, the terrain solve and the post-solve
+// bookkeeping in one body. The unified contact pass needs to drive
+// terrain sweeps from OUTSIDE a body's own step — interleaved with
+// pair sweeps across an island — so the three are now named:
+//   integrateBody         everything before the collide phase
+//   sweepTerrainContacts  ONE solver iteration: one broad-phase
+//                         query, the candidate loop, the shape
+//                         dispatch, resolveContact per manifold point
+//   finishBody            everything after the sweeps: pin re-hold,
+//                         grounded, the flight ledger, severity,
+//                         player telemetry
+// stepBody is now `integrate; 6 sweeps; finish` and is BIT-IDENTICAL
+// to the un-split body — the legacy path is most of the field, and
+// both gates hold it. Signatures differ from the §5.4 sketch where
+// the sketch under-counted: the sweep needs `inp` (the hop
+// accumulator is guarded on it), finish needs `sink`/`simState`/
+// `wasGrounded`, and neither needs `dt`.
 function stepBody(m, inp, terrain, dt, sink, simState) {
-  const invM = m.invM;
-  const invI = m.invI;
-  // The slab world, once per body step: the motor reads strand dir
-  // from it and the collision phase queries it.
+  // The slab world, once per body step: the collision phase queries
+  // it. Fetched first, exactly where the un-split body fetched it.
   const world = slab.worldFor(terrain);
+  integrateBody(m, inp, dt);
+  // ---- 5. Collide & resolve ----
+  const wasGrounded = m.grounded;
+  const acc = TACC;
+  acc.grounded = false;
+  acc.strongestE = 0;   // the tick's worst SINGLE blow: FX direction, telemetry
+  acc.sumE = 0;         // the tick's TOTAL dissipation: what the law charges
+  acc.impactNormalAngle = 0;
+  acc.impactVn = 0;
+  m.hitSeverity = 0;
+  for (let iter = 0; iter < CONFIG.solverIterations; iter++) {
+    sweepTerrainContacts(m, inp, world, acc);
+  }
+  finishBody(m, sink, simState, acc, wasGrounded);
+}
+
+function integrateBody(m, inp, dt) {
+  const invI = m.invI;
 
   // ---- 0.5 THE HOP (prototype; player only, flag-gated) ----
   // Consumed at step START so the grounding test reads LAST tick's
@@ -1051,16 +1646,17 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
     m.y = m.pinY;
     m.vy = 0;
   }
+}
 
-  // ---- 5. Collide & resolve ----
-  const wasGrounded = m.grounded;
-  let grounded = false;
-  let strongestE = 0;   // the tick's worst SINGLE blow: FX direction, telemetry
-  let sumE = 0;         // the tick's TOTAL dissipation: what the law charges
-  let impactNormalAngle = 0;
-  let impactVn = 0;
-  m.hitSeverity = 0;
-
+// sweepTerrainContacts — ONE solver iteration (PHASE-6 §5.4): one
+// broad-phase query, the candidate loop, the shape dispatch,
+// resolveContact per manifold point. Accumulates into `acc` rather
+// than locals because the accumulators must survive across sweeps
+// driven from outside. The body below is the un-split loop body,
+// byte-for-byte, with the five locals renamed onto acc.
+function sweepTerrainContacts(m, inp, world, acc) {
+  const invM = m.invM;
+  const invI = m.invI;
   // Broad phase: the slab world's spatial hash (stage 1). Candidates
   // are COLLECTED then returned in CANONICAL (strandId, segmentIndex,
   // face) order — hash iteration order can never influence results
@@ -1069,63 +1665,113 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
   // inflation admits beyond that is non-contacting and resolves to
   // nothing, so the candidate set is a superset of the contact set
   // and the inflation amount cannot move trajectories.
-  const boundR = m.a * (1 + (m.taper || 0)) + 32;
-  for (let iter = 0; iter < CONFIG.solverIterations; iter++) {
-    const nCand = world.query(m.x - boundR, m.y - boundR,
-      m.x + boundR, m.y + boundR, CAND);
-    for (let ci = 0; ci < nCand; ci++) {
+  // ONE BOUND FIELD, every family (2026-08-28). Was
+  // `m.a * (1 + (m.taper || 0))` inline — an expression that silently
+  // means "circumradius" only for the smooth families. A polygon's
+  // bound is its true circumradius, which for a square is a factor
+  // sqrt(2) above the half-extent: the inline form would have
+  // under-queried by 20 px and dropped real faces. m.boundR carries
+  // the same number as before for ellipse and egg (gate-held).
+  const boundR = m.boundR + 32;
+  const nCand = world.query(m.x - boundR, m.y - boundR,
+    m.x + boundR, m.y + boundR, CAND);
+  for (let ci = 0; ci < nCand; ci++) {
       const fi = CAND[ci];
       SEG_A.x = world.fax[fi]; SEG_A.y = world.fay[fi];
       SEG_B.x = world.fbx[fi]; SEG_B.y = world.fby[fi];
       const A = SEG_A, B = SEG_B;
-      if (m.taper) eggVsSegment(m, A, B, contact);
-      else ellipseVsSegment(m, A, B, contact);
-      if (!contact.hit) continue;
-      grounded = true;
-      // HOP PROTOTYPE: remember what we last stood on. Accumulated
-      // per tick (a gully sums both walls, pointing out of the
-      // notch), normalized at hop time. Flag-guarded so the
-      // flag-off sim writes not one new field (bit-parity).
-      if (CONFIG.hopProto && inp && inp.hopEligible) {
-        if (m.airTicks !== 0) { m.hopNx = 0; m.hopNy = 0; }
-        m.hopNx = (m.hopNx || 0) + contact.nx;
-        m.hopNy = (m.hopNy || 0) + contact.ny;
+      // SHAPE DISPATCH IS ON THE TAG (Law 1, 2026-08-28). Was
+      // `if (m.taper)` — acceptable with two shapes, a trap with
+      // three, and it left two competing notions of what decides a
+      // body's shape. `taper` is still a physical parameter; it is
+      // simply no longer the selector. Numerically inert: every
+      // existing body reaches the routine it reached before.
+      //
+      // The routines report a CONTACT COUNT. One for the smooth
+      // families, up to two for a polygon face lying along a segment
+      // (P2-C, ruled 2026-08-28: two real contacts are two real
+      // contacts, so the per-contact block below runs per contact —
+      // grounded, dissipation and the hop accumulator all included).
+      let nC;
+      if (m.shape === 'poly') {
+        nC = polyVsSegment(m, A, B, MANIFOLD);
+      } else if (m.shape === 'egg') {
+        eggVsSegment(m, A, B, MANIFOLD[0]);
+        nC = MANIFOLD[0].hit ? 1 : 0;
+      } else {
+        ellipseVsSegment(m, A, B, MANIFOLD[0]);
+        nC = MANIFOLD[0].hit ? 1 : 0;
       }
-
-      const omegaPre = m.omega; // spin AT approach: the certificate's spin term
-      const applied = resolveContact(m, contact, invM, invI);
-      // JUDGMENT SATURATES (pump ruling, 2026-08-25): dissipation's
-      // (1 - e^2) goes NEGATIVE past e=1 — unclamped, pumping would
-      // HEAL. Resilience caps at the passive max: a pumped landing is
-      // charged as if at bounceMax, which is what builds the
-      // per-bounce toll and the cliff. Bit-safe when e <= bounceMax
-      // (min is a no-op), so the passive game is untouched.
-      const ev = damage.dissipated(applied.vn, applied.kn,
-        Math.min(applied.e, CONFIG.bounceMax));
-      // The law charges the tick's TOTAL: every contact's dissipation
-      // adds (a wedge landing's two walls both count — under the old
-      // max a 35-degree vee read at barely half its honest energy).
-      // Iterations can't double-count: once a contact's approach is
-      // resolved, its vn is non-negative and dissipates zero.
-      sumE += ev;
-      // The worst SINGLE blow still picks the event's direction and
-      // telemetry — drama follows the biggest hit, damage follows
-      // the total.
-      if (ev > strongestE) {
-        strongestE = ev;
-        impactNormalAngle = Math.atan2(contact.ny, contact.nx);
-        impactVn = applied.vn;
-        // Escape direction of the blow (away from the ground) —
-        // pinned ops only: the debris burst aims along this, so it
-        // must be deterministic (Math.atan2 above is telemetry-only).
-        m.hitNx = contact.nx;
-        m.hitNy = contact.ny;
-        m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
-        m.hitRxn = applied.rxn;     // r x n at the blow: the spin term's lever
-        m.hitOmegaPre = omegaPre;   // certificate breadcrumb (presentation)
+      if (nC === 2) {
+        // TWO POINTS SOLVE AS A BLOCK (2026-08-29): the sequential
+        // route injects signed momentum — convicted by the sign flip
+        // recorded on resolveContactBlock2. The accumulation below is
+        // the same law per point, through the same function.
+        const omegaPre = m.omega;
+        const ap2 = resolveContactBlock2(m, MANIFOLD[0], MANIFOLD[1], invM, invI);
+        accumulateContact(m, inp, acc, MANIFOLD[0], ap2[0], omegaPre);
+        accumulateContact(m, inp, acc, MANIFOLD[1], ap2[1], omegaPre);
+      } else for (let k = 0; k < nC; k++) {
+        const contact = MANIFOLD[k];
+        const omegaPre = m.omega; // spin AT approach: the certificate's spin term
+        const applied = resolveContact(m, contact, invM, invI);
+        accumulateContact(m, inp, acc, contact, applied, omegaPre);
       }
     }
+}
+
+// The per-contact ACCUMULATION (extracted 2026-08-29, gate-pure):
+// grounded, the hop normal, dissipation into the tick's total, and
+// the strongest-blow breadcrumbs. One spelling, consumed by both the
+// sequential and the block terrain routes.
+function accumulateContact(m, inp, acc, contact, applied, omegaPre) {
+  acc.grounded = true;
+  // HOP PROTOTYPE: remember what we last stood on. Accumulated
+  // per tick (a gully sums both walls, pointing out of the
+  // notch), normalized at hop time. Flag-guarded so the
+  // flag-off sim writes not one new field (bit-parity).
+  if (CONFIG.hopProto && inp && inp.hopEligible) {
+    if (m.airTicks !== 0) { m.hopNx = 0; m.hopNy = 0; }
+    m.hopNx = (m.hopNx || 0) + contact.nx;
+    m.hopNy = (m.hopNy || 0) + contact.ny;
   }
+  // JUDGMENT SATURATES (pump ruling, 2026-08-25): dissipation's
+  // (1 - e^2) goes NEGATIVE past e=1 — unclamped, pumping would
+  // HEAL. Resilience caps at the passive max: a pumped landing is
+  // charged as if at bounceMax, which is what builds the
+  // per-bounce toll and the cliff. Bit-safe when e <= bounceMax
+  // (min is a no-op), so the passive game is untouched.
+  const ev = damage.dissipated(applied.vn, applied.kn,
+    Math.min(applied.e, CONFIG.bounceMax));
+  // The law charges the tick's TOTAL: every contact's dissipation
+  // adds (a wedge landing's two walls both count — under the old
+  // max a 35-degree vee read at barely half its honest energy).
+  // Iterations can't double-count: once a contact's approach is
+  // resolved, its vn is non-negative and dissipates zero.
+  acc.sumE += ev;
+  // The worst SINGLE blow still picks the event's direction and
+  // telemetry — drama follows the biggest hit, damage follows
+  // the total.
+  if (ev > acc.strongestE) {
+    acc.strongestE = ev;
+    acc.impactNormalAngle = Math.atan2(contact.ny, contact.nx);
+    acc.impactVn = applied.vn;
+    // Escape direction of the blow (away from the ground) —
+    // pinned ops only: the debris burst aims along this, so it
+    // must be deterministic (Math.atan2 above is telemetry-only).
+    m.hitNx = contact.nx;
+    m.hitNy = contact.ny;
+    m.hitJn = applied.jn; // raw impulse: severity decides death, impulse decides drama
+    m.hitRxn = applied.rxn;     // r x n at the blow: the spin term's lever
+    m.hitOmegaPre = omegaPre;   // certificate breadcrumb (presentation)
+  }
+}
+
+// finishBody — everything after the sweeps (PHASE-6 §5.4): the pin
+// re-hold, grounded, the flight ledger, severity/strain, and the
+// player-only telemetry. The un-split tail byte-for-byte, with the
+// five accumulators read from acc.
+function finishBody(m, sink, simState, acc, wasGrounded) {
   // Contacts (terrain and neighbours) can move a pinned body; hold it
   // again so a revving pack cannot push the front row over the line,
   // and so a melon hovering on the grid is not knocked off its mark.
@@ -1138,7 +1784,7 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
     m.vy = 0;
   }
 
-  m.grounded = grounded;
+  m.grounded = acc.grounded;
   // ---- FLIGHT LEDGER (presentation telemetry, every body) ----
   // The commentary layer needs to know the SHAPE of an event, not
   // just its magnitude: how long you were up, how high, and whether
@@ -1148,8 +1794,8 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
   // every tick, read by nobody in the sim — same divergence license
   // as fx and telemetry.
   const wasAir = (m.airTicks || 0) > 0;
-  m.airTicks = grounded ? 0 : (m.airTicks || 0) + 1;
-  if (!grounded) {
+  m.airTicks = acc.grounded ? 0 : (m.airTicks || 0) + 1;
+  if (!acc.grounded) {
     if (!wasAir) {
       // Launch: open a flight record.
       m.flightTicks = 0;
@@ -1184,12 +1830,12 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
       if (simState && SIM_OBSERVERS[oi].touchdown) SIM_OBSERVERS[oi].touchdown(m, simState);
     }
   }
-  if (sumE > 0) {
+  if (acc.sumE > 0) {
     // hitSeverity is the tick's TOTAL severity now (2026-08-13): the
     // exact quantity the cluster ledger accumulates, so squash below
     // stays a truthful preview of how close to bursting — a wedge
     // landing deforms for BOTH walls, as it should.
-    m.hitSeverity = damage.severityFromE(sumE, m);
+    m.hitSeverity = damage.severityFromE(acc.sumE, m);
 
     // ---- Per-body STRAIN (deformation): every melon, not just the
     // player. Strain is severity per unit mass — impulse scaled by the
@@ -1214,17 +1860,17 @@ function stepBody(m, inp, terrain, dt, sink, simState) {
   // ---- 6. Telemetry & FX events (player body only) ----
   if (!sink) return;
   const state = sink;
-  state.telemetry.grounded = grounded;
+  state.telemetry.grounded = acc.grounded;
 
   // A "landing" = airborne last step, meaningful impact this step.
-  if (grounded && !wasGrounded && impactVn < -CONFIG.restitutionThreshold) {
-    state.telemetry.lastImpactVn = -impactVn; // report as positive speed
+  if (acc.grounded && !wasGrounded && acc.impactVn < -CONFIG.restitutionThreshold) {
+    state.telemetry.lastImpactVn = -acc.impactVn; // report as positive speed
     state.telemetry.lastImpactTick = state.tick;
 
     // Landing orientation: angle between the melon's MAJOR axis and the
     // surface tangent, folded to [0°, 90°]. 0° = flat-side landing
     // (safe), 90° = landed on the pointy end (future break territory).
-    const tangentAngle = impactNormalAngle + Math.PI / 2;
+    const tangentAngle = acc.impactNormalAngle + Math.PI / 2;
     let d = (tangentAngle - m.angle) % Math.PI;
     if (d < 0) d += Math.PI;
     if (d > Math.PI / 2) d = Math.PI - d;
@@ -1275,16 +1921,6 @@ const GOLD = 0.6180339887498949;
 // Boundary point in the COM frame from (cos t, sin t).
 function eggQx(m, c) { return m.a * c + m.sh; }
 function eggQy(m, c, s) { return m.b * s * (1 - m.taper * c); }
-
-// Curvature radius at (cos t, sin t) — closed form, pinned ops.
-function eggCurvR(m, c, s) {
-  const a = m.a, b = m.b, T = m.taper;
-  const dx = -a * s;
-  const dy = b * (c + T - 2 * T * c * c);
-  const num = a * b * (1 + T * c * (2 * c * c - 3));
-  const sp2 = dx * dx + dy * dy;
-  return (sp2 * Math.sqrt(sp2)) / num;
-}
 
 // Maximize f(t) = dx·qx(t) + dy·qy(t) (the support parameter in
 // direction (dx,dy), COM frame). Coarse grid then fixed golden-section
@@ -1444,10 +2080,7 @@ function eggVsSegment(m, A, B, out) {
   out.px = m.x + pxL * cos - pyL * sin;
   out.py = m.y + pxL * sin + pyL * cos;
   out.pen = penL;
-  {
-    const c = dcos(tStar), s = dsin(tStar);
-    out.curvR = eggCurvR(m, c, s);
-  }
+  out.corrShare = 1;   // a smooth body's contact is its own manifold
   out.hit = true;
 }
 
@@ -1478,6 +2111,449 @@ function eggVertexContact(m, vx, vy) {
   EGGV.nx = nx; EGGV.ny = ny; EGGV.pen = pen;
   EGGV.qx = qx; EGGV.qy = qy; EGGV.t = t;
   return true;
+}
+
+// ------------------------------------------------------------
+// POLYGON vs SEGMENT (phase 2, 2026-08-28). Fills up to TWO slots of
+// the manifold and returns the count. Same contact contract as the
+// smooth routines, so resolveContact needs no branch.
+//
+// SAT over the face normals of both shapes — the polygon's edge
+// normals, plus the segment's own normal. A segment is a degenerate
+// convex hull of two points, so that axis set is complete; the axis
+// of least overlap is the minimum translation.
+//
+// ORIENTATION IS NON-ORIENTED (P2-D, ruled 2026-08-28). A terrain
+// face carries no solid side: slab.js knows which side the material
+// is on and bakes it into the extrusion, but buildWorld's face list
+// is not consistently wound — the top runs t[i]->t[i+1] and the
+// bottom runs b[i]->b[i+1], the SAME direction, and the end caps run
+// top-to-bottom — so a->b order carries no outward sense. This
+// routine therefore uses the convention the other two already use:
+// push the body back the way it came, by orienting the axis toward
+// the body's centre. Correct while the centre is outside the solid,
+// which the slab's thickness makes true.
+//
+// THE CLIP (§3.2): the reference face is whichever feature owns the
+// winning axis; the other is the incident feature. Clipping the
+// incident edge against the reference face's side planes yields up to
+// two points — which is what stops a box see-sawing on a single
+// deepest point when it lies WITHIN one long segment. Both cases are
+// written (P2-E): a box on a slope wins on a polygon edge normal as
+// often as a box on flat ground wins on the segment's.
+const POLY_WX = [0, 0, 0, 0, 0, 0, 0, 0];   // clip scratch, body frame
+const POLY_WY = [0, 0, 0, 0, 0, 0, 0, 0];
+function polyVsSegment(m, A, B, out) {
+  out[0].hit = false; out[1].hit = false;
+  const P = m.poly;
+  const nV = P.length;
+  const cos = dcos(m.angle), sin = dsin(m.angle);
+  // Segment into the body frame.
+  const adx = A.x - m.x, ady = A.y - m.y;
+  const bdx = B.x - m.x, bdy = B.y - m.y;
+  const ax = adx * cos + ady * sin, ay = -adx * sin + ady * cos;
+  const bx = bdx * cos + bdy * sin, by = -bdx * sin + bdy * cos;
+  const ex = bx - ax, ey = by - ay;
+  const eLen2 = ex * ex + ey * ey;
+  if (eLen2 < 1e-12) return 0;   // degenerate face: nothing to collide
+  const eLen = Math.sqrt(eLen2);
+
+  let bestPen = Infinity, bestNx = 0, bestNy = 0, bestRef = -1;
+  // THE TWO-SIDED DEPTH. A segment is a DEGENERATE hull — on any axis
+  // perpendicular to it, both endpoints project to the same value, so
+  // the naive overlap `min(pMax,sMax) - max(pMin,sMin)` is identically
+  // ZERO and reads as separation. It is not: a point sitting inside
+  // the polygon's interval must still be pushed out one side or the
+  // other. The separating distance is the SMALLER of the two exits,
+  // and its sign is the direction to push the body — which also
+  // removes any need to guess the orientation from a midpoint (a
+  // guess that fails outright when the segment is long and its middle
+  // is nowhere near the contact).
+  function axis(nx, ny, ref) {
+    let pMin = Infinity, pMax = -Infinity;
+    for (let k = 0; k < nV; k++) {
+      const d = P[k][0] * nx + P[k][1] * ny;
+      if (d < pMin) pMin = d;
+      if (d > pMax) pMax = d;
+    }
+    const sA = ax * nx + ay * ny, sB = bx * nx + by * ny;
+    const sMin = sA < sB ? sA : sB, sMax = sA < sB ? sB : sA;
+    const d1 = pMax - sMin;   // push the body along -n by d1 to clear
+    const d2 = sMax - pMin;   // push the body along +n by d2 to clear
+    if (d1 <= 0 || d2 <= 0) return false;   // a separating axis
+    const ov = d1 < d2 ? d1 : d2;
+    if (ov < bestPen) {
+      bestPen = ov;
+      const sgn = d1 < d2 ? -1 : 1;
+      bestNx = nx * sgn; bestNy = ny * sgn;
+      bestRef = ref;
+    }
+    return true;
+  }
+  // --- axes 0..nV-1: the polygon's own edge normals ---
+  // Vertices are canonically wound (positive signed area), so the
+  // outward normal of edge (ex, ey) is (ey, -ex).
+  for (let i = 0; i < nV; i++) {
+    const p = P[i], q = P[(i + 1) % nV];
+    const dx = q[0] - p[0], dy = q[1] - p[1];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-12) continue;
+    if (!axis(dy / len, -dx / len, i)) return 0;
+  }
+  // --- the segment's own normal ---
+  if (!axis(ey / eLen, -ex / eLen, -1)) return 0;
+
+  // THE TOUCHING FACE. bestN points INTO the body, so the polygon face
+  // actually meeting the segment is the one whose outward normal is
+  // most aligned with -bestN. Selected generically rather than taken
+  // as "the edge that won the axis": when the winning exit is the
+  // FAR side of the interval, the face that won is the opposite one.
+  let faceDot = -Infinity, faceI = 0;
+  for (let i = 0; i < nV; i++) {
+    const p = P[i], q = P[(i + 1) % nV];
+    const dx = q[0] - p[0], dy = q[1] - p[1];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-12) continue;
+    const d = (dy / len) * -bestNx + (-dx / len) * -bestNy;
+    if (d > faceDot) { faceDot = d; faceI = i; }
+  }
+
+  // --- reference and incident features ---
+  let rAx, rAy, rBx, rBy;      // reference face, body frame
+  let refNx, refNy;            // reference face's outward normal (toward the other feature)
+  let iAx, iAy, iBx, iBy;      // incident feature
+  if (bestRef >= 0) {
+    // A polygon edge won. The touching face is the reference; the
+    // segment is the incident feature.
+    const p = P[faceI], q = P[(faceI + 1) % nV];
+    rAx = p[0]; rAy = p[1]; rBx = q[0]; rBy = q[1];
+    const dx = rBx - rAx, dy = rBy - rAy;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    refNx = dy / len; refNy = -dx / len;   // the face's own outward normal
+    iAx = ax; iAy = ay; iBx = bx; iBy = by;
+  } else {
+    // The segment won. The incident feature is the touching polygon
+    // face — the one actually lying against the ground.
+    rAx = ax; rAy = ay; rBx = bx; rBy = by;
+    refNx = bestNx; refNy = bestNy;
+    const p = P[faceI], q = P[(faceI + 1) % nV];
+    iAx = p[0]; iAy = p[1]; iBx = q[0]; iBy = q[1];
+  }
+
+  // --- clip the incident edge to the reference face's extent ---
+  let tx = rBx - rAx, ty = rBy - rAy;
+  const tLen = Math.sqrt(tx * tx + ty * ty);
+  if (tLen < 1e-12) return 0;
+  tx /= tLen; ty /= tLen;
+  let lo = rAx * tx + rAy * ty;
+  let hi = rBx * tx + rBy * ty;
+  if (lo > hi) { const s = lo; lo = hi; hi = s; }
+  const t0 = iAx * tx + iAy * ty;
+  const t1 = iBx * tx + iBy * ty;
+  const dT = t1 - t0;
+  let u0 = 0, u1 = 1;
+  if (Math.abs(dT) < 1e-12) {
+    if (t0 < lo || t0 > hi) return 0;   // incident edge sits off the end
+  } else {
+    let ua = (lo - t0) / dT, ub = (hi - t0) / dT;
+    if (ua > ub) { const s = ua; ua = ub; ub = s; }
+    if (ua > u0) u0 = ua;
+    if (ub < u1) u1 = ub;
+    if (u0 > u1) return 0;              // no overlap along the face
+  }
+  POLY_WX[0] = iAx + (iBx - iAx) * u0; POLY_WY[0] = iAy + (iBy - iAy) * u0;
+  POLY_WX[1] = iAx + (iBx - iAx) * u1; POLY_WY[1] = iAy + (iBy - iAy) * u1;
+
+  // --- keep the points that are actually behind the reference face ---
+  // A SPECULATIVE MARGIN WAS TRIED HERE AND REVERTED (2026-08-28f).
+  // The manifold does collapse from two points to one at about 0.2
+  // degrees of tilt, which is real and measured. But it was NOT
+  // causing the sideways walk it was added to fix — that turned out
+  // to be a rig artefact — and keeping near-touching points made a
+  // resting box sit visibly cocked at 2.74 degrees instead of 0.43,
+  // because a corner 2 px clear of the ground still got a normal
+  // impulse holding it up. Whether the collapse matters for STACKS is
+  // an open question for the SAT work; it earns its place there or
+  // not at all.
+  let n = 0;
+  const keepX = [0, 0], keepY = [0, 0], keepPen = [0, 0];
+  for (let k = 0; k < 2; k++) {
+    const px = POLY_WX[k], py = POLY_WY[k];
+    const pen = -((px - rAx) * refNx + (py - rAy) * refNy);
+    if (pen <= 0) continue;
+    // Two clip parameters can coincide (a corner strike); one point.
+    if (n === 1 && Math.abs(px - keepX[0]) < 1e-9
+      && Math.abs(py - keepY[0]) < 1e-9) continue;
+    keepX[n] = px; keepY[n] = py; keepPen[n] = pen;
+    n++;
+  }
+  if (n === 0) return 0;
+  // CANONICAL ORDER (P2-A, ruled 2026-08-28): ascending along the
+  // tangent DERIVED FROM THE CONTACT NORMAL, (-ny, nx). The points
+  // are fed to resolveContact in sequence and each mutates velocity,
+  // so their order is physics, not tidiness.
+  //
+  // The first cut sorted along the REFERENCE FACE's tangent and was
+  // wrong: which feature is the reference depends on which axis won
+  // SAT, and a polygon face's tangent direction depends on the
+  // registry's winding — so the same box in the same pose ordered its
+  // contacts one way on flat ground and the other on a slope. The
+  // normal is a physical quantity; the winding is an authoring
+  // accident. Sort on the physics.
+  const oX = -bestNy, oY = bestNx;
+  if (n === 2 && (keepX[1] * oX + keepY[1] * oY) < (keepX[0] * oX + keepY[0] * oY)) {
+    let s = keepX[0]; keepX[0] = keepX[1]; keepX[1] = s;
+    s = keepY[0]; keepY[0] = keepY[1]; keepY[1] = s;
+    s = keepPen[0]; keepPen[0] = keepPen[1]; keepPen[1] = s;
+  }
+  const share = 1 / n;
+  for (let k = 0; k < n; k++) {
+    const c = out[k];
+    c.nx = bestNx * cos - bestNy * sin;
+    c.ny = bestNx * sin + bestNy * cos;
+    c.px = m.x + keepX[k] * cos - keepY[k] * sin;
+    c.py = m.y + keepX[k] * sin + keepY[k] * cos;
+    c.pen = keepPen[k];
+    c.corrShare = share;
+    c.hit = true;
+  }
+  return n;
+}
+
+// ------------------------------------------------------------
+// POLYGON vs POLYGON (phase 5, 2026-08-28g). Fills up to TWO slots of
+// the manifold and returns the count. Normals point from A to B,
+// which is the convention applyPairContact already uses.
+//
+// WHY THIS EXISTS. The line-of-centres solve asks each body for its
+// support radius along the line joining the centres. For two smooth
+// bodies that line is very nearly the contact normal. For two BOXES
+// it is not the normal at all, and worse, a box's support radius
+// GROWS toward its corner: 50 px straight down, 70.71 px diagonally.
+// Two 1 m boxes stacked 102 px apart with a hair of horizontal offset
+// therefore read as 141 px of combined radius and report ~39 px of
+// penetration THAT DOES NOT EXIST. Measured consequence: a stack of
+// two detonates in 1.36 s at 704 px/s.
+//
+// And the error is not a constant — it is a FEEDBACK LOOP. At perfect
+// alignment it is zero; every degree the centre line tilts raises both
+// supports, which ejects the boxes further, which tilts it more. That
+// is why iterations never helped, why a taller stack goes sooner
+// (0.30 s at five), and why warm starting would not have touched it:
+// there is no stability question until the contact is correct.
+//
+// THE ROUTINE. Textbook SAT, working in A's body frame, mirroring
+// polyVsSegment feature for feature:
+//   - axes are both hulls' face normals (a complete set for two
+//     convex polygons — unlike the segment case, both hulls are
+//     proper, so the plain interval overlap is correct here and the
+//     two-sided depth trick of polyVsSegment does NOT belong);
+//   - the axis of least overlap is the minimum translation;
+//   - the reference face is chosen GENERICALLY by alignment with the
+//     winning normal, never taken as "the face whose index won" —
+//     opposite faces of a rectangle give identical overlap, so the
+//     index can name the far side (the bug polyVsSegment already ate);
+//   - the incident face is clipped to the reference face's extent,
+//     giving the two points that stop a box see-sawing on one corner;
+//   - canonical order along the tangent DERIVED FROM THE NORMAL
+//     (P2-A), because the points mutate velocity in sequence;
+//   - corrShare = 1/n (P5-B).
+//
+// TIE-BREAK IS LAW, NOT LUCK. Axes are tested A's faces first, in
+// vertex order, and the winner is kept on strict `<`. A perfectly
+// square contact therefore resolves on A's face every time. Which
+// body is A is already law (the canonical pair order), so this is
+// deterministic rather than merely repeatable.
+const PP_BX = [0, 0, 0, 0, 0, 0, 0, 0];   // B's hull, A's frame
+const PP_BY = [0, 0, 0, 0, 0, 0, 0, 0];
+function polyVsPoly(A, B, BxI, ByI, out) {
+  out[0].hit = false; out[1].hit = false;
+  const PA = A.poly, PB = B.poly;
+  if (!PA || !PB) return 0;
+  const nA = PA.length, nB = PB.length;
+  if (nB > PP_BX.length) return 0;   // scratch is fixed; no silent churn
+  const cA = dcos(A.angle), sA = dsin(A.angle);
+  const cB = dcos(B.angle), sB = dsin(B.angle);
+  // B's frame expressed in A's frame: R(-thetaA)*R(thetaB). Composed
+  // from each body's OWN angle rather than dcos(B.angle - A.angle):
+  // the difference is a new argument to the deterministic trig table,
+  // and a body's pose should only ever be read at its own angle.
+  const cR = cA * cB + sA * sB;
+  const sR = cA * sB - sA * cB;
+  const ddx = BxI - A.x, ddy = ByI - A.y;
+  const dX = ddx * cA + ddy * sA;     // B's centre, A's frame
+  const dY = -ddx * sA + ddy * cA;
+  for (let i = 0; i < nB; i++) {
+    PP_BX[i] = PB[i][0] * cR - PB[i][1] * sR + dX;
+    PP_BY[i] = PB[i][0] * sR + PB[i][1] * cR + dY;
+  }
+
+  let bestOv = Infinity, bestNx = 0, bestNy = 0, bestOwner = -1;
+  function axis(nx, ny) {
+    let aMin = Infinity, aMax = -Infinity;
+    for (let k = 0; k < nA; k++) {
+      const d = PA[k][0] * nx + PA[k][1] * ny;
+      if (d < aMin) aMin = d;
+      if (d > aMax) aMax = d;
+    }
+    let bMin = Infinity, bMax = -Infinity;
+    for (let k = 0; k < nB; k++) {
+      const d = PP_BX[k] * nx + PP_BY[k] * ny;
+      if (d < bMin) bMin = d;
+      if (d > bMax) bMax = d;
+    }
+    const ov = (aMax < bMax ? aMax : bMax) - (aMin > bMin ? aMin : bMin);
+    return { sep: ov <= 0, ov };
+  }
+  function tryAxis(nx, ny, owner) {
+    const r = axis(nx, ny);
+    if (r.sep) return false;            // a separating axis: no contact
+    if (r.ov < bestOv) {
+      // ORIENT A -> B by the centre-to-centre vector, which is a
+      // physical direction and not a winding accident. Exactly zero
+      // (concentric along this axis) takes +1 so the choice is total.
+      const sgn = (dX * nx + dY * ny) >= 0 ? 1 : -1;
+      bestOv = r.ov; bestNx = nx * sgn; bestNy = ny * sgn; bestOwner = owner;
+    }
+    return true;
+  }
+  for (let i = 0; i < nA; i++) {
+    const p = PA[i], q = PA[(i + 1) % nA];
+    const ex = q[0] - p[0], ey = q[1] - p[1];
+    const len = Math.sqrt(ex * ex + ey * ey);
+    if (len < 1e-12) continue;
+    if (!tryAxis(ey / len, -ex / len, 0)) return 0;
+  }
+  for (let i = 0; i < nB; i++) {
+    const ix = (i + 1) % nB;
+    const ex = PP_BX[ix] - PP_BX[i], ey = PP_BY[ix] - PP_BY[i];
+    const len = Math.sqrt(ex * ex + ey * ey);
+    if (len < 1e-12) continue;
+    if (!tryAxis(ey / len, -ex / len, 1)) return 0;
+  }
+  if (bestOwner < 0) return 0;          // degenerate hull: nothing to do
+
+  // --- reference and incident features, both chosen by alignment ---
+  // The reference face lives on the owner of the winning axis and is
+  // the face most aligned with the push direction: +bestN if A owns it
+  // (A pushes B along +n), -bestN if B owns it.
+  const refWant = bestOwner === 0 ? 1 : -1;
+  let rAx = 0, rAy = 0, rBx = 0, rBy = 0, refNx = 0, refNy = 0;
+  {
+    let best = -Infinity, bi = 0, bnx = 0, bny = 0;
+    const n = bestOwner === 0 ? nA : nB;
+    for (let i = 0; i < n; i++) {
+      const ix = (i + 1) % n;
+      const px = bestOwner === 0 ? PA[i][0] : PP_BX[i];
+      const py = bestOwner === 0 ? PA[i][1] : PP_BY[i];
+      const qx = bestOwner === 0 ? PA[ix][0] : PP_BX[ix];
+      const qy = bestOwner === 0 ? PA[ix][1] : PP_BY[ix];
+      const ex = qx - px, ey = qy - py;
+      const len = Math.sqrt(ex * ex + ey * ey);
+      if (len < 1e-12) continue;
+      const fnx = ey / len, fny = -ex / len;
+      const d = (fnx * bestNx + fny * bestNy) * refWant;
+      if (d > best) { best = d; bi = i; bnx = fnx; bny = fny; }
+    }
+    const ix = (bi + 1) % n;
+    if (bestOwner === 0) {
+      rAx = PA[bi][0]; rAy = PA[bi][1]; rBx = PA[ix][0]; rBy = PA[ix][1];
+    } else {
+      rAx = PP_BX[bi]; rAy = PP_BY[bi]; rBx = PP_BX[ix]; rBy = PP_BY[ix];
+    }
+    refNx = bnx; refNy = bny;
+  }
+  // The incident face is on the OTHER hull, most anti-aligned with the
+  // reference normal — the face actually lying against it.
+  let iAx = 0, iAy = 0, iBx = 0, iBy = 0;
+  {
+    let best = Infinity, bi = 0;
+    const n = bestOwner === 0 ? nB : nA;
+    for (let i = 0; i < n; i++) {
+      const ix = (i + 1) % n;
+      const px = bestOwner === 0 ? PP_BX[i] : PA[i][0];
+      const py = bestOwner === 0 ? PP_BY[i] : PA[i][1];
+      const qx = bestOwner === 0 ? PP_BX[ix] : PA[ix][0];
+      const qy = bestOwner === 0 ? PP_BY[ix] : PA[ix][1];
+      const ex = qx - px, ey = qy - py;
+      const len = Math.sqrt(ex * ex + ey * ey);
+      if (len < 1e-12) continue;
+      const d = (ey / len) * refNx + (-ex / len) * refNy;
+      if (d < best) { best = d; bi = i; }
+    }
+    const ix = (bi + 1) % n;
+    if (bestOwner === 0) {
+      iAx = PP_BX[bi]; iAy = PP_BY[bi]; iBx = PP_BX[ix]; iBy = PP_BY[ix];
+    } else {
+      iAx = PA[bi][0]; iAy = PA[bi][1]; iBx = PA[ix][0]; iBy = PA[ix][1];
+    }
+  }
+
+  // --- clip the incident edge to the reference face's extent ---
+  let tx = rBx - rAx, ty = rBy - rAy;
+  const tLen = Math.sqrt(tx * tx + ty * ty);
+  if (tLen < 1e-12) return 0;
+  tx /= tLen; ty /= tLen;
+  let lo = rAx * tx + rAy * ty;
+  let hi = rBx * tx + rBy * ty;
+  if (lo > hi) { const s = lo; lo = hi; hi = s; }
+  const t0 = iAx * tx + iAy * ty;
+  const t1 = iBx * tx + iBy * ty;
+  const dT = t1 - t0;
+  let u0 = 0, u1 = 1;
+  if (Math.abs(dT) < 1e-12) {
+    if (t0 < lo || t0 > hi) return 0;   // incident edge sits off the end
+  } else {
+    let ua = (lo - t0) / dT, ub = (hi - t0) / dT;
+    if (ua > ub) { const s = ua; ua = ub; ub = s; }
+    if (ua > u0) u0 = ua;
+    if (ub < u1) u1 = ub;
+    if (u0 > u1) return 0;              // no overlap along the face
+  }
+  POLY_WX[0] = iAx + (iBx - iAx) * u0; POLY_WY[0] = iAy + (iBy - iAy) * u0;
+  POLY_WX[1] = iAx + (iBx - iAx) * u1; POLY_WY[1] = iAy + (iBy - iAy) * u1;
+
+  // --- keep the points actually behind the reference face ---
+  // No speculative margin. The same margin was tried on the segment
+  // routine to fix a defect that turned out to be a rig artefact, and
+  // it made a resting box sit cocked at 2.74 degrees (§10.4). If the
+  // manifold collapse matters for stacks it will show in the stack
+  // measurement, and it earns a fix there on evidence.
+  let n = 0;
+  const keepX = [0, 0], keepY = [0, 0], keepPen = [0, 0];
+  for (let k = 0; k < 2; k++) {
+    const px = POLY_WX[k], py = POLY_WY[k];
+    const pen = -((px - rAx) * refNx + (py - rAy) * refNy);
+    if (pen <= 0) continue;
+    if (n === 1 && Math.abs(px - keepX[0]) < 1e-9
+      && Math.abs(py - keepY[0]) < 1e-9) continue;   // a corner strike
+    keepX[n] = px; keepY[n] = py; keepPen[n] = pen;
+    n++;
+  }
+  if (n === 0) return 0;
+  // CANONICAL ORDER (P2-A): ascending along the tangent derived from
+  // the CONTACT normal. The reference face's own tangent is not
+  // usable — which hull owns the reference depends on which axis won,
+  // so the same pose would order its contacts one way on a face hit
+  // and the other on a corner hit.
+  const oX = -bestNy, oY = bestNx;
+  if (n === 2 && (keepX[1] * oX + keepY[1] * oY) < (keepX[0] * oX + keepY[0] * oY)) {
+    let s = keepX[0]; keepX[0] = keepX[1]; keepX[1] = s;
+    s = keepY[0]; keepY[0] = keepY[1]; keepY[1] = s;
+    s = keepPen[0]; keepPen[0] = keepPen[1]; keepPen[1] = s;
+  }
+  const share = 1 / n;
+  for (let k = 0; k < n; k++) {
+    const c = out[k];
+    c.nx = bestNx * cA - bestNy * sA;
+    c.ny = bestNx * sA + bestNy * cA;
+    c.px = A.x + keepX[k] * cA - keepY[k] * sA;
+    c.py = A.y + keepX[k] * sA + keepY[k] * cA;
+    c.pen = keepPen[k];
+    c.corrShare = share;
+    c.hit = true;
+  }
+  return n;
 }
 
 // ------------------------------------------------------------
@@ -1534,22 +2610,148 @@ function ellipseVsSegment(m, A, B, out) {
   const spx = (cx / dist) * a;        // surface point, circle space
   const spy = ((cy / dist) * a) / s;  // unscaled to ellipse local
 
-  // Curvature radius at that surface point: with (spx, spy) =
-  // (a cos t, b sin t), R = (a^2 sin^2 + b^2 cos^2)^{3/2} / (ab).
-  // Big on the flat side (a^2/b), small at the tips (b^2/a) —
-  // this is the smash rule's stress-concentration input.
-  {
-    const u = spx / a;       // cos t
-    const v = spy / b;       // sin t
-    const q = a * a * v * v + b * b * u * u;
-    out.curvR = (q * Math.sqrt(q)) / (a * b);
-  }
   const ex = m.x + spx * cos - spy * sin;
   const ey = m.y + spx * sin + spy * cos;
   out.pen = (out.px - ex) * out.nx + (out.py - ey) * out.ny;
   if (out.pen <= 0) return;
 
+  out.corrShare = 1;   // a smooth body's contact is its own manifold
   out.hit = true;
+}
+
+// ---- THE TERRAIN TWO-POINT BLOCK SOLVE (PHASE-6, 2026-08-29) ------
+// The terrain sibling of applyPairBlock2, with the ground as the
+// infinite-mass partner. CONVICTED BY SIGN FLIP, not argued: a lone
+// bit-symmetric box on flat ground exits its FIRST tick with
+// vx +8.311e-2, omega +1.644e-3 — and with the manifold resolve
+// order reversed in a scratch copy, exactly -8.311e-2, -1.644e-3.
+// Sequential resolution of the two face points injects signed
+// momentum because the second point reads a velocity the first
+// point's impulse already changed; the canonical order (P2-A, left
+// first) makes the sign systematic. The block solves both normal
+// impulses from ONE pre-state (standard 2x2 LCP, fixed enumeration),
+// then both friction impulses from ONE shared post-normal state.
+// Rolling resistance stays per point: it clamps |omega| toward zero
+// and cannot carry a sign. Positional correction stays per point:
+// corr reads stored pen, never a re-read of live state, so its adds
+// commute and carry no systematic bias.
+//
+// Reached only when a manifold has TWO points, which only the
+// polygon narrowphases produce — the smooth families are structurally
+// outside (gate-held).
+const TBLK = [
+  { jn: 0, vn: 0, kn: 0, e: 0, rxn: 0 },
+  { jn: 0, vn: 0, kn: 0, e: 0, rxn: 0 },
+];
+function resolveContactBlock2(m, c1, c2, invM, invI) {
+  // Both points of one face manifold carry the same normal (P2-A).
+  const nx = c1.nx, ny = c1.ny;
+  const r1x = c1.px - m.x, r1y = c1.py - m.y;
+  const r2x = c2.px - m.x, r2y = c2.py - m.y;
+  const r1n = r1x * ny - r1y * nx;
+  const r2n = r2x * ny - r2y * nx;
+
+  // Normal velocities, both from the PRE-state.
+  const vn1 = (m.vx - m.omega * r1y) * nx + (m.vy + m.omega * r1x) * ny;
+  const vn2 = (m.vx - m.omega * r2y) * nx + (m.vy + m.omega * r2x) * ny;
+  const e1 = (vn1 < 0 && -vn1 > CONFIG.restitutionThreshold) ? damage.bodyRestitution(m) : 0;
+  const e2 = (vn2 < 0 && -vn2 > CONFIG.restitutionThreshold) ? damage.bodyRestitution(m) : 0;
+
+  const k11 = invM + r1n * r1n * invI;
+  const k22 = invM + r2n * r2n * invI;
+  const k12 = invM + r1n * r2n * invI;
+  const b1 = vn1 < 0 ? -(1 + e1) * vn1 : 0;
+  const b2 = vn2 < 0 ? -(1 + e2) * vn2 : 0;
+
+  let j1 = 0, j2 = 0;
+  const det = k11 * k22 - k12 * k12;
+  let solved = false;
+  if (b1 > 0 && b2 > 0 && det > 1e-12) {
+    const t1 = (b1 * k22 - b2 * k12) / det;
+    const t2 = (b2 * k11 - b1 * k12) / det;
+    if (t1 >= 0 && t2 >= 0) { j1 = t1; j2 = t2; solved = true; }
+  }
+  if (!solved && b1 > 0) {
+    const t1 = b1 / k11;
+    if (k12 * t1 >= b2) { j1 = t1; j2 = 0; solved = true; }
+  }
+  if (!solved && b2 > 0) {
+    const t2 = b2 / k22;
+    if (k12 * t2 >= b1) { j1 = 0; j2 = t2; solved = true; }
+  }
+
+  if (j1 > 0 || j2 > 0) {
+    const jSum = j1 + j2;
+    const tw = r1n * j1 + r2n * j2;
+    m.vx += jSum * nx * invM;
+    m.vy += jSum * ny * invM;
+    m.omega += tw * invI;
+  }
+
+  // --- Friction: both points from ONE shared post-normal state ---
+  if (j1 > 0 || j2 > 0) {
+    const tx = -ny, ty = nx;
+    const vt1 = (m.vx - m.omega * r1y) * tx + (m.vy + m.omega * r1x) * ty;
+    const vt2 = (m.vx - m.omega * r2y) * tx + (m.vy + m.omega * r2x) * ty;
+    const r1t = r1x * ty - r1y * tx;
+    const r2t = r2x * ty - r2y * tx;
+    const kt1 = invM + r1t * r1t * invI;
+    const kt2 = invM + r2t * r2t * invI;
+    let jt1 = j1 > 0 ? -vt1 / kt1 : 0;
+    let jt2 = j2 > 0 ? -vt2 / kt2 : 0;
+    const max1 = CONFIG.friction * j1;
+    const max2 = CONFIG.friction * j2;
+    if (jt1 > max1) jt1 = max1; else if (jt1 < -max1) jt1 = -max1;
+    if (jt2 > max2) jt2 = max2; else if (jt2 < -max2) jt2 = -max2;
+    const jtSum = jt1 + jt2;
+    const tw = r1t * jt1 + r2t * jt2;
+    m.vx += jtSum * tx * invM;
+    m.vy += jtSum * ty * invM;
+    m.omega += tw * invI;
+  }
+
+  // --- Rolling resistance, per point (clamped toward zero: no sign) ---
+  if (j1 > 0 && m.omega !== 0) {
+    const rLen = Math.sqrt(r1x * r1x + r1y * r1y);
+    const dOmega = CONFIG.rollingResistance * j1 * rLen * invI;
+    if (m.omega > 0) m.omega = Math.max(0, m.omega - dOmega);
+    else m.omega = Math.min(0, m.omega + dOmega);
+  }
+  if (j2 > 0 && m.omega !== 0) {
+    const rLen = Math.sqrt(r2x * r2x + r2y * r2y);
+    const dOmega = CONFIG.rollingResistance * j2 * rLen * invI;
+    if (m.omega > 0) m.omega = Math.max(0, m.omega - dOmega);
+    else m.omega = Math.min(0, m.omega + dOmega);
+  }
+
+  // --- Positional correction, per point (order-free adds) ---
+  // Same gates as resolveContact: the angular form only for poly
+  // inside the unified pass (measured there, creeps on legacy).
+  applyTerrainCorrection(m, c1, r1n, invM, invI);
+  applyTerrainCorrection(m, c2, r2n, invM, invI);
+
+  TBLK[0].jn = j1; TBLK[0].vn = vn1; TBLK[0].kn = k11; TBLK[0].e = e1; TBLK[0].rxn = r1n;
+  TBLK[1].jn = j2; TBLK[1].vn = vn2; TBLK[1].kn = k22; TBLK[1].e = e2; TBLK[1].rxn = r2n;
+  return TBLK;
+}
+
+// The one spelling of the terrain positional correction, shared by
+// the sequential and block solvers (rCrossN arrives precomputed).
+function applyTerrainCorrection(m, c, rCrossN, invM, invI) {
+  const over = c.pen - CONFIG.penetrationSlop;
+  const corr = over > 0 ? over * CONFIG.positionCorrection * c.corrShare : 0;
+  if (corr > 0) {
+    if (m.shape === 'poly' && UNIFIED_ACTIVE) {
+      const k = invM + rCrossN * rCrossN * invI;
+      const P = corr / k;
+      m.x += P * c.nx * invM;
+      m.y += P * c.ny * invM;
+      m.angle += P * rCrossN * invI;
+    } else {
+      m.x += c.nx * corr;
+      m.y += c.ny * corr;
+    }
+  }
 }
 
 // ------------------------------------------------------------
@@ -1616,10 +2818,45 @@ function resolveContact(m, c, invM, invI) {
   }
 
   // --- Positional correction (prevents sinking, kills jitter) ---
-  const corr = Math.max(c.pen - CONFIG.penetrationSlop, 0) * CONFIG.positionCorrection;
+  // Scaled by the contact's share of its manifold (P2-B): a flat face
+  // returning two points must eject the body exactly as far as a
+  // curve returning one, or a resting box climbs out of the ground.
+  // corrShare is 1 for every smooth-body contact, so this is inert.
+  const corr = Math.max(c.pen - CONFIG.penetrationSlop, 0)
+    * CONFIG.positionCorrection * c.corrShare;
   if (corr > 0) {
-    m.x += c.nx * corr;
-    m.y += c.ny * corr;
+    if (m.shape === 'poly' && UNIFIED_ACTIVE) {
+      // THE ANGULAR POSITIONAL CORRECTION (PHASE-6 §8, 2026-08-29),
+      // through the contact Jacobian as a pseudo-impulse. For a
+      // sphere the contact lies on the line through the COM and there
+      // is no angular term to miss; for a flat face there is — under
+      // translation-only correction a cocked box could never be
+      // un-cocked, sat at a permanent 0.28 deg, and its top face was
+      // a ramp the box above drifted down (measured: exp-lean-probe,
+      // 0.5 px/s^2 of friction leak until the half-width overhang at
+      // ~16 s). This REDUCES EXACTLY to the translation law when the
+      // lever vanishes: rCrossN = 0 gives k = invM, P = corr/invM,
+      // dx = corr*nx.
+      //
+      // TWO GATES, both measured. Poly: the smooth families have
+      // non-zero r x n too, so the general form would move racers —
+      // the smooth cell is a recorded deferral (D5-1's shape).
+      // UNIFIED_ACTIVE: on the legacy path this same arithmetic
+      // CREEPS a lone resting box sideways — 5.30 px/60 s
+      // mid-segment, 53.5 px on a seam (exp-restpose), the numbers
+      // that got the first landing reverted — while inside the
+      // unified pass it measures EXACT (exp-shelf: 0.00 px, 0.000
+      // deg). Scoped to where it is right; the lone box keeps its
+      // proven 0.27 px translation-only rest.
+      const k = invM + rCrossN * rCrossN * invI;
+      const P = corr / k;
+      m.x += P * c.nx * invM;
+      m.y += P * c.ny * invM;
+      m.angle += P * rCrossN * invI;
+    } else {
+      m.x += c.nx * corr;
+      m.y += c.ny * corr;
+    }
   }
 
   return { jn, vn, kn: knOut, e: eOut, rxn: rCrossN };
@@ -1633,5 +2870,11 @@ function resolveContact(m, c, invM, invI) {
 // of the contact geometry into large vn error, squared by the energy
 // law (field-logged 2026-08-11, EP1 exact at w=0, chaos at w=15-37).
 Object.assign(window.FF, { step, stepBodyClone: (m, inp, terrain, dt) => stepBody(m, inp, terrain, dt, null),
-  _hopImpulse: hopImpulse });
+  // PHASE-6: exported for verify-island's construction checks, which
+  // are bypasses by design — the suite's REAL-DOOR sections go
+  // through FF.step (integration-sibling law).
+  buildPropIslands,
+  _hopImpulse: hopImpulse, _supportRadius: supportRadius,
+  _polyVsSegment: polyVsSegment, _makeContact: makeContact,
+  _polyVsPoly: polyVsPoly, _pairRoute: pairRoute });
 })();

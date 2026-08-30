@@ -18,6 +18,21 @@ const DEFAULTS = Object.freeze({
   // --- Simulation ---
   physicsHz: 120,          // fixed timestep frequency
   solverIterations: 6,     // contact solve passes per step
+  // DEV: soloRace empties the field — no cast, no rivals — so the
+  // track and its furniture can be explored without bots racing
+  // through the noodling. The player keeps their seat; furniture
+  // mints and wakes exactly as in a full race (the wake law follows
+  // the leader, which is now you). Ships FALSE; flag-off is
+  // bit-parity by construction (the flag is read only in raceInit's
+  // field build, which the gates never enter — and the gates held).
+  soloRace: true,
+  // PHASE-6 §5.5: iterations of the UNIFIED contact pass (prop
+  // islands only — terrain and pair sweeps interleaved). A CONFIG
+  // entry, not a magic number, because it is tuned against a
+  // measurement: swept 2/4/6/8/12 against stack survival in
+  // exp-stack-probe.js, picked on the curve. (Sweep recorded in
+  // docs/PHASE-6-UNIFIED-CONTACT-PASS.md.)
+  unifiedIters: 6,
 
   // --- World ---
   gravity: 2400,           // px/s^2, y-down
@@ -273,7 +288,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-27m';
+const BUILD = '2026-08-30a';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -420,6 +435,82 @@ CONFIG.furniture = {
   // both streamed at fire time; and >= 2000 keeps the jump far
   // behind every camera.
   rehomeMargin: 2000,
+  // ---- FLAT RUNS (rectangular props, phase 3) ----
+  // A box wants level ground under its whole footprint. 0.06 was
+  // measured across six seeds (RECTANGULAR-PROPS.md §3.5): tightening
+  // to 0.03 or loosening to 0.10 barely moves the site count, so the
+  // cap is not load-bearing and the middle value is taken.
+  flatGrade: 0.06,
+  flatMinRun: 220,   // px of arc; the shortest run worth offering
+  // ---- THE KINDS TABLE (phase 3) ----
+  // Furniture is a FAMILY now, so placement policy is per species
+  // rather than global. ORDER IS LAW twice over: each kind draws from
+  // its OWN salted stream, so adding a species never re-rolls
+  // another's placements (which is exactly what happened globally at
+  // 27n); and props are appended to state.props in this order, so the
+  // canonIdx tail is stable. The beach ball stays FIRST with its
+  // original salt and original numbers — bit-identical placements.
+  kinds: [
+    {
+      species: 'beachball', name: 'BEACH BALL',
+      salt: 0xBA11BA11,
+      sites: 'rest',     // a sphere wants a dip
+      countMin: 1, countMax: 5,
+      // Sites claimed by different props must be far enough apart that
+      // two resting props cannot overlap. Props MAY rest close
+      // together (that's furniture, not a defect); they may not share
+      // a site or clip. 2r = 184 for a 2x ball, so 260 leaves a gap.
+      minSeparation: 260,
+      // >>> STATED-TEMPORARY (Eddie, 2026-08-30): balls off while the
+      // box stacks are exercised on device. The kind KEEPS its salt
+      // and its entry — re-enabling is deleting this flag, and the
+      // ball's stream deals the same numbers it always did (per-kind
+      // salted streams: a skipped kind draws nothing and disturbs
+      // nothing). The prop gate was re-baselined WITH this off; it
+      // re-baselines again when the flag comes out. <<<
+      disabled: true,
+    },
+    {
+      species: 'cardboardBox', name: 'CARDBOARD BOX',
+      salt: 0xB0C5B0C5,
+      sites: 'flat',     // a box wants a run
+      // ONE PER TRACK for now (ruled 2026-08-27). Stacks were a later
+      // project then because they would meet the pair approximation;
+      // phase 6 removed that blocker and the stack ships as its OWN
+      // kind below — this lone box stays, on its own stream, placed
+      // exactly where it always was.
+      countMin: 1, countMax: 1,
+      minSeparation: 260,
+      // Fallback chain capped (2026-08-30): with the global claim law,
+      // one prop's 8-deep candidate list swallowed seed 8801's entire
+      // 8-site flat band and starved the stack. Four is plenty of
+      // fallback (the walk has never burned past 1 in the record) and
+      // leaves the band shareable. THE BOX'S PLACEMENT MOVES on seeds
+      // where the lowest-arc site falls outside the capped walk —
+      // measured 3 of 6 suite seeds — accepted deliberately (a lone
+      // box on a different flat run is the same furniture; the ball
+      // is verified arc-for-arc unmoved; the B4 pin updated in this
+      // same commit per its own law). (Eddie's number to tune.)
+      candidatesCap: 4,
+    },
+    {
+      species: 'cardboardBox', name: 'CRATE STACK',
+      salt: 0x57AC57AC,  // its OWN stream: the lone box's deal is bit-unmoved
+      sites: 'flat',
+      // AUTHORED STACKS (ruled by Eddie 2026-08-30): one stack per
+      // track, 2-3 boxes vertically on ONE site. The tier count is a
+      // per-stack draw off this kind's stream (see mintFurniture);
+      // the BASE box owns the wake walk and the clearance probe
+      // covers the whole column (physics.js tryWakeProp).
+      countMin: 1, countMax: 1,
+      minSeparation: 260,   // the standard gap (400 starved sparse bands — measured)
+      candidatesCap: 4,     // same sharing law as the lone box
+      stackMin: 2, stackMax: 3,
+    },
+  ],
+  // Vertical daylight between stacked tiers at placement, px. One
+  // settle tick closes it. (Eddie's number to tune with the rest.)
+  stackGap: 1,
 };
 // >>> DEV SCAFFOLD — STATED-TEMPORARY, DEFAULT ON FOR THIS BUILD <<<
 // PIN THE FURNITURE (2026-08-27l): on placement, the prop is pinned

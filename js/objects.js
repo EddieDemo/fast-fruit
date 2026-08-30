@@ -183,6 +183,40 @@ const OBJECTS = {
     // "white" per ball: the trace class, again).
   },
 
+  cardboardBox: {
+    misc: true,          // league-issue course furniture, not produce
+    // THE FIRST POLYGON (ruled 2026-08-27, built 2026-08-28). A true
+    // convex hull rather than a rounded approximation, explicitly
+    // because a FAMILY of rectangles is coming — crates, pallets,
+    // stacks — and rounding stops being cosmetic the moment two of
+    // them meet, or one meets an authored edge.
+    shape: 'poly',       // EXPLICIT tag; never inferred from fields
+    poly: [[-50, -50], [50, -50], [50, 50], [-50, 50]],   // 1 m x 1 m, px
+    sizeMult: 1.0,       // semiMajor is 46, so a 50 px half-extent is 1.0 m
+    // Density RULED 2026-08-28 off the scale graphic. The prism
+    // volume law makes a 1 m box 4.0045 melon volumes, so 0.06 is
+    // 0.240 melon masses — a quarter of a melon, 2.3x the beach
+    // ball. The first number written here (0.02) came to 0.080 and
+    // would have made the box LIGHTER than the ball, against this
+    // entry's own stated intent.
+    density: 0.06,
+    restitutionFloor: 0.08,  // cardboard thuds; flare adds, never removes
+    toughnessMult: 0,    // INDESTRUCTIBLE for v1 (ruled), like the ball:
+                         // impulses and breadcrumbs fully live, only the
+                         // damage ledger is deaf. Un-zero to make it
+                         // crushable later.
+    anchorBand: { h: [50, 60], s: [0.56, 0.68], l: [0.31, 0.39] },
+    // Kraft cardboard, SOLVED PRE-SUN (2026-08-28). The first cut used
+    // h 28-36 / s 0.35-0.50 / l 0.42-0.52 — the brown you would pick
+    // if you were choosing the FINAL colour, copied straight out of
+    // the design doc. The registry declares pigment BEFORE the
+    // lighting law, and that band came out a dusty mauve (#ac8683):
+    // exactly the failure this file's watermelon-flesh note describes,
+    // where authoring in final-colour space turned red into hot pink.
+    // Solved numerically instead, so the base slot lands on #aa7c4e
+    // against an authored intent of #a87c4e — 2/255 off.
+  },
+
   eightBall: {
     misc: true,          // billiards, not produce
     aspect: 1.0,         // perfect sphere: shares the dragon ball's

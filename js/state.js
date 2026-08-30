@@ -118,6 +118,26 @@ function speciesTaper(species) {
   const F = window.FF.OBJECTS;
   return (F && F[species] && F[species].taper) || 0;
 }
+// THE SHAPE TAG (Law 1, rectangular props 2026-08-28): shape dispatch
+// is on an EXPLICIT tag, never on field presence. `taper` remains a
+// PHYSICAL parameter — the egg's mass, support and boundary all use
+// its value — it simply stops being the thing that selects a branch.
+// Default 'ellipse'; a registry entry declaring `taper` without a
+// shape still resolves to 'egg', so the tag can never contradict the
+// physique of a body that predates it.
+function speciesShape(species) {
+  const F = window.FF.OBJECTS;
+  const s = F && F[species] && F[species].shape;
+  if (s) return s;
+  return speciesTaper(species) ? 'egg' : 'ellipse';
+}
+// Vertex list for a polygon species, in registry units (px at
+// sizeMult 1). Returned raw; derivePhysique is the ONLY caller and it
+// normalises (see polyPhysique).
+function speciesPoly(species) {
+  const F = window.FF.OBJECTS;
+  return (F && F[species] && F[species].poly) || null;
+}
 // THE PHYSICAL ANNEX, third entry (ruled 2026-08-26): DENSITY is a
 // SPECIES CONSTANT — intrinsic, never varying with an individual's
 // size. mass = density x volume (x the melon calibration): two beach
@@ -163,6 +183,123 @@ function taperedMassInertia(a, b, taper, _density) {
   const sh = a * taper / 4;
   const inertia = mass * ((a * a + b * b * (1 + taper * taper / 2)) / 4 - sh * sh);
   return { mass, inertia, sh };
+}
+
+// ---- POLYGON PHYSIQUE (rectangular props, phase 1) ----------------
+// Closed form over a convex polygon, uniform lamina. Standard
+// signed-triangle formulae, summed over edges (v_i -> v_i+1):
+//   2A     = SUM cross_i
+//   C      = (1/(6A)) SUM (v_i + v_i+1) * cross_i
+//   J_o/A  = (1/12) SUM cross_i (v_i.v_i + v_i.v_i+1 + v_i+1.v_i+1)
+//   J_com  = J_o - A|C|^2                      (parallel axis)
+// Returned already CENTRED on the COM and in canonical winding
+// (positive area, i.e. counter-clockwise in maths axes / clockwise on
+// screen since y is down). Both normalisations happen HERE, once, so
+// no downstream reader ever has to ask whether a vertex list is raw:
+// ambiguity about that is how contact normals end up inverted.
+//
+// THE VOLUME CONVENTION (stated, 2026-08-28). Mass follows the
+// VOLUME law like every other body; the polygon is treated as a PRISM
+// whose depth equals its y-extent, the same "square cross-section"
+// reading that makes the ellipse a spheroid revolved about its major
+// axis. The ellipse's factor a*b^2 is its spheroid volume less the
+// common 4pi/3; the prism's volume is (2hx)(2hy)(2hz) with hz = hy,
+// so the comparable factor is 8*hx*hy^2 * 3/(4pi). One convention,
+// applied to both families; REF_VOL still normalises the melon to
+// CONFIG.mass exactly.
+const PRISM_K = 3 / (4 * Math.PI) * 8;   // prism factor -> ellipse's units
+function polyPhysique(verts, scale, _density) {
+  if (_density === undefined) _density = 1;
+  // Scale into body units first: every quantity below is then in px.
+  const P = [];
+  for (let i = 0; i < verts.length; i++) {
+    P.push([verts[i][0] * scale, verts[i][1] * scale]);
+  }
+  let A2 = 0, cx = 0, cy = 0, J = 0;
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], q = P[(i + 1) % P.length];
+    const cr = p[0] * q[1] - q[0] * p[1];
+    A2 += cr;
+    cx += (p[0] + q[0]) * cr;
+    cy += (p[1] + q[1]) * cr;
+    J += cr * (p[0] * p[0] + p[0] * q[0] + q[0] * q[0]
+      + p[1] * p[1] + p[1] * q[1] + q[1] * q[1]);
+  }
+  // CANONICAL WINDING: a clockwise list gives negative area. Reverse
+  // it and re-derive rather than taking absolute values — the sign
+  // must leave the list, not just the scalars, or a face normal
+  // computed downstream still points inward.
+  if (A2 < 0) {
+    P.reverse();
+    A2 = -A2; cx = -cx; cy = -cy; J = -J;
+  }
+  const area = A2 / 2;
+  const comX = cx / (3 * A2), comY = cy / (3 * A2);
+  const Jo = J / 12;                              // area moment about origin
+  const Jcom = Jo - area * (comX * comX + comY * comY);
+  // Re-centre on the COM: the solver's lever arms and invI are only
+  // ever honest about the mass centre (the same law the egg's `sh`
+  // exists to satisfy).
+  const poly = [];
+  let hx = 0, hy = 0, circum = 0;
+  for (let i = 0; i < P.length; i++) {
+    const vx = P[i][0] - comX, vy = P[i][1] - comY;
+    poly.push([vx, vy]);
+    if (Math.abs(vx) > hx) hx = Math.abs(vx);
+    if (Math.abs(vy) > hy) hy = Math.abs(vy);
+    const r = Math.sqrt(vx * vx + vy * vy);
+    if (r > circum) circum = r;
+  }
+  const mass = CONFIG.mass * (PRISM_K * hx * hy * hy) / REF_VOL * _density;
+  const inertia = mass * (Jcom / area);   // lamina: I/m = J_com / A
+  return { poly, mass, inertia, a: hx, b: hy, boundR: circum, area };
+}
+
+// ---- THE ONE PHYSIQUE DOOR ----------------------------------------
+// createBody and setBodyScale both derive a body's physique, and used
+// to do it with two copies of the same arithmetic. A shape family is
+// exactly the kind of addition that leaves one copy behind (the
+// buildLapTemplate lesson: a private copy of the chunk vocabulary
+// meant a whole rework never reached races). One function; the fork
+// cannot open.
+//
+// `boundR` is given to EVERY body, not just polygons: the broad phase
+// then reads one field unconditionally instead of branching. For the
+// smooth families it is exactly today's expression, a * (1 + taper),
+// so the change is numerically inert — which the bit-identity gate
+// proves rather than assumes.
+function derivePhysique(species, scale) {
+  const sc = scale || 1;
+  const shape = speciesShape(species);
+  const _density = speciesDensity(species);
+  if (shape === 'poly') {
+    const verts = speciesPoly(species);
+    if (verts && verts.length >= 3) {
+      const p = polyPhysique(verts, sc, _density);
+      return { shape, a: p.a, b: p.b, taper: 0, sh: 0, poly: p.poly,
+        boundR: p.boundR, mass: p.mass, inertia: p.inertia };
+    }
+    // A species tagged 'poly' with no usable vertex list is an
+    // authoring error, not a shape. Fall through to the ellipse so a
+    // typo is a wrong-looking body, never a crash — the registry's
+    // standing habit (devSpecies) — and say so once.
+    if (!derivePhysique._warned) {
+      derivePhysique._warned = true;
+      console.warn('derivePhysique: poly species with no vertices:', species);
+    }
+  }
+  const aspect = speciesAspect(species);
+  const taper = speciesTaper(species);
+  const a = CONFIG.semiMajor * sc;
+  const b = a * aspect;
+  const boundR = a * (1 + taper);
+  if (taper) {
+    const { mass, inertia, sh } = taperedMassInertia(a, b, taper, _density);
+    return { shape: 'egg', a, b, taper, sh, poly: null, boundR, mass, inertia };
+  }
+  const mass = CONFIG.mass * (a * b * b) / REF_VOL * _density;
+  return { shape: 'ellipse', a, b, taper: 0, sh: 0, poly: null, boundR,
+    mass, inertia: mass * (a * a + b * b) / 4 };
 }
 
 // THE DEV OVERRIDE, resolved in ONE place (fixed 2026-08-27c).
@@ -244,23 +381,15 @@ function createBody(x, y, scale, fruit) {
   // a dragon ball is a sphere, an egg brings `taper` and with it the
   // tapered physique above. taper = 0 takes the ORIGINAL expressions
   // verbatim, so every melon's mass and inertia are bit-identical.
-  const aspect = speciesAspect(species);
-  const taper = speciesTaper(species);
-  const a = CONFIG.semiMajor * sc;
-  const b = a * aspect;
-  const _density = speciesDensity(species);
-  let mass, inertia, sh;
-  if (taper) {
-    ({ mass, inertia, sh } = taperedMassInertia(a, b, taper, _density));
-  } else {
-    mass = CONFIG.mass * (a * b * b) / REF_VOL * _density;
-    inertia = mass * (a * a + b * b) / 4;
-    sh = 0;
-  }
+  const ph = derivePhysique(species, sc);
+  const { a, b, taper, sh, mass, inertia } = ph;
   return {
     a, b,
     species: species,      // registry tag: shape, palette and pulp
-    taper,               // 0 = ellipse (exact legacy path everywhere)
+    shape: ph.shape,     // EXPLICIT dispatch tag (Law 1): 'ellipse' | 'egg' | 'poly'
+    poly: ph.poly,       // COM-centred, canonically wound; null for smooth bodies
+    boundR: ph.boundR,   // broad-phase bound, every family (see derivePhysique)
+    taper,               // physical parameter, NOT the shape selector
     sh,                  // geometric center's offset in the COM frame
     squash: 0,           // per-body deformation (strain), presentation-tier
     squashAngle: 0,      // world angle of the deforming contact normal
@@ -585,78 +714,171 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
 //  - kills as ENVIRONMENT WITH FLAVOUR: the pair pass stamps its
 //    canonIdx like anyone's; the death site resolves a prop-shoved
 //    death to m.deathByProp (the comedy is the point).
-function mintFurniture(state, trackSeed, lapArc, spawnX, restSites) {
+function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
   state.props = [];
   if (!window.FF.CONFIG.spawnFurniture) return;
-  // The salted stream: same track, same spot, forever; and zero
-  // draws from any stream the generator owns. DRAW ORDER IS LAW:
-  // candidates first, then the pigment seed — reordering the draws
-  // re-rolls every shipped track.
-  const rng = window.FF.mulberry32(((trackSeed >>> 0) ^ 0xBA11BA11) >>> 0);
-  // WAKE CANDIDATES (ruled 2026-08-27k): the dice are ALL thrown at
-  // mint — N candidate ARCS in the mid-lap band, sorted ascending so
-  // the walk meets them in travel order. Arc, not x: terrain
-  // STREAMS, and "the ground at x" is multivalued under a fold —
-  // spine.surfaceAt(s) is single-valued on the riding surface, walls
-  // skipped, the same convention the respawn fallback trusts. (The
-  // v311 mint added an arc fraction to a world X — the ball could
-  // sit over void at build and fall off the world; module suites on
-  // a flat infinite poly could not see it.)
   const FCFG = window.FF.CONFIG.furniture;
   const arc = lapArc || 40000;
-  // CANDIDATES ARE REST SITES (ruled 2026-08-27): dips the world
-  // holds a body in, computed from the lap template at provider
-  // construction (tracks.js restSites). An arbitrary arc is usually
-  // a HILLSIDE — a ball placed there rolls away long before anyone
-  // arrives (measured: 1360-1662 px/s, gone from the streamed window
-  // in 12-15 s), which is why furniture was never met on device. A
-  // dip needs no pin, no drag, no exemption: the ordinary solver
-  // holds it. What happens AFTER the first strike is the game's, not
-  // ours — a punted ball is a punted ball.
-  const band = (restSites || []).filter((q) =>
-    q.s > 0.15 * arc && q.s < 0.9 * arc);   // never on the grid or the closer
-  const cands = [];
-  if (band.length) {
-    // Draw without replacement from the band, seeded: a shuffled
-    // walk, so a fouled site is followed by an unrelated one rather
-    // than its neighbour 40 px along the same trough.
-    const pool = band.slice();
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
-    }
-    for (let i = 0; i < FCFG.candidates && i < pool.length; i++) {
-      cands.push(pool[i].s);
-    }
-  } else {
-    // STATED FALLBACK: no rest sites offered (harness worlds, a
-    // mode whose provider has no template). The old band draw —
-    // honest about being a hillside, and the survey says no real
-    // track lands here (8 seeds, 30-45 sites each, none barren).
-    for (let i = 0; i < FCFG.candidates; i++) cands.push((0.25 + rng() * 0.6) * arc);
-  }
-  cands.sort((a, b) => a - b);
   const FOB = window.FF.OBJECTS;
-  // Minted DORMANT: a record, parked far above the void it must
-  // never touch — no stepping, no bodyList, no render until the
-  // wake law (physics.js tryWakeProp) places it against streamed
-  // ground. The placement solve happens ONLY at wake time.
-  const p = createBody((spawnX || 0), -100000,
-    (FOB && FOB.beachball && FOB.beachball.sizeMult) || 1, 'beachball');
-  p.dormant = true;
-  p.wake = { cands, idx: 0 };
-  p.name = 'BEACH BALL';
-  // The furniture's pigment: the species anchor, seeded from the
-  // SAME salted stream (the seed owns the red).
-  if (window.FF.shading && window.FF.shading.anchorColor) {
-    p.bodyColor = window.FF.shading.anchorColor('beachball',
-      (rng() * 0xFFFFFFFF) >>> 0);
+  // SEPARATION IS GLOBAL, not per species (phase 3): a box resting
+  // against a beach ball clips exactly as badly as two balls do. One
+  // claimed list spans the whole mint. The ball is minted first and
+  // starts from an empty list, so its placements are bit-unmoved; a
+  // later species is the one that must yield.
+  const claimed = [];
+  // ONE KIND AT A TIME, each off its OWN salted stream (phase 3). The
+  // loop is the only new thing: the body of it is the ball's law
+  // verbatim, so the ball's draws — count, shuffle, pigment, in that
+  // order — land on exactly the numbers they did before.
+  for (const kind of FCFG.kinds) {
+    if (!FOB || !FOB[kind.species]) continue;   // unregistered: not a crash
+    // STATED-TEMPORARY disable (2026-08-30): a disabled kind is
+    // skipped BEFORE its stream is opened — zero draws, so every
+    // other kind's deal is bit-unmoved, and re-enabling deals the
+    // disabled kind's own numbers exactly as it always did.
+    if (kind.disabled) continue;
+    // The salted stream: same track, same spots, forever; and zero
+    // draws from any stream the generator owns. DRAW ORDER IS LAW:
+    // COUNT, then the shuffle, then per-prop pigment — reordering the
+    // draws re-rolls every track. PER SPECIES since phase 3, so a new
+    // prop species can never disturb an existing one's placements.
+    const rng = window.FF.mulberry32(((trackSeed >>> 0) ^ kind.salt) >>> 0);
+    // WAKE CANDIDATES (ruled 2026-08-27k): the dice are ALL thrown at
+    // mint — N candidate ARCS in the mid-lap band, sorted ascending so
+    // the walk meets them in travel order. Arc, not x: terrain
+    // STREAMS, and "the ground at x" is multivalued under a fold —
+    // spine.surfaceAt(s) is single-valued on the riding surface, walls
+    // skipped, the same convention the respawn fallback trusts. (The
+    // v311 mint added an arc fraction to a world X — the ball could
+    // sit over void at build and fall off the world; module suites on
+    // a flat infinite poly could not see it.)
+    //
+    // CANDIDATES ARE THE SPECIES' OWN SITES (phase 3). A sphere takes
+    // REST SITES: dips the world holds a body in, computed from the
+    // lap template at provider construction. An arbitrary arc is
+    // usually a HILLSIDE — a ball placed there rolls away long before
+    // anyone arrives (measured: 1360-1662 px/s, gone from the streamed
+    // window in 12-15 s), which is why furniture was never met on
+    // device. A box takes FLAT SITES, and refuses any run shorter than
+    // its own footprint: a dip would make it bridge the vee and rock
+    // on two corners. Either way the ordinary solver holds it — no
+    // pin, no drag, no exemption. What happens AFTER the first strike
+    // is the game's, not ours.
+    const source = kind.sites === 'flat' ? (flatSites || []) : (restSites || []);
+    // FOOTPRINT: derived, never guessed. The run must hold the whole
+    // body with room either side.
+    const ph = window.FF.derivePhysique(kind.species,
+      (FOB[kind.species].sizeMult) || 1);
+    const footprint = ph.boundR * 2 + FCFG.wakeGap * 2;
+    const band = source.filter((q) =>
+      q.s > 0.15 * arc && q.s < 0.9 * arc      // never on the grid or the closer
+      && (q.len === undefined || q.len >= footprint));
+    // HOW MANY: the count is the FIRST draw off the stream.
+    const count = kind.countMin
+      + Math.floor(rng() * (kind.countMax - kind.countMin + 1));
+    // THE DEAL. One shuffled walk of the band, sites handed out
+    // round-robin so no two props ever share a site or a fallback —
+    // and a claimed site is refused if it sits within minSeparation of
+    // one already taken, so two resting props cannot clip. Props MAY
+    // end up neighbours; they may not overlap. When sites run short
+    // the later props simply get fewer candidates (and at worst one),
+    // which the wake walk already tolerates.
+    // Per-kind fallback cap (2026-08-30): claims are GLOBAL, so a
+    // deep candidate list is a land grab — capped kinds leave the
+    // band shareable. Absent, the old FCFG.candidates rules and the
+    // list assembly is bit-identical (the ball is unmoved).
+    const capN = kind.candidatesCap || FCFG.candidates;
+    const lists = [];
+    for (let i = 0; i < count; i++) lists.push([]);
+    if (band.length) {
+      const pool = band.slice();
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+      }
+      let turn = 0;
+      for (const site of pool) {
+        if (lists.every((l) => l.length >= capN)) break;
+        let clash = false;
+        for (const c of claimed) {
+          if (Math.abs(c - site.s) < kind.minSeparation) { clash = true; break; }
+        }
+        if (clash) continue;
+        // round-robin to the next prop still short of a full list
+        let guard = 0;
+        while (lists[turn % count].length >= capN && guard++ < count) turn++;
+        lists[turn % count].push(site.s);
+        claimed.push(site.s);
+        turn++;
+      }
+    }
+    // STATED FALLBACK, PER KIND. A 'rest' species with no sites falls
+    // back to the old band draw — honest about being a hillside, and
+    // no real track lands there (8 seeds, 30-45 sites each, none
+    // barren). A 'flat' species does NOT: the entire point of a flat
+    // site is that a box on a slope is wrong, so a box with no run to
+    // stand on simply is not minted. Inventing a home would contradict
+    // the law that chose the site source in the first place.
+    if (kind.sites === 'flat') {
+      for (let i = lists.length - 1; i >= 0; i--) {
+        if (lists[i].length < 1) lists.splice(i, 1);
+      }
+    } else {
+      for (const list of lists) {
+        while (list.length < 1) list.push((0.25 + rng() * 0.6) * arc);
+      }
+    }
+    for (const cands of lists) {
+      cands.sort((a, b) => a - b);
+      // THE STACK DEAL (2026-08-30, authored stacks ruling). DRAW
+      // ORDER IS LAW for this kind's stream: after count and the
+      // shuffle above, each stack draws its TIER COUNT, then one
+      // pigment per tier, in tier order. A non-stack kind draws
+      // exactly what it always drew (tiers = 1, no tier draw).
+      const tiers = kind.stackMin
+        ? kind.stackMin + Math.floor(rng() * (kind.stackMax - kind.stackMin + 1))
+        : 1;
+      let base = null;
+      for (let tier = 0; tier < tiers; tier++) {
+        // Minted DORMANT: a record, parked far above the void it must
+        // never touch — no stepping, no bodyList, no render until the
+        // wake law (physics.js tryWakeProp) places it against streamed
+        // ground. The placement solve happens ONLY at wake time.
+        const p = createBody((spawnX || 0), -100000,
+          (FOB[kind.species].sizeMult) || 1, kind.species);
+        p.dormant = true;
+        if (tier === 0) {
+          // The BASE owns the wake walk and probes clearance for the
+          // WHOLE column (it knows its height via stackTiers).
+          p.wake = { cands, idx: 0 };
+          p.stackTiers = tiers;
+          base = p;
+        } else {
+          // Upper tiers carry no walk: they wake the same tick the
+          // base does, placed relative to the base's wake pose
+          // (tryWakeProp's stackBase branch). Same-tick is
+          // GUARANTEED by list order — the base is minted first, so
+          // the wake sweep clears its dormant flag before any tier
+          // asks.
+          p.stackBase = base;
+          p.stackTier = tier;
+        }
+        p.name = kind.name;
+        // The furniture's pigment: the species anchor, seeded from the
+        // SAME salted stream (the seed owns the colour, one per prop —
+        // one per TIER for a stack).
+        if (window.FF.shading && window.FF.shading.anchorColor) {
+          p.bodyColor = window.FF.shading.anchorColor(kind.species,
+            (rng() * 0xFFFFFFFF) >>> 0);
+        }
+        p.pilot = '';
+        p.isProp = true;
+        p.input = { rawAxis: 0, rawBounce: 0, torqueAxis: 0, bounceAxis: 0,
+          hopEligible: false, hopPending: 0, hopBuffer: 0 };
+        state.props.push(p);
+      }
+    }
   }
-  p.pilot = '';
-  p.isProp = true;
-  p.input = { rawAxis: 0, rawBounce: 0, torqueAxis: 0, bounceAxis: 0,
-    hopEligible: false, hopPending: 0, hopBuffer: 0 };
-  state.props.push(p);
 }
 
 function snapshotPrev(state) {
@@ -679,23 +901,16 @@ function snapshotPrev(state) {
 // species tapers). Used to dress the player in their persistent
 // melon's spec.
 function setBodyScale(m, scale) {
-  const sc = scale || 1;
-  const _density = speciesDensity(m.species);
-  m.a = CONFIG.semiMajor * sc;
-  m.b = m.a * speciesAspect(m.species);
-  const taper = speciesTaper(m.species);
-  m.taper = taper;
-  if (taper) {
-    const { mass, inertia, sh } = taperedMassInertia(m.a, m.b, taper, _density);
-    m.sh = sh;
-    m.invM = 1 / mass;
-    m.invI = 1 / inertia;
-  } else {
-    m.sh = 0;
-    const mass = CONFIG.mass * (m.a * m.b * m.b) / REF_VOL * _density;
-    m.invM = 1 / mass;
-    m.invI = 1 / (mass * (m.a * m.a + m.b * m.b) / 4);
-  }
+  const ph = derivePhysique(m.species, scale || 1);
+  m.a = ph.a;
+  m.b = ph.b;
+  m.taper = ph.taper;
+  m.shape = ph.shape;
+  m.poly = ph.poly;
+  m.boundR = ph.boundR;
+  m.sh = ph.sh;
+  m.invM = 1 / ph.mass;
+  m.invI = 1 / ph.inertia;
 }
 
 // ---- THE IDENTITY OF RECORD (2026-08-14) --------------------------
@@ -765,5 +980,6 @@ function applyGridSlots(state, slots, lineX, fallbackY) {
 
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, mintFurniture, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots });
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, mintFurniture, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots,
+  derivePhysique, speciesShape });
 })();
