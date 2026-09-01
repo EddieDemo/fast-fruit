@@ -244,8 +244,8 @@ function has(name) { return BRAINS.has(name); }
 // grows until a crest is crossed. Tick-derived, rng-free, and the
 // slight forward bias at rest breaks the symmetry deterministically.
 const STALL_TICKS = 240, ESCAPE_V = 380;
-const RESTALL_GRACE = 720;     // a release that re-stalls inside 6s failed
-const BACKUP_TICKS = 360;      // the reverse-and-send: 3s of run-up
+const RESTALL_GRACE = 6 * window.FF.CONFIG.physicsHz;   // a release that re-stalls inside 6s failed
+const BACKUP_TICKS = 3 * window.FF.CONFIG.physicsHz;    // the reverse-and-send: 3s of run-up
 function makeRocker() {
   let stallT = 0, rocking = false, backupT = 0, attempts = 0, sinceRelease = 1e9;
   let refX = null, refT = 0, rockX0 = 0, escDir = -1;

@@ -17,6 +17,12 @@
 const DEFAULTS = Object.freeze({
   // --- Simulation ---
   physicsHz: 120,          // fixed timestep frequency
+  // THE WORLD UNIT (one source, 2026-08-31). 100 world px = 1 metre.
+  // This fact was spelled by hand in state.js (METRE), tracks.js
+  // (lapLengthM * 100) and the renderer (VIEW_W_M * 100, /100 on
+  // heights, /100 on grid tiers) — four copies of one number that
+  // could drift. Every consumer now reads it here.
+  pxPerMetre: 100,
   solverIterations: 6,     // contact solve passes per step
   // DEV: soloRace empties the field — no cast, no rivals — so the
   // track and its furniture can be explored without bots racing
@@ -288,7 +294,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-30a';
+const BUILD = '2026-08-31a';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -506,6 +512,27 @@ CONFIG.furniture = {
       minSeparation: 260,   // the standard gap (400 starved sparse bands — measured)
       candidatesCap: 4,     // same sharing law as the lone box
       stackMin: 2, stackMax: 3,
+    },
+    {
+      // MINTED LAST, DELIBERATELY. mintFurniture's own law: the claim
+      // list is global and "a later species is the one that must
+      // yield". The first cut placed this kind mid-list and MEASURED
+      // the consequence — the crate stack vanished on 5 of 6 suite
+      // seeds, because up to three boulders ate the flat band before
+      // the stack was dealt. Last means the box and the stack deal
+      // exactly what they always dealt, and the boulder takes what is
+      // left (which is why its count is a RANGE from 1: a track with
+      // a busy flat band gets fewer rocks, not a starved stack).
+      species: 'boulder', name: 'BOULDER',
+      salt: 0xB0D1E5B0,  // its OWN stream: every existing kind's deal is bit-unmoved
+      sites: 'flat',     // FLAT ONLY for now (Eddie's ruling) — a slope
+                         // start would let a boulder tumble from mint,
+                         // which is risk R3 and its own ruling.
+      countMin: 1, countMax: 3,
+      // 2r = 136 at R 65 before jitter; 260 is the standard gap and
+      // leaves room, same law as every other kind.
+      minSeparation: 260,
+      candidatesCap: 4,
     },
   ],
   // Vertical daylight between stacked tiers at placement, px. One

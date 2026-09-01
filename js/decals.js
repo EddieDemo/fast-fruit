@@ -556,8 +556,7 @@ function starHit(pts, x, y, cx, cy, R, aim) {
 // THE CANONICAL WHITE (shading.js owns it; ruled 2026-08-24). The
 // old literal [246,248,242] carried a green trace nobody authored —
 // re-pinned to the shared colourless pigment, a ~2-unit shift.
-const WHITE = (window.FF.shading && window.FF.shading.WHITE_RGB)
-  || [246, 246, 246];
+const WHITE = window.FF.shading.WHITE_RGB;   // one source; shading loads first
 
 function ring(nx, ny, r, w) {
   const d = Math.sqrt(nx * nx + ny * ny);

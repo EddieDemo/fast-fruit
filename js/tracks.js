@@ -108,8 +108,9 @@ function buildLapTemplate(seed, L, D) {
 // update(loX, hiX) keeps `pts` covering the window. Rebuild only
 // happens when the set of visible periods changes (about once a lap).
 function createTrackProvider(def) {
-  const L = def.lapLengthM * 100;
-  const D = def.dropPerLapM * 100;
+  const PXM = window.FF.CONFIG.pxPerMetre;
+  const L = def.lapLengthM * PXM;
+  const D = def.dropPerLapM * PXM;
   const template = buildLapTemplate(def.seed, L, D);
 
   // THE LAP ARC (stage 3): the template's total arc length — the

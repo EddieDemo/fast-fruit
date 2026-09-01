@@ -152,6 +152,22 @@ function speciesDensity(species) {
   const d = F && F[species] && F[species].density;
   return d === undefined ? 1 : d;
 }
+// A species' hull GENERATOR spec (boulders): { R, sidesMin, sidesMax }.
+// Absent = the species uses a fixed vertex list, as every poly
+// species did before boulders.
+function speciesHullGen(species) {
+  const F = window.FF.OBJECTS;
+  return (F && F[species] && F[species].hullGen) || null;
+}
+// Side count from the SAME seed, on its own stream offset so that
+// changing the side range cannot shift the vertex stream (the two
+// draws stay independent — the stream is sacred).
+function hullSides(gen, hullSeed) {
+  const lo = gen.sidesMin || 6, hi = gen.sidesMax || 8;
+  if (hi <= lo) return lo;
+  const r = window.FF.mulberry32(((hullSeed >>> 0) ^ 0x5EED51DE) >>> 0);
+  return lo + Math.floor(r() * (hi - lo + 1));
+}
 function speciesToughnessMult(species) {
   const F = window.FF.OBJECTS;
   const t = F && F[species] && F[species].toughnessMult;
@@ -207,6 +223,105 @@ function taperedMassInertia(a, b, taper, _density) {
 // so the comparable factor is 8*hx*hy^2 * 3/(4pi). One convention,
 // applied to both families; REF_VOL still normalises the melon to
 // CONFIG.mass exactly.
+// ---- BOULDER HULLS: PER-INSTANCE GEOMETRY (phase 1, 2026-08-30) ---
+// Ruled by Eddie: boulders are slightly irregular convex 6-8 gons, no
+// two alike, and they are FRAGMENTS OF THE TERRAIN in the lore.
+//
+// CONVEXITY IS A LOAD-BEARING PROMISE, NOT A HOPE. Every consumer of
+// a hull assumes convex: SAT (polyVsPoly), the affine melon cell, the
+// egg's per-edge cell, and the terrain sweep. A concave hull does not
+// crash any of them — it produces WRONG CONTACTS QUIETLY, which is
+// the worst failure this codebase has a name for.
+//
+// THE CHECK IS THE GUARANTEE. The first draft of this comment argued
+// convexity "by construction" from a bound on the radius band — that
+// argument was WRONG and the measurement said so: the angular jitter
+// can push two vertices closer than the even spacing the arithmetic
+// assumed, so a short vertex between two long ones can still go
+// reflex. Measured at the shipped parameters: 359 of 24000 hulls
+// (1.5%) are born concave. They are CAUGHT and replaced by the convex
+// hull of the same points. What the construction actually buys is
+// rarity, not safety.
+//
+// THE FALLBACK IS BOUNDED, and that is measured too: hulling drops at
+// most one vertex (24000-seed sweep: 7->6 thirty-eight times, 8->7
+// three hundred and twenty, 8->6 once, and n=6 never falls back at
+// all), so every boulder stays inside Eddie's ruled 6-8 sides. A
+// tighter band WOULD cut the fallback rate, and was rejected on
+// measurement: at jitter 1/5 and band 0.88-1.12 the rate falls to 1
+// in 12000 but the face-length ratio climbs from 0.47 to 0.64 —
+// rounder, more regular rocks with fewer SMALL faces, and small faces
+// are exactly what Eddie's tipping ruling needs.
+//
+// FACE SIZE IS A GAMEPLAY PARAMETER, not decoration (Eddie's tipping
+// ruling): a boulder resting on a SMALL face is unsteady and can be
+// tipped by a fast melon; one with no small faces never can. The
+// radial band is therefore a physics dial, and the suite measures the
+// face-length spread it produces.
+const BOULDER_R_LO = 0.86, BOULDER_R_HI = 1.14;
+const BOULDER_ANG_JITTER = 1 / 3;   // fraction of the even spacing
+
+function hullOf(pts) {
+  // Monotone chain. Deterministic: ties break on the sort's own
+  // total order (x then y), never on input order.
+  const P = pts.slice().sort((u, v) => (u[0] - v[0]) || (u[1] - v[1]));
+  if (P.length < 3) return P;
+  const cross = (o, a, b) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of P) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = P.length - 1; i >= 0; i--) {
+    const p = P[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+function isConvex(verts) {
+  const n = verts.length;
+  if (n < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n], c = verts[(i + 2) % n];
+    const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (cr === 0) continue;              // collinear: no information
+    const s = cr > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return sign !== 0;
+}
+
+// seed -> vertex list, in registry units (px before scale). The
+// caller owns the seed; the same seed is the same boulder forever.
+function boulderHull(seed, R, nSides) {
+  const r = window.FF.mulberry32(seed >>> 0);
+  const n = Math.max(3, nSides | 0);
+  const step = 2 * Math.PI / n;
+  const verts = [];
+  for (let i = 0; i < n; i++) {
+    // THE STREAM IS SACRED: both draws happen for every vertex, in
+    // the same order, whatever the values are used for.
+    const jitter = (r() - 0.5) * 2 * BOULDER_ANG_JITTER * step;
+    const rad = R * (BOULDER_R_LO + (BOULDER_R_HI - BOULDER_R_LO) * r());
+    const t = i * step + jitter;
+    verts.push([rad * Math.cos(t), rad * Math.sin(t)]);
+  }
+  if (isConvex(verts)) return verts;
+  boulderHull._fellBack = (boulderHull._fellBack || 0) + 1;
+  return hullOf(verts);
+}
+window.FF.boulderHull = boulderHull;
+window.FF._isConvex = isConvex;
+window.FF._hullOf = hullOf;
+
+
 const PRISM_K = 3 / (4 * Math.PI) * 8;   // prism factor -> ellipse's units
 function polyPhysique(verts, scale, _density) {
   if (_density === undefined) _density = 1;
@@ -268,12 +383,20 @@ function polyPhysique(verts, scale, _density) {
 // smooth families it is exactly today's expression, a * (1 + taper),
 // so the change is numerically inert — which the bit-identity gate
 // proves rather than assumes.
-function derivePhysique(species, scale) {
+// hullSeed (2026-08-30, boulders phase 1): an OPTIONAL per-instance
+// geometry seed. A species whose registry entry carries `hullGen`
+// grows its vertices from this seed instead of a fixed vertex list,
+// so no two boulders are alike. Absent seed or absent hullGen = the
+// shipped path, untouched, which the gates prove rather than assume.
+function derivePhysique(species, scale, hullSeed) {
   const sc = scale || 1;
   const shape = speciesShape(species);
   const _density = speciesDensity(species);
   if (shape === 'poly') {
-    const verts = speciesPoly(species);
+    const gen = speciesHullGen(species);
+    const verts = (gen && hullSeed !== undefined && hullSeed !== null)
+      ? boulderHull(hullSeed, gen.R, hullSides(gen, hullSeed))
+      : speciesPoly(species);
     if (verts && verts.length >= 3) {
       const p = polyPhysique(verts, sc, _density);
       return { shape, a: p.a, b: p.b, taper: 0, sh: 0, poly: p.poly,
@@ -512,7 +635,7 @@ function createBody(x, y, scale, fruit) {
 // at rest — twelve racers drop onto the apron side by side and the
 // race starts when they cross the line. Placement is a pure function
 // of grid index and terrain, identical on every lockstep peer.
-const METRE = 100;      // world px per metre
+const METRE = window.FF.CONFIG.pxPerMetre;   // world px per metre (one source)
 // Spawn height: the body's BOTTOM this far above the ground. Was 2 m
 // (a visible drop onto the grid); now 0.25 m, so the field is already
 // composed when the camera arrives rather than raining into place.
@@ -871,6 +994,23 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
           p.bodyColor = window.FF.shading.anchorColor(kind.species,
             (rng() * 0xFFFFFFFF) >>> 0);
         }
+        // PER-INSTANCE GEOMETRY (boulders, phase 2). The hull seed is
+        // PURE ARITHMETIC off this kind's own salted seed and the
+        // prop's index — NO rng() draw. That is deliberate and it is
+        // the bot-pigment pattern: a draw here would sit inside a
+        // stream whose order is law, and every kind minted after a
+        // boulder would deal different numbers the day the side range
+        // changed. Arithmetic disturbs nothing, and the seed is still
+        // "same track, same boulders, forever".
+        if (speciesHullGen(kind.species)) {
+          p.hullSeed = (((trackSeed >>> 0) ^ kind.salt)
+            + Math.imul(state.props.length + 1, 2654435761)) >>> 0;
+          // Re-derive: createBody above ran before the seed existed,
+          // so its hull is the registry fallback. One door
+          // (setBodyScale) recomputes vertices, mass, inertia and
+          // boundR together — they must never disagree.
+          setBodyScale(p, (FOB[kind.species].sizeMult) || 1);
+        }
         p.pilot = '';
         p.isProp = true;
         p.input = { rawAxis: 0, rawBounce: 0, torqueAxis: 0, bounceAxis: 0,
@@ -901,7 +1041,10 @@ function snapshotPrev(state) {
 // species tapers). Used to dress the player in their persistent
 // melon's spec.
 function setBodyScale(m, scale) {
-  const ph = derivePhysique(m.species, scale || 1);
+  // m.hullSeed carries per-instance geometry when the species grows
+  // its own hull; undefined for every other body, which is the
+  // shipped path.
+  const ph = derivePhysique(m.species, scale || 1, m.hullSeed);
   m.a = ph.a;
   m.b = ph.b;
   m.taper = ph.taper;

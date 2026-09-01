@@ -341,7 +341,7 @@ if (FF.session && FF.session.registerMetric) {
 // Ruled edges: mutual head-ons credit BOTH (each is the other's
 // breadcrumb); posthumous kills stand (the dead can score);
 // self-kills are impossible (the breadcrumb is never self).
-const ASSIST_TICKS = 3 * 120;   // the ruled ~3 s window
+const ASSIST_TICKS = 3 * window.FF.CONFIG.physicsHz;   // the ruled ~3 s window
 
 // ---- THE ELIMINATION TICK -----------------------------------------
 // Registered as the session's customer law (sessionOpts.onTick).
@@ -417,7 +417,7 @@ function placements(bodies, keys, deathTick) {
 }
 
 // ---- Entry --------------------------------------------------------
-const DUR_TICKS = 2 * 60 * 120;   // ruled: two minutes, counted in
+const DUR_TICKS = 2 * 60 * window.FF.CONFIG.physicsHz;   // ruled: two minutes, counted in
                                   // sim ticks, never wall clock
 
 let _arena = null;

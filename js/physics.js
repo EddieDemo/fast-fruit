@@ -281,20 +281,19 @@ function rehomeProp(state, p) {
 }
 
 // ---- PROP ISLANDS (PHASE-6 §5.2/§5.3, 2026-08-29) ----------------
-// THE ISLAND RULE, law: an island qualifies for the unified pass only
-// if every member is a prop and no live racer is within contact range
-// of any member. Racer arithmetic is untouched by CONSTRUCTION, not
-// by care — no racer body ever reaches the unified code path (ratchet
-// A23), so gate-hash.js stays byte-identical and the 144-race balance
-// cannot move. Islands of ONE stay on the legacy path: a lone prop
+// THE ISLAND RULE, law (amended 2026-08-30, D6-1 ruling): an island
+// qualifies for the unified pass if every member is a prop and it has
+// two or more members. Racer arithmetic is untouched by CONSTRUCTION,
+// not by care — no racer body ever reaches the unified code path
+// (ratchet A23): racers couple to island members through the legacy
+// global pair loop, outside the island, so gate-hash.js stays
+// byte-identical. Islands of ONE stay on the legacy path: a lone prop
 // already works (exp-restpose: 0.27 px / 60 s) and fewer things move.
 //
-// NAMED DEFECT D6-1: a stack a racer is crashing into is disqualified
-// and reverts to legacy sequencing for that tick. Acceptable because
-// the failure phase 6 fixes is a RESTING failure — a stack standing
-// still — and the racer-contact tick is not that. If device play
-// shows stacks bursting on contact rather than under their own
-// weight, D6-1 is the suspect. The rehome tick is the same seam.
+// D6-1 (racer-adjacent reversion) CLOSED 2026-08-30, ruled by Eddie:
+// see the qualification note in buildPropIslands. Islands stay
+// unified while racers touch them; the racer couples through the
+// legacy pair loop, outside the island.
 
 const PROP_STEP = [];   // steppable props this tick (list order = canonical)
 const ISL_PARENT = [];  // union-find scratch
@@ -358,24 +357,22 @@ function buildPropIslands(state, steppable) {
     if (r === i) { steppable[i]._islRoot = out.length; out.push([steppable[i]]); }
     else out[steppable[r]._islRoot].push(steppable[i]);
   }
-  // Qualification: size >= 2, and no LIVE racer within range of any
-  // member. A racer in range disqualifies the WHOLE island — load
-  // crosses every contact in it, so half an island is not an island.
+  // Qualification: size >= 2. D6-1 CLOSED (RULED 2026-08-30): a
+  // racer in range no longer disqualifies. The island stays unified
+  // for its PROPS; the racer talks to those props through the legacy
+  // global pair loop exactly as before — an external impulse source
+  // with one tick of latency, the same coupling any legacy neighbour
+  // has. No racer body reaches the unified code path (ratchet A23
+  // holds by construction, not by disqualification), so the smooth
+  // gate cannot move. What the old rule actually bought was the
+  // DEFECT: the moment a melon touched a stack, the stack reverted
+  // to the momentum-injecting sequential solver — unstable exactly
+  // when bombarded, and at the 2026-08-30 light box mass the
+  // injection runs faster than ever. What it feared — split load —
+  // never applied: the island is not split, the racer is outside it.
   const keep = [];
   for (const isl of out) {
     if (isl.length < 2) continue;
-    let racerNear = false;
-    for (const pl of state.players) {
-      if (!pl.melon.alive) continue;
-      for (const m of isl) if (bodiesInRange(pl.melon, m, period)) { racerNear = true; break; }
-      if (racerNear) break;
-    }
-    if (!racerNear) for (const b of state.bots) {
-      if (!b.melon.alive) continue;
-      for (const m of isl) if (bodiesInRange(b.melon, m, period)) { racerNear = true; break; }
-      if (racerNear) break;
-    }
-    if (racerNear) continue;
     for (const m of isl) m.islandId = keep.length;
     keep.push(isl);
   }
@@ -449,6 +446,7 @@ function step(state, dt) {
   snapshotPrev(state);
   state.tick++;
   const tick = state.tick;
+  HOP_TICK = tick;
 
   // ---- Revive bodies whose respawn is due ----
   for (const pl of state.players) reviveIfDue(pl.melon, state, tick);
@@ -695,7 +693,7 @@ function applySmashRule(m, state, tick, isPlayer, bodyIndex) {
     // name in the story.
     m.deathByProp = null;
     if (state.props && state.props.length
-      && m.lastContactTick && (tick - m.lastContactTick) <= 360) {
+      && m.lastContactTick && (tick - m.lastContactTick) <= 3 * CONFIG.physicsHz) {
       for (const pp of state.props) {
         if (pp.canonIdx === m.lastContactIdx) { m.deathByProp = pp.name || 'FURNITURE'; break; }
       }
@@ -1049,7 +1047,313 @@ function supportRadius(m, nx, ny) {
 // measurement. Landing it here would destroy the one property that
 // makes THIS build checkable: that the melon-vs-melon arithmetic is
 // provably untouched.
-const PAIR_ROUTE = { 'poly|poly': 'sat' };
+// ---- D5-1: ELLIPSE VS POLY, EXACT BY THE AFFINE TRICK -------------
+// (PHASE-6 doc §9, built 2026-08-30.) The line-of-centres route
+// handed a melon resting 30 px off a box-top's centre a normal 19.2
+// degrees off true and 9.4 px of penetration that does not exist
+// (exp-pairnormal.js) — every racer that touched a box got this.
+// The cure is ellipseVsSegment's own trick, one polygon wider: in
+// the ellipse's frame, scale y by a/b so the ellipse is a circle;
+// an affine map keeps the box a CONVEX hull, so the closest point
+// to the circle's centre is an exact edge walk; map the contact
+// back, recover the TRUE normal by the inverse-transpose, and
+// measure penetration IN WORLD along that normal with the exact
+// support functions — never with scaled-space distance, which the
+// map does not preserve.
+//
+// THE EGG DOES NOT ADMIT THIS TRICK: a tapered body is not an
+// ellipse. egg|poly is a NAMED cell in the route table below and
+// stays on the line of centres until it earns its own routine.
+//
+// Normal convention: E toward P (the caller flips when the poly is
+// party A, so PAIR_C always carries A-toward-B like every route).
+function polySupportAlong(P, px0, py0, dx, dy) {
+  const c = dcos(P.angle), s = dsin(P.angle);
+  let best = -Infinity;
+  for (let i = 0; i < P.poly.length; i++) {
+    const v = P.poly[i];
+    const wx = v[0] * c - v[1] * s;
+    const wy = v[0] * s + v[1] * c;
+    const d = wx * dx + wy * dy;
+    if (d > best) best = d;
+  }
+  return best;
+}
+
+const EVP_V = [];   // scaled-hull scratch (grown on demand)
+
+function ellipseVsPolyPair(E, ex, ey, P, px0, py0, out) {
+  const a = E.a, b = E.b;
+  const s = a / b;
+  const cosE = dcos(E.angle), sinE = dsin(E.angle);
+  const cosP = dcos(P.angle), sinP = dsin(P.angle);
+  const n = P.poly.length;
+  while (EVP_V.length < n) EVP_V.push({ x: 0, y: 0 });
+  // The hull, in the ellipse's scaled frame (world -> E-local -> y*s).
+  for (let i = 0; i < n; i++) {
+    const v = P.poly[i];
+    const wx = px0 + v[0] * cosP - v[1] * sinP;
+    const wy = py0 + v[0] * sinP + v[1] * cosP;
+    const rx = wx - ex, ry = wy - ey;
+    EVP_V[i].x = rx * cosE + ry * sinE;
+    EVP_V[i].y = (-rx * sinE + ry * cosE) * s;
+  }
+  // Closest point on the hull to the origin, and the inside test
+  // (winding-agnostic: inside means every edge cross carries one
+  // sign). Exact and cheap: closest point per edge, take the min.
+  let bestD2 = Infinity, cx = 0, cy = 0;
+  let sawPos = false, sawNeg = false;
+  for (let i = 0; i < n; i++) {
+    const va = EVP_V[i], vb = EVP_V[(i + 1) % n];
+    const abx = vb.x - va.x, aby = vb.y - va.y;
+    const cr = abx * (-va.y) - aby * (-va.x);
+    if (cr > 0) sawPos = true; else if (cr < 0) sawNeg = true;
+    const len2 = abx * abx + aby * aby;
+    let t = len2 > 0 ? -(va.x * abx + va.y * aby) / len2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const qx = va.x + abx * t, qy = va.y + aby * t;
+    const d2 = qx * qx + qy * qy;
+    if (d2 < bestD2) { bestD2 = d2; cx = qx; cy = qy; }
+  }
+  const inside = !(sawPos && sawNeg);
+  const dist = Math.sqrt(bestD2);
+  if (!inside && dist >= a) return false;
+  if (dist < 1e-9) return false;   // centre ON the boundary: no direction to trust
+  // Circle-space normal, E toward P: toward the hull when outside,
+  // out through the nearest face when the centre is swallowed.
+  const sign = inside ? -1 : 1;
+  const ncx = sign * cx / dist, ncy = sign * cy / dist;
+  // Normal back to world by the JACOBIAN TRANSPOSE: multiply y by s,
+  // re-normalize, rotate by +E.angle. PROVEN BY MEASUREMENT
+  // (2026-08-30): at tilt -0.9, dx=45 — tangency ON the face — the
+  // inverse-transpose spelling (divide by s) returns -12.51 deg off
+  // the true vertical; multiply returns 0.00 exact. Level poses
+  // cannot distinguish the two (both normalize to the face normal),
+  // which is how the divide spelling survived every level gate.
+  // NOTE, FLAGGED FOR RULING: ellipseVsSegment carries the SAME
+  // divide-by-s — a candidate latent terrain-normal defect for
+  // TILTED melons, gate-held, not to be changed silently. Named for
+  // Eddie; do not copy this fix there without its own measurement
+  // and a deliberate re-baseline.
+  let nlx = ncx, nly = ncy * s;
+  const nlen = Math.sqrt(nlx * nlx + nly * nly);
+  nlx /= nlen; nly /= nlen;
+  const nx = nlx * cosE - nly * sinE;
+  const ny = nlx * sinE + nly * cosE;
+  // Contact point: the hull's closest point, mapped back to world
+  // (unscale y, rotate, translate) — a real point on the box's
+  // surface, so the lever arms are honest.
+  const lx = cx, ly = cy / s;
+  out.px = ex + lx * cosE - ly * sinE;
+  out.py = ey + lx * sinE + ly * cosE;
+  if (!inside) {
+    // Penetration by ellipseVsSegment's own method, exact at every
+    // tilt: the ellipse surface point along the circle-space radial,
+    // unscaled to world, measured along the true normal. NOT via
+    // supportRadius — that function is the POLAR radius, which for a
+    // tilted ellipse under-measures the support by up to ~1 px
+    // (measured: 37.72 vs 38.53 analytic at 0.5 rad), and not via
+    // scaled-space distance, which the map does not preserve.
+    const spx = (cx / dist) * a;
+    const spy = ((cy / dist) * a) / s;
+    const ex2 = ex + spx * cosE - spy * sinE;
+    const ey2 = ey + spx * sinE + spy * cosE;
+    out.pen = (ex2 - out.px) * nx + (ey2 - out.py) * ny;
+  } else {
+    // The centre is swallowed (deep crash): the surface-point radial
+    // points the wrong way; the support formula is the honest
+    // measure here, and sub-pixel exactness is meaningless at this
+    // depth. supportRadius's polar-vs-support gap is bounded ~1 px.
+    const rE = supportRadius(E, nx, ny);
+    const rP = polySupportAlong(P, px0, py0, -nx, -ny);
+    out.pen = rE + rP - ((px0 - ex) * nx + (py0 - ey) * ny);
+  }
+  if (out.pen <= 0) return false;
+  out.nx = nx; out.ny = ny;
+  out.corrShare = 1;   // a smooth body's contact is its own manifold
+  return true;
+}
+
+// ---- THE EGG PAIR CELLS (RULED 2026-08-30: an egg PROP is coming,
+// so its contacts must be real before it lands) -------------------
+// egg|poly: the tapered body does not admit the ellipse's affine
+// trick, but it does not need one — eggVsSegment is the gate-held
+// honest construction, and a convex polygon IS its edges. Run it per
+// edge, keep the deepest contact. The frame rule: eggVsSegment reads
+// the egg's STORED pose, so when the pair logic hands us an IMAGED
+// egg we shift the EDGES into the egg's stored frame and shift the
+// contact back — the body is never touched.
+// egg|smooth (egg|ellipse, egg|egg): two smooth convex bodies. The
+// penetration along a direction d is supA(d) + supB(-d) - sep·d; the
+// TRUE contact axis is the direction minimizing it. Coarse 32-scan
+// over the circle, then fixed golden refinement in the bracketing
+// interval — fixed counts, pinned arithmetic, lockstep-safe like
+// every egg search in this file. Uses TRUE support functions (the
+// ellipse's closed form, the egg's search) — NOT supportRadius,
+// which is the polar radius (the D5-1 finding).
+// ellipse|ellipse stays on centres: that is the racers' gate-held,
+// balance-tuned law, and nothing here may touch it.
+
+const EGGP_SEG_A = { x: 0, y: 0 }, EGGP_SEG_B = { x: 0, y: 0 };
+const EGGP_C = makeContact();
+
+function resolveEggPoly(E, ex, ey, P, px0, py0, out) {
+  // Shift everything into the egg's STORED frame.
+  const sx = E.x - ex, sy = E.y - ey;
+  const c = dcos(P.angle), s = dsin(P.angle);
+  const n = P.poly.length;
+  // FACE-FIRST MINIMUM-TRANSLATION LAW (corrected twice during the
+  // suite build, before shipping — both corrections convicted by
+  // measurement, both held by mutations):
+  //   1. Among contacts of one phase, keep the SMALLEST penetration —
+  //      the short way out. The first cut kept the deepest, which for
+  //      a deep overlap ejects the egg the LONG way through the box
+  //      (M168). SAT and the affine cell answer with the minimum.
+  //   2. FACE contacts outrank endpoint-clamped VERTEX contacts. A
+  //      naive minimum let a 0.38 px corner graze on the NEIGHBOURING
+  //      edge outvote a true 1.0 px face rest 7 px from the corner —
+  //      a 10.3 deg wrong normal at a legitimate pose, caught by the
+  //      taper-0 cross-check against the affine cell. An endpoint
+  //      clamp is an artifact of cutting the hull into edges: the
+  //      corner belongs to two edges, and when either adjacent edge
+  //      holds a face contact, the face IS the closest feature. A
+  //      true corner touch has no face hit anywhere, and only then
+  //      do vertex hits answer (M169).
+  let bestFace = Infinity, bestVert = Infinity;
+  for (let i = 0; i < n; i++) {
+    const v0 = P.poly[i], v1 = P.poly[(i + 1) % n];
+    EGGP_SEG_A.x = px0 + v0[0] * c - v0[1] * s + sx;
+    EGGP_SEG_A.y = py0 + v0[0] * s + v0[1] * c + sy;
+    EGGP_SEG_B.x = px0 + v1[0] * c - v1[1] * s + sx;
+    EGGP_SEG_B.y = py0 + v1[0] * s + v1[1] * c + sy;
+    eggVsSegment(E, EGGP_SEG_A, EGGP_SEG_B, EGGP_C);
+    if (!EGGP_C.hit) continue;
+    const takes = EGGP_C.vertexHit
+      ? (bestFace === Infinity && EGGP_C.pen < bestVert)
+      : (EGGP_C.pen < bestFace);
+    if (EGGP_C.vertexHit) { if (EGGP_C.pen < bestVert) bestVert = EGGP_C.pen; }
+    else if (EGGP_C.pen < bestFace) bestFace = EGGP_C.pen;
+    if (takes) {
+      // eggVsSegment's n pushes the egg AWAY (terrain law); the pair
+      // convention is E toward P — flip. Contact back to the caller's
+      // frame.
+      out.nx = -EGGP_C.nx; out.ny = -EGGP_C.ny;
+      out.px = EGGP_C.px - sx; out.py = EGGP_C.py - sy;
+      out.pen = EGGP_C.pen;
+    }
+  }
+  const best = bestFace < Infinity ? bestFace : bestVert;
+  if (best === Infinity || best <= 0) return false;
+  out.corrShare = 1;
+  return true;
+}
+
+// True support of a smooth body along a WORLD direction: value and
+// the world support point. Ellipse closed form; egg by the fixed
+// search. (The polar-radius supportRadius is NOT this — D5-1.)
+function smoothSupportWorld(m, dx, dy, out) {
+  const c = dcos(m.angle), s = dsin(m.angle);
+  const lx = dx * c + dy * s;
+  const ly = -dx * s + dy * c;
+  let qx, qy;
+  if (m.shape === 'egg') {
+    const t = eggSupportT(m, lx, ly);
+    const ct = dcos(t), st = dsin(t);
+    qx = eggQx(m, ct); qy = eggQy(m, ct, st);
+  } else {
+    const h = Math.sqrt(m.a * m.a * lx * lx + m.b * m.b * ly * ly);
+    qx = (m.a * m.a * lx) / h; qy = (m.b * m.b * ly) / h;
+  }
+  out.px = m.x + qx * c - qy * s;
+  out.py = m.y + qx * s + qy * c;
+}
+
+const EGGS_PA = { px: 0, py: 0 }, EGGS_PB = { px: 0, py: 0 };
+const EGGS_GOLD = 0.381966011250105;   // the same golden ratio as eggSupportT
+
+function eggSmoothPen(A, ax, ay, B, bx, by, dx, dy) {
+  // Penetration along d (A toward B): supports both ways less the
+  // centre separation projected on d. Positive = overlapping on this
+  // axis.
+  const c1 = dcos(A.angle), s1 = dsin(A.angle);
+  let lx = dx * c1 + dy * s1, ly = -dx * s1 + dy * c1;
+  let vA;
+  if (A.shape === 'egg') {
+    const t = eggSupportT(A, lx, ly);
+    const ct = dcos(t), st = dsin(t);
+    vA = lx * eggQx(A, ct) + ly * eggQy(A, ct, st);
+  } else vA = Math.sqrt(A.a * A.a * lx * lx + A.b * A.b * ly * ly);
+  const c2 = dcos(B.angle), s2 = dsin(B.angle);
+  lx = -dx * c2 - dy * s2; ly = dx * s2 - dy * c2;
+  let vB;
+  if (B.shape === 'egg') {
+    const t = eggSupportT(B, lx, ly);
+    const ct = dcos(t), st = dsin(t);
+    vB = lx * eggQx(B, ct) + ly * eggQy(B, ct, st);
+  } else vB = Math.sqrt(B.a * B.a * lx * lx + B.b * B.b * ly * ly);
+  return vA + vB - ((bx - ax) * dx + (by - ay) * dy);
+}
+
+function resolveEggSmooth(A, B, BxI, ByI, out) {
+  // Coarse scan for the minimizing axis.
+  let bestTh = 0, bestPen = Infinity;
+  for (let i = 0; i < 32; i++) {
+    const th = (i / 32) * 6.283185307179586;
+    const p = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dcos(th), dsin(th));
+    if (p < bestPen) { bestPen = p; bestTh = th; }
+  }
+  if (bestPen <= 0) return false;    // a separating axis exists
+  // Fixed golden refinement in the bracketing interval.
+  const dTh = 6.283185307179586 / 32;
+  let lo = bestTh - dTh, hi = bestTh + dTh;
+  let m1 = hi - (1 - EGGS_GOLD) * (hi - lo), m2 = lo + (1 - EGGS_GOLD) * (hi - lo);
+  let f1 = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dcos(m1), dsin(m1));
+  let f2 = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dcos(m2), dsin(m2));
+  for (let k = 0; k < 24; k++) {
+    if (f1 < f2) {
+      hi = m2; m2 = m1; f2 = f1;
+      m1 = hi - (1 - EGGS_GOLD) * (hi - lo);
+      f1 = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dcos(m1), dsin(m1));
+    } else {
+      lo = m1; m1 = m2; f1 = f2;
+      m2 = lo + (1 - EGGS_GOLD) * (hi - lo);
+      f2 = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dcos(m2), dsin(m2));
+    }
+  }
+  const th = (lo + hi) / 2;
+  const dx = dcos(th), dy = dsin(th);
+  const pen = eggSmoothPen(A, A.x, A.y, B, BxI, ByI, dx, dy);
+  if (pen <= 0) return false;
+  // Contact: midpoint of the two facing support points, n = A toward
+  // B. smoothSupportWorld reads the stored pose; B may be imaged —
+  // the frame rule again: evaluate at stored pose, shift the RESULT.
+  smoothSupportWorld(A, dx, dy, EGGS_PA);
+  smoothSupportWorld(B, -dx, -dy, EGGS_PB);
+  EGGS_PB.px += BxI - B.x; EGGS_PB.py += ByI - B.y;
+  out.px = (EGGS_PA.px + EGGS_PB.px) * 0.5;
+  out.py = (EGGS_PA.py + EGGS_PB.py) * 0.5;
+  out.nx = dx; out.ny = dy;
+  out.pen = pen;
+  out.corrShare = 1;
+  return true;
+}
+
+const PAIR_ROUTE = {
+  'poly|poly': 'sat',
+  // D5-1 (2026-08-30): the ellipse|poly cell is EXACT by the affine
+  // trick — see ellipseVsPolyPair.
+  'ellipse|poly': 'affine',
+  'poly|ellipse': 'affine',
+  // THE EGG EARNED ITS ROUTINES (RULED 2026-08-30, superseding the
+  // §9 named centres cell): a tapered body is not an ellipse, so
+  // egg|poly runs the per-edge honest construction and egg|smooth
+  // runs the support-axis search — see the egg pair cells above.
+  'egg|poly': 'eggpoly',
+  'poly|egg': 'eggpoly',
+  'egg|ellipse': 'eggsmooth',
+  'ellipse|egg': 'eggsmooth',
+  'egg|egg': 'eggsmooth',
+};
 function pairRoute(A, B) {
   return PAIR_ROUTE[A.shape + '|' + B.shape] || 'centres';
 }
@@ -1068,7 +1372,43 @@ function resolveMelonPair(A, B, period) {
     if (k !== 0) { ox = -k * period.L; oy = -k * period.D; }
   }
   const BxI = B.x + ox, ByI = B.y + oy; // B's nearest image to A
-  if (pairRoute(A, B) === 'sat') {
+  const route = pairRoute(A, B);
+  if (route === 'affine') {
+    // D5-1: the exact ellipse|poly cell. The ellipse party runs the
+    // narrowphase at ITS in-frame pose; the normal comes back
+    // E-toward-P and is flipped when the poly is party A, so PAIR_C
+    // carries A-toward-B like every route, into the ONE solver (F1).
+    let hit;
+    if (A.shape === 'ellipse') {
+      hit = ellipseVsPolyPair(A, A.x, A.y, B, BxI, ByI, PAIR_C);
+    } else {
+      hit = ellipseVsPolyPair(B, BxI, ByI, A, A.x, A.y, PAIR_C);
+      if (hit) { PAIR_C.nx = -PAIR_C.nx; PAIR_C.ny = -PAIR_C.ny; }
+    }
+    if (!hit) return;
+    applyPairContact(A, B, BxI, ByI, PAIR_C);
+    return true;
+  }
+  if (route === 'eggpoly') {
+    // The egg party runs per-edge at its in-frame pose; n comes back
+    // egg-toward-poly and flips when the poly is party A.
+    let hit;
+    if (A.shape === 'egg') {
+      hit = resolveEggPoly(A, A.x, A.y, B, BxI, ByI, PAIR_C);
+    } else {
+      hit = resolveEggPoly(B, BxI, ByI, A, A.x, A.y, PAIR_C);
+      if (hit) { PAIR_C.nx = -PAIR_C.nx; PAIR_C.ny = -PAIR_C.ny; }
+    }
+    if (!hit) return;
+    applyPairContact(A, B, BxI, ByI, PAIR_C);
+    return true;
+  }
+  if (route === 'eggsmooth') {
+    if (!resolveEggSmooth(A, B, BxI, ByI, PAIR_C)) return;
+    applyPairContact(A, B, BxI, ByI, PAIR_C);
+    return true;
+  }
+  if (route === 'sat') {
     const n = polyVsPoly(A, B, BxI, ByI, PAIR_MANIFOLD);
     if (n === 0) return;
     // TWO REAL CONTACTS ARE TWO REAL CONTACTS (P5-C, the pair half of
@@ -1200,6 +1540,15 @@ function chargePairContact(A, B, nx, ny, vn, k, jn, eA, eB) {
 function applyPairBlock2(A, B, BxI, ByI, c1, c2) {
   const invMA = A.invM, invIA = A.invI;
   const invMB = B.invM, invIB = B.invI;
+  // HOP OFF ANYTHING: the two-point block is one face contact; both
+  // points share the normal. Fed once per point so a melon flat on a
+  // box counts the face at both lever arms, like the terrain block.
+  if (CONFIG.hopProto) {
+    for (const c of [c1, c2]) {
+      if (A.hopArmed) hopTouch(A, -c.nx, -c.ny, B, c.px - BxI, c.py - ByI);
+      if (B.hopArmed) hopTouch(B, c.nx, c.ny, A, c.px - A.x, c.py - A.y);
+    }
+  }
   // Both points of a reference-face clip carry the SAME normal.
   const nx = c1.nx, ny = c1.ny;
   const ra1x = c1.px - A.x, ra1y = c1.py - A.y;
@@ -1238,7 +1587,21 @@ function applyPairBlock2(A, B, BxI, ByI, c1, c2) {
   let j1 = 0, j2 = 0;
   const det = k11 * k22 - k12 * k12;
   let solved = false;
-  if (b1 > 0 && b2 > 0 && det > 1e-12) {
+  // SCALE-AWARE det guard (2026-08-30, corrected same day): the
+  // absolute `det > 1e-12` was scale-wrong — a very heavy body's k
+  // values are ~invM, det ~ invM^2, and the guard silently rejected
+  // EVERY solve (found by a heavy-box rig: the body free-falls in
+  // velocity while positional correction holds its pose). The first
+  // fix was PURE relative (1e-12 * k11 * k22) — and that overclaimed
+  // inertness: proven byte-identical only on the prop gate's
+  // trajectories, it is 100x+ STRICTER at normal body scales and
+  // regressed the humming-box rig (verify-polyseg C2: 0.60 deg
+  // swing), because near-vertex manifolds carry near-singular dets
+  // the shipped solver accepts. min(1, ...) keeps the shipped
+  // behavior BIT-EXACT for every k11*k22 >= 1 and rescues only the
+  // tiny scales that were broken. Conditioning at normal scales is
+  // its own measured project, not a drive-by.
+  if (b1 > 0 && b2 > 0 && det > 1e-12 * Math.min(1, k11 * k22)) {
     const t1 = (b1 * k22 - b2 * k12) / det;
     const t2 = (b2 * k11 - b1 * k12) / det;
     if (t1 >= 0 && t2 >= 0) { j1 = t1; j2 = t2; solved = true; }
@@ -1327,6 +1690,14 @@ function applyPairContact(A, B, BxI, ByI, c) {
   const invMB = B.invM, invIB = B.invI;
   const nx = c.nx, ny = c.ny, pen = c.pen;
   const cx = c.px, cy = c.py;
+  // HOP OFF ANYTHING: a pair contact is a surface for whichever
+  // party is armed. n is A-toward-B, so A pushes off along -n and B
+  // along +n. The lever arm is stored from the OTHER body's image
+  // centre, since B may be a periodic image here.
+  if (CONFIG.hopProto) {
+    if (A.hopArmed) hopTouch(A, -nx, -ny, B, cx - BxI, cy - ByI);
+    if (B.hopArmed) hopTouch(B, nx, ny, A, cx - A.x, cy - A.y);
+  }
   const rax = cx - A.x, ray = cy - A.y;
   const rbx = cx - BxI, rby = cy - ByI; // lever arm from the image center
 
@@ -1421,7 +1792,17 @@ function applyPairContact(A, B, BxI, ByI, c) {
 function hopImpulse(m, H) {
   let nx = m.hopNx || 0, ny = m.hopNy || 0;
   const nl = Math.hypot(nx, ny);
-  if (nl < 1e-9) { nx = 0; ny = -1; } else { nx /= nl; ny /= nl; }
+  // THE MAGNITUDE LAW (ruled 2026-08-30, "most consistent with our
+  // physics"): the hop is as strong as the net direction it can push
+  // off. A single floor is length 1 -> full; a gully sums past 1 ->
+  // capped at full; walls closing toward opposed shrink the sum and
+  // the hop with it, still pointed the right way; a true pinch is
+  // length 0 -> no hop at all. No threshold, and the direction is
+  // never a near-zero vector divided by itself. (The old fallback
+  // hopped straight up off a zero sum — a mercy rule, retired.)
+  if (nl < 1e-12) return null;
+  const strength = nl < 1 ? nl : 1;
+  nx /= nl; ny /= nl;
   if (H.upBlend > 0) {
     nx = nx * (1 - H.upBlend);
     ny = ny * (1 - H.upBlend) - H.upBlend;
@@ -1429,8 +1810,9 @@ function hopImpulse(m, H) {
     nx /= l2; ny /= l2;
   }
   // Normal impulse, expressed as delta-v (the dial's units).
-  const dvnX = nx * H.mag, dvnY = ny * H.mag;
-  const Jn = H.mag / m.invM;
+  const mag = H.mag * strength;
+  const dvnX = nx * mag, dvnY = ny * mag;
+  const Jn = mag / m.invM;
   // Contact point: one effective radius into the surface. The lever
   // approximation (r along -n) matches the solver's convention for a
   // resting body; a prototype does not need the egg's exact support.
@@ -1481,6 +1863,9 @@ function hopImpulse(m, H) {
 // accumulator is guarded on it), finish needs `sink`/`simState`/
 // `wasGrounded`, and neither needs `dt`.
 function stepBody(m, inp, terrain, dt, sink, simState) {
+  // HOP ARMING: the pair solver sees bodies, not seats, so the body
+  // carries the fact. Written only under the flag (bit-parity).
+  if (CONFIG.hopProto && inp) m.hopArmed = !!inp.hopEligible;
   // The slab world, once per body step: the collision phase queries
   // it. Fetched first, exactly where the un-split body fetched it.
   const world = slab.worldFor(terrain);
@@ -1518,10 +1903,50 @@ function integrateBody(m, inp, dt) {
       inp.hopBuffer = (CONFIG.hop && CONFIG.hop.bufferTicks) || 12;
     }
     const H = CONFIG.hop;
-    const groundedNow = (m.airTicks || 0) <= (H.coyoteTicks || 0);
-    if (m.alive && groundedNow && (m.hopNx || m.hopNy)) {
-      const d = hopImpulse(m, H);
+    // Recency is the touch STAMP: any surface, terrain or body.
+    const sinceTouch = m.hopTouchTick === undefined ? 1e9 : (HOP_TICK - 1 - m.hopTouchTick);
+    const groundedNow = sinceTouch <= (H.coyoteTicks || 0);
+    const d = (m.alive && groundedNow) ? hopImpulse(m, H) : null;
+    if (d) {
       m.vx += d.dvx; m.vy += d.dvy; m.omega += d.domega;
+      // THE REACTION (ruling 1). The melon gained momentum P; each
+      // contributor takes -P times its share of the summed normal,
+      // w_i = (n_i . S) / |S|^2, which sum to exactly one — so the
+      // shares sum to exactly -P and momentum is conserved to the
+      // last bit of arithmetic, not approximately. Terrain
+      // contributors (other = null) absorb theirs. Applied at the
+      // contact point, so a hop off a box's corner also tips it.
+      const T = m.hopTouches;
+      if (T && T.length) {
+        const Sx = m.hopNx, Sy = m.hopNy;
+        const S2 = Sx * Sx + Sy * Sy;
+        const Sl = Math.sqrt(S2);
+        const Px = d.dvx / m.invM, Py = d.dvy / m.invM;   // momentum gained
+        // Split P into the part along the summed direction S-hat and
+        // the remainder (the friction kick, and upBlend if ever set).
+        // The along-S part goes back to each body ALONG ITS OWN
+        // NORMAL, n_i/|S| — those sum to S-hat exactly, so a floor
+        // box under a corner hop is pushed straight down and the wall
+        // beside it straight sideways, each getting only what it
+        // gave. The remainder is split by the same weights w_i (which
+        // sum to one). Total reaction is -P to the last bit.
+        // (The first cut handed every body a fraction of the WHOLE
+        // vector P and a floor box took a diagonal shove — caught by
+        // B4, the cell that exists to see the distribution.)
+        const pAlong = (Px * Sx + Py * Sy) / (Sl || 1);
+        const remX = Px - pAlong * (Sx / (Sl || 1));
+        const remY = Py - pAlong * (Sy / (Sl || 1));
+        for (let i = 0; i < T.length; i++) {
+          const t = T[i];
+          if (!t.other || S2 < 1e-18) continue;
+          const w = (t.nx * Sx + t.ny * Sy) / S2;
+          const o = t.other;
+          const jx = -pAlong * (t.nx / Sl) - remX * w;
+          const jy = -pAlong * (t.ny / Sl) - remY * w;
+          o.vx += jx * o.invM; o.vy += jy * o.invM;
+          o.omega += (t.rx * jy - t.ry * jx) * o.invI;
+        }
+      }
       // fx breadcrumbs (divergence license, like hitNx): where the
       // hop pushed off, and the tangential kick to react against.
       const rEff = (m.a + m.b) / 2;
@@ -1675,43 +2100,32 @@ function sweepTerrainContacts(m, inp, world, acc) {
   const boundR = m.boundR + 32;
   const nCand = world.query(m.x - boundR, m.y - boundR,
     m.x + boundR, m.y + boundR, CAND);
+  // POLY TAKES THE CROSS-FACE COLLECTION (2026-08-30): every face's
+  // manifold from one pose, merged and block-solved — see
+  // sweepPolyTerrain. The smooth families keep the per-face loop
+  // below verbatim (merging would move racers; the gate forbids it).
+  if (m.shape === 'poly') {
+    sweepPolyTerrain(m, inp, world, acc, nCand);
+    return;
+  }
   for (let ci = 0; ci < nCand; ci++) {
       const fi = CAND[ci];
       SEG_A.x = world.fax[fi]; SEG_A.y = world.fay[fi];
       SEG_B.x = world.fbx[fi]; SEG_B.y = world.fby[fi];
       const A = SEG_A, B = SEG_B;
-      // SHAPE DISPATCH IS ON THE TAG (Law 1, 2026-08-28). Was
-      // `if (m.taper)` — acceptable with two shapes, a trap with
-      // three, and it left two competing notions of what decides a
-      // body's shape. `taper` is still a physical parameter; it is
-      // simply no longer the selector. Numerically inert: every
-      // existing body reaches the routine it reached before.
-      //
-      // The routines report a CONTACT COUNT. One for the smooth
-      // families, up to two for a polygon face lying along a segment
-      // (P2-C, ruled 2026-08-28: two real contacts are two real
-      // contacts, so the per-contact block below runs per contact —
-      // grounded, dissipation and the hop accumulator all included).
+      // SHAPE DISPATCH IS ON THE TAG (Law 1, 2026-08-28). The poly
+      // arm branched to the collection pass above (2026-08-30); the
+      // smooth families report ONE contact per face, resolved here
+      // exactly as shipped.
       let nC;
-      if (m.shape === 'poly') {
-        nC = polyVsSegment(m, A, B, MANIFOLD);
-      } else if (m.shape === 'egg') {
+      if (m.shape === 'egg') {
         eggVsSegment(m, A, B, MANIFOLD[0]);
         nC = MANIFOLD[0].hit ? 1 : 0;
       } else {
         ellipseVsSegment(m, A, B, MANIFOLD[0]);
         nC = MANIFOLD[0].hit ? 1 : 0;
       }
-      if (nC === 2) {
-        // TWO POINTS SOLVE AS A BLOCK (2026-08-29): the sequential
-        // route injects signed momentum — convicted by the sign flip
-        // recorded on resolveContactBlock2. The accumulation below is
-        // the same law per point, through the same function.
-        const omegaPre = m.omega;
-        const ap2 = resolveContactBlock2(m, MANIFOLD[0], MANIFOLD[1], invM, invI);
-        accumulateContact(m, inp, acc, MANIFOLD[0], ap2[0], omegaPre);
-        accumulateContact(m, inp, acc, MANIFOLD[1], ap2[1], omegaPre);
-      } else for (let k = 0; k < nC; k++) {
+      for (let k = 0; k < nC; k++) {
         const contact = MANIFOLD[k];
         const omegaPre = m.omega; // spin AT approach: the certificate's spin term
         const applied = resolveContact(m, contact, invM, invI);
@@ -1720,20 +2134,169 @@ function sweepTerrainContacts(m, inp, world, acc) {
     }
 }
 
+// ---- THE CROSS-FACE COLLECTION (2026-08-30, D6-2 / seam ruling) ---
+// The block solve of 2026-08-29 made the two points of ONE face
+// simultaneous — and left faces sequential: a later face's
+// narrowphase read a pose an earlier face's resolution had already
+// moved, which is the same injection one level up. Measured: a lone
+// box STRADDLING a segment vertex drifted 3.81 px/60 s against the
+// 0.29 baseline (D6-2), and a seam 2-stack burst at 36 s while its
+// mid-segment twin stood forever.
+//
+// For POLY bodies only, the sweep now COLLECTS every candidate
+// face's manifold from ONE pose, MERGES contacts whose normals agree
+// (a flat seam's two faces are one plane wearing two segment ids),
+// REDUCES each merged group to its two extreme points along the
+// tangent (interior points of a rigid convex face are implied by the
+// extremes), and solves each group as the block it is. Groups with
+// genuinely different normals — a vee, a notch — still resolve in
+// canonical order: rocking in a vee is physics, not bias.
+//
+// The smooth families keep their loop verbatim below: a melon
+// crossing a seam still resolves per face, exactly as shipped —
+// merging would move racers, and the gate forbids it.
+const TSET_CAP = 16;           // faces near a 100 px box are few; loud clamp below
+const TSET = [];
+for (let i = 0; i < TSET_CAP; i++) {
+  TSET.push({ px: 0, py: 0, nx: 0, ny: 0, pen: 0, corrShare: 1, grp: -1 });
+}
+// Two normals are ONE plane within this dot. 6 degrees: wide enough
+// that a flat run's gentle per-vertex turn merges (the measured
+// defect cells are exactly-collinear and merge at any epsilon),
+// narrow enough that no deliberate vee ever does. (Eddie's number to
+// tune if device seams disagree.)
+const TSET_MERGE_DOT = 0.9945;
+
+function sweepPolyTerrain(m, inp, world, acc, nCand) {
+  const invM = m.invM;
+  const invI = m.invI;
+  // COLLECT: every candidate face's manifold, all from THIS pose.
+  let nPts = 0;
+  for (let ci = 0; ci < nCand; ci++) {
+    const fi = CAND[ci];
+    SEG_A.x = world.fax[fi]; SEG_A.y = world.fay[fi];
+    SEG_B.x = world.fbx[fi]; SEG_B.y = world.fby[fi];
+    const nC = polyVsSegment(m, SEG_A, SEG_B, MANIFOLD);
+    for (let k = 0; k < nC; k++) {
+      if (nPts >= TSET_CAP) {
+        // A signal that cannot say "I don't know" says "yes": the cap
+        // is stated out loud, once, rather than silently dropping.
+        if (!sweepPolyTerrain._capWarned) {
+          sweepPolyTerrain._capWarned = true;
+          console.warn('sweepPolyTerrain: contact set capped at', TSET_CAP);
+        }
+        break;
+      }
+      const c = MANIFOLD[k], t = TSET[nPts++];
+      t.px = c.px; t.py = c.py; t.nx = c.nx; t.ny = c.ny;
+      t.pen = c.pen; t.corrShare = c.corrShare; t.grp = -1;
+    }
+  }
+  if (nPts === 0) return;
+  // GROUP by shared normal: greedy, collection (canonical) order.
+  let nGrp = 0;
+  for (let i = 0; i < nPts; i++) {
+    if (TSET[i].grp >= 0) continue;
+    TSET[i].grp = nGrp;
+    for (let j = i + 1; j < nPts; j++) {
+      if (TSET[j].grp >= 0) continue;
+      if (TSET[i].nx * TSET[j].nx + TSET[i].ny * TSET[j].ny > TSET_MERGE_DOT) {
+        TSET[j].grp = nGrp;
+      }
+    }
+    nGrp++;
+  }
+  // SOLVE each group: reduce to its extremes, then the block law.
+  for (let g = 0; g < nGrp; g++) {
+    let first = -1, second = -1, count = 0;
+    for (let i = 0; i < nPts; i++) {
+      if (TSET[i].grp !== g) continue;
+      count++;
+      if (first < 0) first = i;
+      else if (second < 0) second = i;
+    }
+    if (count > 2) {
+      // Extremes along the group's tangent; ties break to the lowest
+      // collection index (the < / > below keep the first seen).
+      const tx = -TSET[first].ny, ty = TSET[first].nx;
+      let loI = first, hiI = first, loC = 0, hiC = 0;
+      for (let i = 0; i < nPts; i++) {
+        if (TSET[i].grp !== g) continue;
+        const c = (TSET[i].px - TSET[first].px) * tx + (TSET[i].py - TSET[first].py) * ty;
+        if (c < loC) { loC = c; loI = i; }
+        if (c > hiC) { hiC = c; hiI = i; }
+      }
+      first = loI < hiI ? loI : hiI;
+      second = loI < hiI ? hiI : loI;
+      // ONE plane's overlap is undone ONCE: the kept pair shares the
+      // correction exactly as a single face's two points do.
+      TSET[first].corrShare = 0.5;
+      TSET[second].corrShare = 0.5;
+    }
+    const omegaPre = m.omega;
+    if (count === 1) {
+      const applied = resolveContact(m, TSET[first], invM, invI);
+      accumulateContact(m, inp, acc, TSET[first], applied, omegaPre);
+    } else {
+      const ap2 = resolveContactBlock2(m, TSET[first], TSET[second], invM, invI);
+      accumulateContact(m, inp, acc, TSET[first], ap2[0], omegaPre);
+      accumulateContact(m, inp, acc, TSET[second], ap2[1], omegaPre);
+    }
+  }
+}
+
+
 // The per-contact ACCUMULATION (extracted 2026-08-29, gate-pure):
 // grounded, the hop normal, dissipation into the tick's total, and
-// the strongest-blow breadcrumbs. One spelling, consumed by both the
-// sequential and the block terrain routes.
+// the strongest-blow breadcrumbs. One spelling, consumed by the
+// ---- HOP OFF ANYTHING (ruled 2026-08-30) ----------------------------
+// The hop never cared what surface fed it: it works off two facts —
+// how recently the melon touched something, and the summed normal of
+// what it touched. Only the terrain routes used to feed those facts,
+// so a melon standing on a boulder was hop-dead. Now EVERY contact
+// feeds them, terrain and pair alike, through this one function.
+//
+// Three rulings, all Eddie's:
+//   1. The hop PUSHES BACK on what it pushed off. Each contributor
+//      receives the opposite of its own share, so momentum is exactly
+//      conserved; terrain absorbs its share as an infinitely heavy
+//      thing does.
+//   2. Wall-jumps are allowed — they fall out of the summed normal.
+//   3. Other racers count as surfaces.
+// And the degenerate case, ruled "whatever is most consistent with
+// our physics": the hop is AS STRONG AS THE NET DIRECTION you can
+// push off — magnitude scales with the summed normal's length, capped
+// at one, never normalised by a near-zero. A true pinch hops zero.
+// No threshold anywhere. (The old code hopped straight UP off a zero
+// sum — a mercy rule, retired.)
+//
+// Recency is a TICK STAMP, not a reset of airTicks: airTicks means
+// "off terrain" and other systems read it that way. Overloading its
+// meaning is how quiet bugs start.
+let HOP_TICK = 0;
+const HOP_MAX_TOUCH = 8;   // contributors per tick; a melon in a pile
+function hopTouch(m, nx, ny, other, rx, ry) {
+  if (m.hopTouchTick !== HOP_TICK) {
+    // First touch this tick: last tick's sum is spent.
+    m.hopTouchTick = HOP_TICK;
+    m.hopNx = 0; m.hopNy = 0;
+    if (!m.hopTouches) m.hopTouches = [];
+    m.hopTouches.length = 0;
+  }
+  m.hopNx += nx;
+  m.hopNy += ny;
+  if (m.hopTouches.length < HOP_MAX_TOUCH) {
+    m.hopTouches.push({ other, nx, ny, rx, ry });
+  }
+}
+
+// sequential, block, and cross-face terrain routes.
 function accumulateContact(m, inp, acc, contact, applied, omegaPre) {
   acc.grounded = true;
-  // HOP PROTOTYPE: remember what we last stood on. Accumulated
-  // per tick (a gully sums both walls, pointing out of the
-  // notch), normalized at hop time. Flag-guarded so the
-  // flag-off sim writes not one new field (bit-parity).
+  // HOP: terrain is a contributor with no body to push back on.
+  // Flag-guarded so the flag-off sim writes not one new field.
   if (CONFIG.hopProto && inp && inp.hopEligible) {
-    if (m.airTicks !== 0) { m.hopNx = 0; m.hopNy = 0; }
-    m.hopNx = (m.hopNx || 0) + contact.nx;
-    m.hopNy = (m.hopNy || 0) + contact.ny;
+    hopTouch(m, contact.nx, contact.ny, null, 0, 0);
   }
   // JUDGMENT SATURATES (pump ruling, 2026-08-25): dissipation's
   // (1 - e^2) goes NEGATIVE past e=1 — unclamped, pumping would
@@ -2039,6 +2602,9 @@ function eggVsSegment(m, A, B, out) {
   if (cpx * cpx + cpy * cpy >= boundR * boundR) return;
 
   let nlx, nly, penL, qx, qy, tStar, pxL, pyL;
+  let vertexPhase = false;   // reported on out (2026-08-30): the pair
+  // per-edge law needs to know an endpoint clamp from a face hit;
+  // terrain readers ignore the field, gate-verified.
 
   if (len2 > 1e-12) {
     // ---- Face phase: support against the segment's line ----
@@ -2059,6 +2625,7 @@ function eggVsSegment(m, A, B, out) {
       pxL = ax + ux * proj; pyL = ay + uy * proj; // on the segment
     } else {
       // ---- Vertex phase: the nearer endpoint ----
+      vertexPhase = true;
       const vx = proj < 0 ? ax : bx, vy = proj < 0 ? ay : by;
       if (!eggVertexContact(m, vx, vy)) return;
       // eggVertexContact leaves its results in the module scratch:
@@ -2068,6 +2635,7 @@ function eggVsSegment(m, A, B, out) {
     }
   } else {
     // Degenerate segment: pure vertex.
+    vertexPhase = true;
     if (!eggVertexContact(m, ax, ay)) return;
     nlx = EGGV.nx; nly = EGGV.ny; penL = EGGV.pen;
     qx = EGGV.qx; qy = EGGV.qy; tStar = EGGV.t;
@@ -2079,6 +2647,7 @@ function eggVsSegment(m, A, B, out) {
   out.ny = nlx * sin + nly * cos;
   out.px = m.x + pxL * cos - pyL * sin;
   out.py = m.y + pxL * sin + pyL * cos;
+  out.vertexHit = vertexPhase;
   out.pen = penL;
   out.corrShare = 1;   // a smooth body's contact is its own manifold
   out.hit = true;
@@ -2364,14 +2933,36 @@ function polyVsSegment(m, A, B, out) {
 // square contact therefore resolves on A's face every time. Which
 // body is A is already law (the canonical pair order), so this is
 // deterministic rather than merely repeatable.
-const PP_BX = [0, 0, 0, 0, 0, 0, 0, 0];   // B's hull, A's frame
-const PP_BY = [0, 0, 0, 0, 0, 0, 0, 0];
+// THE HULL CEILING (raised 2026-08-30, boulders phase 0). Was eight
+// slots with `if (nB > PP_BX.length) return 0` — a body with more
+// vertices than the scratch reported NO CONTACT and passed straight
+// through its neighbour. Silent, and exactly wrong: a signal that
+// cannot say "I don't know" says "no collision". Boulders are ruled
+// at 6-8 sides, which sat ON the old ceiling with zero margin.
+//
+// Now 32, and overflow SAYS SO (once) instead of ghosting. 32 is not
+// a guess about boulders: it is the same cap the terrain contact set
+// (TSET_CAP) states out loud, doubled, so one number does not quietly
+// become the smaller of two limits. A hull that large is an authoring
+// error long before it is a physics problem.
+const PP_CAP = 32;
+const PP_BX = new Array(PP_CAP).fill(0);   // B's hull, A's frame
+const PP_BY = new Array(PP_CAP).fill(0);
 function polyVsPoly(A, B, BxI, ByI, out) {
   out[0].hit = false; out[1].hit = false;
   const PA = A.poly, PB = B.poly;
   if (!PA || !PB) return 0;
   const nA = PA.length, nB = PB.length;
-  if (nB > PP_BX.length) return 0;   // scratch is fixed; no silent churn
+  if (nB > PP_CAP) {
+    // LOUD, not silent: the old spelling returned "no contact", which
+    // is a lie the caller cannot detect.
+    if (!polyVsPoly._capWarned) {
+      polyVsPoly._capWarned = true;
+      console.warn('polyVsPoly: hull of', nB, 'vertices exceeds PP_CAP', PP_CAP,
+        '- contact SKIPPED; this is an authoring error, not a physics limit');
+    }
+    return 0;
+  }
   const cA = dcos(A.angle), sA = dsin(A.angle);
   const cB = dcos(B.angle), sB = dsin(B.angle);
   // B's frame expressed in A's frame: R(-thetaA)*R(thetaB). Composed
@@ -2590,10 +3181,20 @@ function ellipseVsSegment(m, A, B, out) {
   const ncx = -cx / dist;
   const ncy = -cy / dist;
 
-  // Normal back to world: inverse-transpose of diag(1, s) = diag(1, 1/s),
-  // then re-normalize, then rotate by +angle.
+  // Normal back to world by the JACOBIAN TRANSPOSE: multiply y by s,
+  // re-normalize, rotate by +angle. RULED BY EDDIE 2026-08-30 after
+  // measurement: the original divide-by-s (inverse-transpose
+  // spelling) is exact at level contact but rotates the bounce
+  // direction of TILTED touchdowns — 6 deg wrong at 10 deg of tilt,
+  // peaking 13.5 deg at 30-45 — and the whole game's feel was tuned
+  // on top of it (the A/B sweep read +24% deaths at unmoved pace
+  // under the true math; lethality retune deferred, Eddie's call
+  // after play). The pair cell ellipseVsPolyPair proved the correct
+  // mapping first; this brings the terrain sibling to the same law.
+  // Smooth gate deliberately re-baselined: every melon-terrain
+  // trajectory in the game moves.
   let nlx = ncx;
-  let nly = ncy / s;
+  let nly = ncy * s;
   const nlen = Math.sqrt(nlx * nlx + nly * nly);
   nlx /= nlen; nly /= nlen;
   out.nx = nlx * cos - nly * sin;
@@ -2666,7 +3267,21 @@ function resolveContactBlock2(m, c1, c2, invM, invI) {
   let j1 = 0, j2 = 0;
   const det = k11 * k22 - k12 * k12;
   let solved = false;
-  if (b1 > 0 && b2 > 0 && det > 1e-12) {
+  // SCALE-AWARE det guard (2026-08-30, corrected same day): the
+  // absolute `det > 1e-12` was scale-wrong — a very heavy body's k
+  // values are ~invM, det ~ invM^2, and the guard silently rejected
+  // EVERY solve (found by a heavy-box rig: the body free-falls in
+  // velocity while positional correction holds its pose). The first
+  // fix was PURE relative (1e-12 * k11 * k22) — and that overclaimed
+  // inertness: proven byte-identical only on the prop gate's
+  // trajectories, it is 100x+ STRICTER at normal body scales and
+  // regressed the humming-box rig (verify-polyseg C2: 0.60 deg
+  // swing), because near-vertex manifolds carry near-singular dets
+  // the shipped solver accepts. min(1, ...) keeps the shipped
+  // behavior BIT-EXACT for every k11*k22 >= 1 and rescues only the
+  // tiny scales that were broken. Conditioning at normal scales is
+  // its own measured project, not a drive-by.
+  if (b1 > 0 && b2 > 0 && det > 1e-12 * Math.min(1, k11 * k22)) {
     const t1 = (b1 * k22 - b2 * k12) / det;
     const t2 = (b2 * k11 - b1 * k12) / det;
     if (t1 >= 0 && t2 >= 0) { j1 = t1; j2 = t2; solved = true; }
@@ -2876,5 +3491,9 @@ Object.assign(window.FF, { step, stepBodyClone: (m, inp, terrain, dt) => stepBod
   buildPropIslands,
   _hopImpulse: hopImpulse, _supportRadius: supportRadius,
   _polyVsSegment: polyVsSegment, _makeContact: makeContact,
-  _polyVsPoly: polyVsPoly, _pairRoute: pairRoute });
+  _polyVsPoly: polyVsPoly, _pairRoute: pairRoute,
+  _ellipseVsPolyPair: ellipseVsPolyPair,
+  _ellipseVsSegment: ellipseVsSegment,
+  _resolveEggPoly: resolveEggPoly, _resolveEggSmooth: resolveEggSmooth,
+  _smoothSupportWorld: smoothSupportWorld, _eggSmoothPen: eggSmoothPen });
 })();

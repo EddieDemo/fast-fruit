@@ -45,8 +45,7 @@ function contrastRatio(rgb1, rgb2) {
 // Both pairs must clear 3:1 (verify-hud-glass C-family holds this).
 const STICK_THEMES = {
   // THE CANONICAL WHITE (shading owns it; glass loads after shading).
-  LIGHT: { main: (window.FF.shading && window.FF.shading.WHITE_RGB)
-    || [246, 246, 246] },              // light strokes, for dark worlds
+  LIGHT: { main: window.FF.shading.WHITE_RGB },   // light strokes, for dark worlds (one source)
   DARK: { main: [22, 28, 22] },       // dark strokes, for pale worlds
 };
 
@@ -78,8 +77,7 @@ function stickThemeNext(current, lum) {
 const TAG_STYLE = {
   bg: [10, 14, 10], bgAlpha: 0.9,
   border: [42, 90, 52],
-  text: (window.FF.shading && window.FF.shading.WHITE_RGB)
-    || [246, 246, 246],   // canonical white (ruled 2026-08-27)
+  text: window.FF.shading.WHITE_RGB,   // canonical white (ruled 2026-08-27), one source
   numPx: 12, sufPx: 9,      // CSS px; suffix rides the shoulder
   padX: 8, padY: 4,
   liftPx: 14,               // pill bottom above the anchor point

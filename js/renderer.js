@@ -73,7 +73,7 @@ if (window.FF && window.FF.palette) {
     PX_GRID.tBase, ...PX_GRID.tTier, PX_GRID.marker]);
 }
 
-const GRID_SPACING = 100; // world px between grid lines
+const GRID_SPACING = CONFIG.pxPerMetre; // one metre between grid lines
 // ---- Grid hierarchy: 1 / 50 / 100 / 200 m ----
 // (the 25m tier retired per Eddie, 2026-08-10 — one fewer band of
 // visual noise). DISTANCE ONLY (elevation stays a uniform ruler). The
@@ -175,6 +175,74 @@ function drawBeachGores(ctx, a, b) {
 //   sun     — unit vector toward the light, world frame
 //   C       — { face, lit, dark, ink } resolved tones
 //   bevel   — world px; the apparent thickness of the cardboard
+// ---- STONE: A HULL LIT LIKE A MELON (boulders phase 3, ruled) -----
+// Eddie's ruling: a boulder is the SAME COLOUR AS THE GROUND (it is a
+// fragment of the terrain in the lore) and is lit by the same law as
+// everything else. Consistency IS the design.
+//
+// This is not drawBoxKraft. That painter insets a bevel STRIP per
+// edge — the cardboard chamfer — which on a rock reads as drawn
+// lines, and Eddie ruled boulders solid. It is not shadeEllipse
+// either: that solves a curved body's terminator from an implicit
+// surface a polygon does not have.
+//
+// It is the melon's BAND VOCABULARY applied to a hull: fill the base,
+// clip to the silhouette, then fill nested copies of the hull shrunk
+// toward the sun. Each band is a solid region with no outline, so the
+// rock reads as a rounded lit solid and re-tints with the stage
+// automatically — because the base it is handed is the ground's own
+// tone, not a colour of its own.
+//
+// WHY THE TONE DOES NOT VANISH: the earlier mockup that suggested it
+// would was drawn FLAT, which was an artifact of the mockup and not
+// of the game. A boulder's bands sit at angles the flat ground does
+// not, so it separates by FORM. Device capture is the arbiter.
+function drawStonePoly(ctx, verts, angle, sun, C, bands) {
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const n = verts.length;
+  const W = [];
+  let cx = 0, cy = 0;
+  for (let i = 0; i < n; i++) {
+    const x = verts[i][0] * ca - verts[i][1] * sa;
+    const y = verts[i][0] * sa + verts[i][1] * ca;
+    W.push([x, y]);
+    cx += x; cy += y;
+  }
+  cx /= n; cy /= n;
+  let r = 0;
+  for (let i = 0; i < n; i++) {
+    const d = Math.hypot(W[i][0] - cx, W[i][1] - cy);
+    if (d > r) r = d;
+  }
+  const pathOf = (P) => {
+    ctx.beginPath();
+    ctx.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < P.length; i++) ctx.lineTo(P[i][0], P[i][1]);
+    ctx.closePath();
+  };
+  pathOf(W);
+  ctx.fillStyle = C.face;
+  ctx.fill();
+  ctx.save();
+  pathOf(W);
+  ctx.clip();
+  // Bands: nested hulls, each shrunk about a point pushed AWAY from
+  // the sun, so the lit region gathers on the sunward side. Drawn
+  // darkest first so brighter cores land on top, the same order
+  // shadeEllipse uses.
+  for (let bi = 0; bi < bands.length; bi++) {
+    const b = bands[bi];
+    const k = b.k;                       // 0..1 shrink toward the core
+    const ox = cx - sun.x * r * b.off;
+    const oy = cy - sun.y * r * b.off;
+    const P = W.map((p) => [ox + (p[0] - ox) * k, oy + (p[1] - oy) * k]);
+    pathOf(P);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawBoxKraft(ctx, verts, angle, sun, C, bevel) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   const n = verts.length;
@@ -249,7 +317,16 @@ function drawBoxKraft(ctx, verts, angle, sun, C, bevel) {
 // Registry vertices scaled to a body's half-extents, COM-centred. The
 // renderer is handed a and b, not the body, so the scale is recovered
 // from the registry's own half-width.
-function speciesVerts(fruit, a) {
+// instanceVerts (2026-08-30, boulders phase 1): a body that grew its
+// OWN hull hands its vertices in directly. THIS HALF IS NOT OPTIONAL.
+// Physics reads m.poly; if the renderer kept deriving from the
+// species, the drawn rock and the collided rock would be different
+// shapes — the silhouette/collider mismatch whose stale claim about
+// the egg was corrected earlier the same day. Instance vertices are
+// already COM-centred and in body px (polyPhysique normalises them),
+// so they are used as-is, NOT rescaled by a/hx like registry units.
+function speciesVerts(fruit, a, instanceVerts) {
+  if (instanceVerts && instanceVerts.length >= 3) return instanceVerts;
   const SP = (window.FF.OBJECTS && window.FF.OBJECTS[fruit]) || null;
   if (!SP || !SP.poly || SP.poly.length < 3) return null;
   let hx = 0;
@@ -263,8 +340,8 @@ function speciesVerts(fruit, a) {
 // its half-extent, so a sprite sized on `a` would clip them off at 45
 // degrees. Same quantity as the body's physics boundR, recomputed
 // here from the registry because the renderer is handed a and b only.
-function spriteBoundR(fruit, a, b) {
-  const V = speciesVerts(fruit, a);
+function spriteBoundR(fruit, a, b, instanceVerts) {
+  const V = speciesVerts(fruit, a, instanceVerts);
   if (!V) return a;
   let r = 0;
   for (const v of V) { const d = Math.hypot(v[0], v[1]); if (d > r) r = d; }
@@ -616,8 +693,8 @@ function createRenderer(canvas) {
     // to mobile landscape's own vertical, so it engages only ABOVE
     // ~2.16:1 — a shape no ordinary window has — and every normal
     // window, phone or desktop, is framed by width alone.
-    let zoom = width / (VIEW_W_M * 100);
-    const vHatch = height / (VIEW_H_MIN_M * 100);
+    let zoom = width / (VIEW_W_M * CONFIG.pxPerMetre);
+    const vHatch = height / (VIEW_H_MIN_M * CONFIG.pxPerMetre);
     if (vHatch < zoom) zoom = vHatch;
 
     // ---- Camera: forward-biased on x, centered on y ----
@@ -1495,7 +1572,7 @@ function createRenderer(canvas) {
         // measured on device. Vector mode keeps its shadows.
         const wyG0 = surfY(state, dxw, dyw);
         if (wyG0 !== null) {
-          const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / 100);
+          const hM = Math.max(0, (wyG0 - (dyw + d.melon.b)) / CONFIG.pxPerMetre);
           if (hM < RIG.P.castMaxM) {
             const spT = (window.FF.OBJECTS[d.melon.species] && window.FF.OBJECTS[d.melon.species].taper) || 0;
             const shC = spT * d.melon.a / 4; // geometric center offset from the COM
@@ -1559,7 +1636,7 @@ function createRenderer(canvas) {
       if (RIG.P.contactShadow && !pxMode) {
         const wyG = surfY(state, dxw, dyw);
         if (wyG !== null) {
-          const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / 100);
+          const hM = Math.max(0, (wyG - (dyw + d.melon.b)) / CONFIG.pxPerMetre);
           if (hM < RIG.P.contactMaxM) {
             const fade = 1 - hM / RIG.P.contactMaxM;
             const az = d.melon.a * zoom, bz = d.melon.b * zoom;
@@ -2040,7 +2117,7 @@ function createRenderer(canvas) {
   // sticks, so either caller may be first).
   let frameCounter = 0;
   let stickThemeFrame = -1;
-  let stickThemeCache = (window.FF.shading && window.FF.shading.WHITE_RGB) || [246, 246, 246];
+  let stickThemeCache = window.FF.shading.WHITE_RGB;   // one source; loads before us
   function stickThemeMain() {
     const f = frameCounter;
     if (f === stickThemeFrame) return stickThemeCache;
@@ -2049,7 +2126,7 @@ function createRenderer(canvas) {
     stickGlass.blend += Math.sign(target - stickGlass.blend) * Math.min(0.09,
       Math.abs(target - stickGlass.blend));
     const GT = (window.FF.glass && window.FF.glass.STICK_THEMES)
-      || { LIGHT: { main: (window.FF.shading && window.FF.shading.WHITE_RGB) || [246, 246, 246] }, DARK: { main: [22, 28, 22] } };
+      || { LIGHT: { main: window.FF.shading.WHITE_RGB }, DARK: { main: [22, 28, 22] } };
     const k = stickGlass.blend;
     const mixc = (a, b) => Math.round(a + (b - a) * k);
     stickThemeCache = [0, 1, 2].map((i) => mixc(GT.LIGHT.main[i], GT.DARK.main[i]));
@@ -2528,9 +2605,21 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   let bakeBudget = 0;                  // refilled each rendered frame
   const BAKE_PER_FRAME = 3;
 
-  function variantEntry(color, seedKey, a, b, rPx, fruit, decals) {
+  // hullSig: a per-instance hull must not share a sprite with a
+  // different hull of the same species and colour. Cheap, total, and
+  // stable — vertex count plus rounded coordinates.
+  function hullSig(hull) {
+    if (!hull || hull.length < 3) return '';
+    let s = 'h' + hull.length;
+    for (let i = 0; i < hull.length; i++) {
+      s += ':' + hull[i][0].toFixed(1) + ',' + hull[i][1].toFixed(1);
+    }
+    return s;
+  }
+  function variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull) {
     const key = color + '|' + seedKey + '|' + (fruit || '') + '|'
-      + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals);
+      + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals)
+      + '|' + hullSig(hull);
     let e = melonSprites.get(key);
     if (e !== undefined) return e;
     if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
@@ -2540,7 +2629,8 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // circumradius for a polygon, whose corners rPx had to grow to
     // hold. The bake scale must divide by the SAME quantity, or a box
     // would be drawn sqrt(2) too large inside its own sprite.
-    e = { spr, rPx, bR: spriteBoundR(fruit, a, b), a, b, color, seedKey, species: fruit, decals, frames: new Map(),
+    e = { spr, rPx, bR: spriteBoundR(fruit, a, b, hull), a, b, color, seedKey,
+      species: fruit, decals, hull: hull || null, frames: new Map(),
       big: null, btx: null };
     melonSprites.set(key, e);
     return e;
@@ -2590,8 +2680,16 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       ? { squash: SQ_GATE + (SQ_MAX - SQ_GATE) * (mag / SQ_MAGS),
         squashAngle: (ax / SQ_AXES) * Math.PI * 2 }
       : null;
+    // THE BAKE CARRIES THE INSTANCE HULL (2026-08-30, boulders phase
+    // 1). `sq` is a SYNTHETIC squash object, not the body, so a
+    // per-instance hull would be invisible here and the baked sprite
+    // would wear the SPECIES shape while physics collided the
+    // instance one — risk R2, half-done, which is worse than not
+    // started. The hull rides on the same object the painter already
+    // reads.
+    const sqH = e.hull ? Object.assign({}, sq || {}, { poly: e.hull }) : sq;
     drawMelonVector(btx, big / 2, big / 2, rot * 2 * Math.PI / SPRITE_ANGLES,
-      sq, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals);
+      sqH, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals);
     let src;
     try { src = btx.getImageData(0, 0, big, big); }
     catch (err) { bakeLodR = null; return null; }
@@ -2782,8 +2880,8 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     return { ax, mag };
   }
 
-  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals) {
-    return variantEntry(color, seedKey, a, b, rPx, fruit, decals);
+  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull) {
+    return variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull);
   }
   // Verification surface for the cache's pure parts.
   window.FF._pxBake = { squashSlot, frameKey, SS, SQ_AXES, SQ_MAGS,
@@ -2802,8 +2900,9 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       // on `a` clips them clean off at 45 degrees. spriteBoundR is the
       // circumradius for a polygon species and exactly `a` for every
       // smooth one, so the existing sprites are byte-unmoved.
-      const rPx = Math.max(3, Math.round(spriteBoundR(fruit, a, b) * zoom));
-      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
+      const hull = (squash && squash.poly) || null;
+      const rPx = Math.max(3, Math.round(spriteBoundR(fruit, a, b, hull) * zoom));
+      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull);
       const slot = squashSlot(squash);
       if (e) {
         const TAU = Math.PI * 2;
@@ -2910,10 +3009,40 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // curved body's terminator, and a flat plate has no terminator to
     // solve. Species without a `poly` reach exactly the call they
     // always did.
-    const V = speciesVerts(fruit, a);
+    const V = speciesVerts(fruit, a, squash && squash.poly);
     if (V) {
       const sunV = RIG && RIG.sun ? RIG.sun() : { x: 0, y: -1 };
       const sl = Math.hypot(sunV.x, sunV.y) || 1;
+      const SPP = (window.FF.OBJECTS && window.FF.OBJECTS[fruit]) || null;
+      // STONE TAKES THE STONE PAINTER (2026-08-30, boulders phase 3).
+      // Selected on an EXPLICIT species flag, never inferred from
+      // hullGen: a future species could grow its own hull and still
+      // want the kraft treatment, and dispatch on field presence is
+      // the habit Law 1 exists to prevent.
+      if (SPP && SPP.stone) {
+        // THE GROUND'S OWN TONE, read at draw time rather than baked
+        // at mint: a stage that re-tints the terrain re-tints its
+        // rocks in the same frame, which is what "fragments of the
+        // terrain" has to mean if it means anything.
+        const ground = (window.FF.palette && window.FF.palette.groundTone)
+          ? window.FF.palette.groundTone() : (color || COLORS.ground);
+        const B = RIG.bands();
+        const bands = [];
+        for (let i = 0; i < B.length; i++) {
+          // Darkest first, gathering sunward. off/k are the band's
+          // reach and core size — the hull equivalents of
+          // shadeEllipse's iso thresholds.
+          bands.push({
+            k: 0.92 - i * (0.62 / Math.max(1, B.length)),
+            off: 0.30 + i * (0.34 / Math.max(1, B.length)),
+            color: RIG.slotColor(ground, B[i].fillSlot),
+          });
+        }
+        drawStonePoly(ctx, V, angle, { x: sunV.x / sl, y: sunV.y / sl },
+          { face: RIG.slotColor(ground, RIG.P.baseFillSlot) }, bands);
+        ctx.restore();
+        return;
+      }
       const base = color || COLORS.rind;
       drawBoxKraft(ctx, V, angle, { x: sunV.x / sl, y: sunV.y / sl }, {
         face: RIG.slotColor(base, RIG.P.baseFillSlot),
@@ -3093,7 +3222,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     }];
     for (let p = puffs.length - 1; p >= 0; p--) {
       const puff = puffs[p];
-      const age = (state.tick - puff.born) / 120;
+      const age = (state.tick - puff.born) / CONFIG.physicsHz;
       if (age > 1.25) { puffs.splice(p, 1); continue; }
       let px = puff.x, py = puff.y;
       if (period) {
@@ -3192,10 +3321,13 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // (1 - taper * cos t), which narrows one end and fattens the other —
   // a real egg profile rather than a symmetric ellipse. taper 0 traces
   // the plain ellipse, so melons are unaffected.
-  // NOTE: the COLLIDER remains a true ellipse. At taper 0.26 the
-  // silhouette departs from it by a few px at the narrow end only;
-  // making the physics egg-shaped means new support, curvature and
-  // segment solvers, which is its own piece of work.
+  // NOTE (corrected 2026-08-30): the COLLIDER IS EGG-SHAPED. This
+  // comment previously said it remained a true ellipse and described
+  // egg physics as future work — true when written, false since the
+  // tapered terrain routine (eggVsSegment) and false twice over since
+  // the egg pair cells shipped (resolveEggPoly / resolveEggSmooth,
+  // 2026-08-30). Silhouette and collider now trace the SAME profile,
+  // and the drawing is shifted by sh below so they coincide on screen.
   function bodyPath(ctx, a, b, angle, taper) {
     if (!taper) { ctx.ellipse(0, 0, a, b, angle, 0, Math.PI * 2); return; }
     const ca = Math.cos(angle), sa = Math.sin(angle);
@@ -4489,7 +4621,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // The old comment's claim that the density change marks the surface
   // no longer holds — the surface is marked by the ground fill itself,
   // and matching densities read as one continuous system.
-  const TERRAIN_GRID_SPACING = 100;
+  const TERRAIN_GRID_SPACING = CONFIG.pxPerMetre;   // 1 m squares
 
   function drawTerrainGrid(ctx, cam, w, h, groundY, zoom, colTop) {
     // Same 1/50/100/200 banding as the background, so emphasis
@@ -4519,7 +4651,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       };
       ctx.fillStyle = PX_GRID.tBase;
       for (let wx = firstX; wx < lastX; wx += TERRAIN_GRID_SPACING) {
-        if (tierOf(wx / 100) >= 0) continue;
+        if (tierOf(wx / CONFIG.pxPerMetre) >= 0) continue;
         vline(Math.round((wx - cam.x) * zoom + w / 2));
       }
       for (let sy = firstY; sy < h + spacing; sy += spacing) {
@@ -4688,6 +4820,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
 }
 
 Object.assign(window.FF, { createRenderer,
-  painters: { beachGores: drawBeachGores, boxKraft: drawBoxKraft },
+  painters: { beachGores: drawBeachGores, boxKraft: drawBoxKraft,
+    stonePoly: drawStonePoly },
   _speciesVerts: speciesVerts, _spriteBoundR: spriteBoundR });
 })();

@@ -116,9 +116,44 @@ const OBJECTS = {
   // sit between the ball and the melons.
   yoshiEgg: {
     misc: true,
-    aspect: 0.86,        // egg-round: stubbier than a melon, not a sphere
-    taper: 0.26,         // ASYMMETRIC: one end pointier, as a real egg
-    sizeMult: 0.88,
+    // SHAPE RE-RULED 2026-08-30 (Eddie), measured against two of his
+    // reference eggs: a photographed egg fit our boundary family at
+    // aspect 0.771 / taper 0.16 (1.9 px rms over 915 silhouette
+    // rows) and an emoji-style egg at 0.804 / 0.08 (0.8%). The old
+    // 0.86 / 0.26 had it backwards — too round overall, too pinched
+    // at the tip ("lumpy ball with a dent"). Eddie picked the split:
+    // egg-true silhouette with a visible waddle. Taper stays a
+    // one-number nudge if device wobble isn't to taste.
+    aspect: 0.78,        // real eggs are ~0.77-0.80 wide-to-long
+    taper: 0.14,         // gentle: the tip narrows, it does not pinch
+    // SIZE + MASS RULED 2026-08-30 (Eddie), for the egg PROP and the
+    // Egg Race party game it feeds: ball-sized, "knockable but fairly
+    // heavy — slightly unwieldy for 3 melons, still manageable".
+    // sizeMult 2.0 puts the egg at 184 x 144 px: the same length as
+    // the beach ball's diameter, sitting lower.
+    sizeMult: 2.0,
+    // Density MEASURED, not guessed (push rig, melons at full
+    // throttle on the flat, 6 s, at THIS size). There is a THRESHOLD
+    // between 3 and 3.5 melon masses: at 3 one melon shoves the egg
+    // down the track alone (1895 px solo); at 3.5 and above a lone
+    // melon can only nudge it (69 px) while three still move it
+    // briskly (3033 px). 0.564 lands 4.5 masses — clear of the
+    // threshold, three melons make ~430 px/s, about half racing
+    // pace: an escort that has to commit.
+    //
+    // RETRACTION on record: the first conversion wrote 0.828 and
+    // landed 6.61 masses. The measuring rig passed 2.0 as a scale
+    // ARGUMENT on top of the then-registry 0.88, so it measured an
+    // egg at effective size 1.76 and the density was solved off that
+    // baseline; the earlier "~8 melon masses" estimate quoted to
+    // Eddie was right and the "5.44" measurement was the wrong one.
+    // The mass TABLE survived (it set masses directly) and was
+    // re-run at true size — which moved the threshold from ~4 to
+    // ~3.25, since a bigger egg presents a taller face to climb.
+    //
+    // NOTE: ~150x the light box and ~43x the beach ball. The egg
+    // bulldozes scenery, which suits its size.
+    density: 0.564,
     anchorBand: { h: [39.4, 48.6], s: [0.194, 0.628], l: [0.888, 0.987] },
     // near-white shells (the high HSL saturation is an artifact of
     // near-white lightness; chroma stays tiny). Individuals derive their anchor
@@ -154,6 +189,121 @@ const OBJECTS = {
     pattern: 'spots',      // seeded rounded blobs, a few large
   },
 
+  // ---- BOULDER (ruled by Eddie 2026-08-30) -------------------------
+  // Fragments of the terrain itself, in the lore — which is why the
+  // colour comes off the GROUND kit rather than a palette of its own
+  // (phase 3 will make that literal; the anchor band below is a
+  // placeholder neutral so the body is visible before that ruling).
+  //
+  // SHAPE IS PER INSTANCE, not per species: `hullGen` tells
+  // derivePhysique to grow vertices from the body's own hullSeed
+  // (state.js boulderHull), so no two boulders on a track are alike.
+  // R 65 gives ~130 px across, Eddie's ruling: between the melon (92)
+  // and the egg (184). 6-8 sides, also his.
+  boulder: {
+    misc: true,          // scenery, not produce
+    shape: 'poly',
+    hullGen: { R: 65, sidesMin: 6, sidesMax: 8 },
+    // A fixed fallback hull, used only if a body reaches the registry
+    // with no hullSeed. Deliberately a plain hexagon: if one ever
+    // appears on a track it should look WRONG, not plausibly minted.
+    poly: [[65, 0], [32, 56], [-32, 56], [-65, 0], [-32, -56], [32, -56]],
+    sizeMult: 1,
+    // THE HEAVIEST PROP IN THE GAME (Eddie's ruling), measured in the
+    // phase-2 rig rather than guessed. Tippable is a SHAPE property,
+    // not a mass one: a boulder resting on a small face is unsteady
+    // whatever it weighs.
+    //
+    // DO NOT LOWER THIS TO IMPROVE A BALANCE SWEEP. The 2026-08-30
+    // sweep showed boulders costing 21 of 144 finishes; Eddie ruled
+    // that a BOT problem, not a boulder problem — a player hops
+    // around them and bots cannot yet. Lightening was measured
+    // (density 0.22) and is explicitly NOT wanted. See handover
+    // addendum 16 before touching this number.
+    density: 1.0,
+    toughnessMult: 0,    // INDESTRUCTIBLE for now (Eddie's ruling)
+    // STONE (Eddie, 2026-08-30): the boulder wears THE GROUND'S OWN
+    // TONE and is lit by the same band law as every other body —
+    // "why can't it just be the same colour as the ground and be lit
+    // the way the ground and melons are lit? That would be most
+    // consistent." It is, and it means a rock re-tints with its
+    // stage for free. An explicit flag, not inferred from hullGen
+    // (Law 1). The anchorBand below is therefore unused for pigment
+    // and kept only so any code path that asks a species for a band
+    // gets a sane neutral rather than undefined.
+    stone: true,
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
+  // ---- THE BOULDER SIZE LADDER (added 2026-08-30 for future use) ---
+  // Eddie approved every size on the ladder mockup. They are SPECIES
+  // only: none of them has a kind entry in config.furniture, so none
+  // is minted and BOTH GATES STAY BYTE-IDENTICAL. Each gets its own
+  // mint ruling (count, spacing, sites) when he wants it on a track.
+  //
+  // `boulder` above is the LARGEST class (R 65 / 130 px) and keeps
+  // its plain name because it is minted and referenced by the config
+  // kind, the suites and the mutation table; renaming it to fit a
+  // ladder would be a rename dressed as a refactor.
+  //
+  // One density for all of them, deliberately: it is the same stone.
+  // Mass falls with VOLUME, so the ladder spans an immovable wall
+  // down to something a melon punts aside without a single tuning
+  // number — measured masses are in the phase-5 handover addendum.
+  boulderBig: {
+    misc: true,
+    shape: 'poly',
+    hullGen: { R: 50, sidesMin: 6, sidesMax: 8 },
+    poly: [[50, 0], [25, 43], [-25, 43], [-50, 0], [-25, -43], [25, -43]],
+    sizeMult: 1,
+    density: 1.0,
+    toughnessMult: 0,
+    stone: true,          // a shade shorter than the flagship; still taller than a melon
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
+  boulderMid: {
+    misc: true,
+    shape: 'poly',
+    hullGen: { R: 38, sidesMin: 6, sidesMax: 8 },
+    poly: [[38, 0], [19, 33], [-19, 33], [-38, 0], [-19, -33], [19, -33]],
+    sizeMult: 1,
+    density: 1.0,
+    toughnessMult: 0,
+    stone: true,          // about melon height — the ride-over threshold
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
+  boulderSmall: {
+    misc: true,
+    shape: 'poly',
+    hullGen: { R: 28, sidesMin: 6, sidesMax: 8 },
+    poly: [[28, 0], [14, 24], [-14, 24], [-28, 0], [-14, -24], [14, -24]],
+    sizeMult: 1,
+    density: 1.0,
+    toughnessMult: 0,
+    stone: true,          // clearly ride-over-able; a jolt, not a wall
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
+  pebble: {
+    misc: true,
+    shape: 'poly',
+    hullGen: { R: 20, sidesMin: 6, sidesMax: 8 },
+    poly: [[20, 0], [10, 17], [-10, 17], [-20, 0], [-10, -17], [10, -17]],
+    sizeMult: 1,
+    density: 1.0,
+    toughnessMult: 0,
+    stone: true,          // texture
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
+  gravel: {
+    misc: true,
+    shape: 'poly',
+    hullGen: { R: 14, sidesMin: 6, sidesMax: 8 },
+    poly: [[14, 0], [7, 12], [-7, 12], [-14, 0], [-7, -12], [7, -12]],
+    sizeMult: 1,
+    density: 1.0,
+    toughnessMult: 0,
+    stone: true,          // the smallest measured class
+    anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
+  },
   beachball: {
     misc: true,          // seaside equipment, not produce
     // THE ANNEX'S FIRST FULL CUSTOMER (ruled 2026-08-26): a sphere
@@ -193,13 +343,19 @@ const OBJECTS = {
     shape: 'poly',       // EXPLICIT tag; never inferred from fields
     poly: [[-50, -50], [50, -50], [50, 50], [-50, 50]],   // 1 m x 1 m, px
     sizeMult: 1.0,       // semiMajor is 46, so a 50 px half-extent is 1.0 m
-    // Density RULED 2026-08-28 off the scale graphic. The prism
-    // volume law makes a 1 m box 4.0045 melon volumes, so 0.06 is
-    // 0.240 melon masses — a quarter of a melon, 2.3x the beach
-    // ball. The first number written here (0.02) came to 0.080 and
-    // would have made the box LIGHTER than the ball, against this
-    // entry's own stated intent.
-    density: 0.06,
+    // Density RE-RULED 2026-08-30 (Eddie): a box should only
+    // MARGINALLY slow a melon that hits it, and get sent flying —
+    // not bouncier (cardboard thuds), LIGHTER. Measured at full
+    // throttle, time lost passing a head-on box: the old 0.240
+    // melon masses cost 0.12 s and left the melon at 71% speed;
+    // 0.030 masses (this value) costs 0.01-0.02 s and leaves 91%,
+    // with the box still knocked ~400 px. NOTE, superseding the
+    // 2026-08-28 note below: this makes the box LIGHTER than the
+    // beach ball (0.080) — an empty cardboard box is light; the
+    // old intent lost to the new feel ruling.
+    // (2026-08-28, historical: prism volume law makes a 1 m box
+    // 4.0045 melon volumes; 0.06 was 0.240 melon masses.)
+    density: 0.0075,
     restitutionFloor: 0.08,  // cardboard thuds; flare adds, never removes
     toughnessMult: 0,    // INDESTRUCTIBLE for v1 (ruled), like the ball:
                          // impulses and breadcrumbs fully live, only the

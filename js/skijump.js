@@ -287,7 +287,7 @@ window.FF.session.registerMetric({
 });
 
 // ---- Entry -------------------------------------------------------
-const DUR_TICKS = 3 * 60 * 120;      // solo default; the party cup
+const DUR_TICKS = 3 * 60 * window.FF.CONFIG.physicsHz;      // solo default; the party cup
 const CONVEYOR_TICKS = 45;           // passes its own 2-minute law.
 
 function start(opts) {

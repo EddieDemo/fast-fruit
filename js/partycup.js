@@ -22,7 +22,7 @@ if (typeof window === 'undefined') return;
 window.FF = window.FF || {};
 
 const LEGS = 3;
-const DUR_TICKS = 2 * 60 * 120;   // two minutes (Eddie's ruling)
+const DUR_TICKS = 2 * 60 * window.FF.CONFIG.physicsHz;   // two minutes (Eddie's ruling)
 
 // THE LEG CONTRACT (2026-08-26): the cup sequences EVENT ADAPTERS and
 // never knows whether a leg was a session or a race — the same move
