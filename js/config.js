@@ -294,7 +294,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-31a';
+const BUILD = '2026-08-31b';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -524,6 +524,9 @@ CONFIG.furniture = {
       // left (which is why its count is a RANGE from 1: a track with
       // a busy flat band gets fewer rocks, not a starved stack).
       species: 'boulder', name: 'BOULDER',
+      mustMint: true,    // at least one per track (Eddie, 2026-08-31): see
+                         // the guarantee in mintFurniture — sub-sites the
+                         // longest flat run when the deal came up empty
       salt: 0xB0D1E5B0,  // its OWN stream: every existing kind's deal is bit-unmoved
       sites: 'flat',     // FLAT ONLY for now (Eddie's ruling) — a slope
                          // start would let a boulder tumble from mint,

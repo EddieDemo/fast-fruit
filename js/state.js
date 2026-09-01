@@ -946,6 +946,60 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
       for (let i = lists.length - 1; i >= 0; i--) {
         if (lists[i].length < 1) lists.splice(i, 1);
       }
+      // THE GUARANTEE (Eddie, 2026-08-31: "ensure every track has at
+      // least one boulder"). A flat kind marked mustMint that dealt
+      // NOTHING gets one more look — not at a new kind of ground (a
+      // flat species stays on a flat run; the law above stands) but
+      // at a better USE of the runs it already has. Sites are one
+      // per run, at the run's midpoint, so a 3,700 px run and a 300
+      // px run each claim once; the box and the stack claim four
+      // candidates apiece, and on a six-site track the band is spent
+      // before the boulder is dealt. Measured: separation was never
+      // the limiter (23 of 60 tracks at ZERO boulders at every
+      // minSeparation from 260 down to 100).
+      // So: walk the band's runs longest first and take the first
+      // sub-position — just inside either end of the run — that sits
+      // at least minSeparation from EVERY claim. Pure arithmetic, no
+      // rng() draw: the deal above already drew this kind's count and
+      // shuffle, the earlier kinds are untouched by construction, and
+      // the stream is sacred. A track whose runs are all short may
+      // still yield nothing; that is stated, not hidden.
+      if (kind.mustMint && lists.length === 0) {
+        const half = ph.boundR + FCFG.wakeGap;
+        // THE GUARANTEE'S SEPARATION is the PHYSICAL minimum — the
+        // footprint — not the courtesy gap. The law's own words:
+        // props may be neighbours; they may not overlap. Measured:
+        // at the courtesy gap 10 of 60 tracks still had no rock,
+        // because their runs were all shorter than 2 x (260 + half)
+        // and every midpoint was claimed.
+        const sepG = footprint;
+        const clear = (pos) => {
+          for (const c of claimed) if (Math.abs(c - pos) < sepG) return false;
+          return true;
+        };
+        let placed = null;
+        // TIER 1: sub-site the flat runs, longest first.
+        const runs = band.slice().sort((p, q) => (q.len || 0) - (p.len || 0));
+        for (const q of runs) {
+          if (q.s0 === undefined || q.s1 === undefined) continue;
+          for (const pos of [q.s0 + half, q.s1 - half]) {
+            if (pos > q.s0 && pos < q.s1 && clear(pos)) { placed = pos; break; }
+          }
+          if (placed !== null) break;
+        }
+        // TIER 2: a DIP. Stated, not smuggled: flat-only was ruled to
+        // keep a rock from tumbling at mint, and a rest site is where
+        // a sphere comes to rest — a rock in a dip cannot tumble
+        // either. A track whose flat runs are all too short for a
+        // second body (seed 7000: two runs of ~290 px) gets its
+        // guaranteed rock in a hollow instead of not at all.
+        if (placed === null) {
+          const dips = (restSites || []).filter((q) => q.s > 0.15 * arc && q.s < 0.9 * arc)
+            .slice().sort((p, q) => p.s - q.s);
+          for (const q of dips) { if (clear(q.s)) { placed = q.s; break; } }
+        }
+        if (placed !== null) { lists.push([placed]); claimed.push(placed); }
+      }
     } else {
       for (const list of lists) {
         while (list.length < 1) list.push((0.25 + rng() * 0.6) * arc);
