@@ -65,14 +65,14 @@ for (let i = 0; i < MAX_FRAGS; i++) {
     // axis in the screen plane, drawn as a squash by |cos(fold)| along
     // one axis (foldAxis 0: a horizontal axis, the height squashes;
     // 1: a vertical axis, the width squashes), floored at a sliver
-    // (`sliver` px) so an edge-on panel still reads as cardboard.
+    // (`sliver` px) so an edge-on panel still reads as cardboard. No
+    // seam on a loose panel (ruled 2026-09-02).
     // Ordinary 2D spin (angle/omega) on top. Front/back start at fold
     // 0, top/bottom at 90 about a horizontal axis, left/right at 90
     // about a vertical one — which is exactly the bevel strips the
     // intact box already draws, so frame zero of a break is the box.
     panel: false, pw: 0, ph: 0, fold: 0, foldRate: 0, foldAxis: 0, sliver: 0,
     printSeed: -1,     // the front panel keeps the box's print (ruled)
-    seam: false,       // front/back carry the box's seam line
     colLit: null, colDark: null,   // the painter's lit / dark slots
   });
 }
@@ -98,7 +98,7 @@ function allocate() {
   const f = allocateSlot();
   f.offWorld = 0;
   f.card = false;   // pulp unless a spawner says otherwise
-  f.panel = false; f.printSeed = -1; f.seam = false;
+  f.panel = false; f.printSeed = -1;
   return f;
 }
 function allocateSlot() {
@@ -369,16 +369,16 @@ function spawnFromProp(m, state, tick, bodyIndex) {
   const sliver = Math.max(2, hx * 0.14);   // the kraft painter's bevel width
   const tx = -ny, ty = nx;
   const PANELS = [
-    // [ox, oy, pw, ph, fold0, axis, seam, isFront]
-    [0, 0, 2 * hx, 2 * hy, Math.PI, 0, true, false],           // back: fold 180 — its outside faces away
-    [0, -hy, 2 * hx, D, Math.PI / 2, 0, false, false],         // top
-    [0, hy, 2 * hx, D, Math.PI / 2, 0, false, false],          // bottom
-    [-hx, 0, D, 2 * hy, Math.PI / 2, 1, false, false],         // left
-    [hx, 0, D, 2 * hy, Math.PI / 2, 1, false, false],          // right
-    [0, 0, 2 * hx, 2 * hy, 0, 0, true, true],                  // front: last, in front
+    // [ox, oy, pw, ph, fold0, axis, isFront]
+    [0, 0, 2 * hx, 2 * hy, Math.PI, 0, false],           // back: fold 180 — its outside faces away
+    [0, -hy, 2 * hx, D, Math.PI / 2, 0, false],          // top
+    [0, hy, 2 * hx, D, Math.PI / 2, 0, false],           // bottom
+    [-hx, 0, D, 2 * hy, Math.PI / 2, 1, false],          // left
+    [hx, 0, D, 2 * hy, Math.PI / 2, 1, false],           // right
+    [0, 0, 2 * hx, 2 * hy, 0, 0, true],                  // front: last, in front
   ];
   for (let i = 0; i < PANELS.length; i++) {
-    const [ox, oy, pw, ph, fold0, axis, seam, isFront] = PANELS[i];
+    const [ox, oy, pw, ph, fold0, axis, isFront] = PANELS[i];
     const f = allocate();
     f.active = true; f.cold = false; f.grounded = false;
     f.kind = 2;          // the rind family's SHAPE class (slabby, rests early)
@@ -388,7 +388,6 @@ function spawnFromProp(m, state, tick, bodyIndex) {
                          // the three readers: ground response, wake, and here)
     f.panel = true;
     f.pw = pw; f.ph = ph; f.fold = fold0; f.foldAxis = axis; f.sliver = sliver;
-    f.seam = seam;
     f.printSeed = isFront && m.printSeed !== undefined ? m.printSeed : -1;
     f.verts = null;
     f.col = cols[0]; f.colLit = cols[1]; f.colDark = cols[2];

@@ -306,8 +306,10 @@ function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints, opts) {
   // dark bevel on its away-from-sun edges and the light bevel on the
   // others, which is one mechanism instead of two arguing.
   // (A PANEL of a broken box — the debris painter — passes
-  // { seam: false } for the four sides: only the front and back carry
-  // the fold line. Boxes pass nothing and draw exactly as before.)
+  // { seam: false }: a loose panel carries no fold line (ruled
+  // 2026-09-02 — with it, the front and back read as two halves each,
+  // and six panels looked like ten). Boxes pass nothing and draw
+  // exactly as before.)
   if (opts && opts.seam === false) { ctx.restore(); return; }
   let hx = 0;
   for (const v of verts) if (Math.abs(v[0]) > hx) hx = Math.abs(v[0]);
@@ -722,7 +724,25 @@ function createRenderer(canvas) {
       ? window.FF.gridStart.cameraShot(state) : null;
     if (shot) zoom *= shot.zoomMul;
     const fwdBias = cam.fwd === undefined ? 1 : cam.fwd;
-    const targetX = ix + fwdBias * (0.5 - MELON_SCREEN_FRAC) * width / zoom;
+    // THE SPEED LEAD (ruled 2026-09-02): how far ahead the camera
+    // sits is the followed body's HORIZONTAL speed times a lead time,
+    // as a fraction of the view — floored at the parked framing (the
+    // melon at 38% of the width, ~1.9 m ahead: a parked melon frames
+    // exactly as before) and capped at the melon at cameraLeadFrac
+    // (0.25: three quarters of the 16.2 m view ahead, ~4 m). Speed,
+    // not velocity: a ski-jump drop must not yank the view forward;
+    // the DIRECTION is cam.fwd, read from the spine ahead and swung
+    // through reversals below, so the lead collapses through zero on
+    // the way round rather than flickering with every bounce. The
+    // follow lerp does the easing — accelerate and the view pulls
+    // ahead, brake and it settles back.
+    const leadM = Math.abs(m.vx || 0) / CONFIG.pxPerMetre * (CONFIG.cameraLeadSec || 0);
+    let leadFrac = leadM / VIEW_W_M;
+    const restLead = 0.5 - MELON_SCREEN_FRAC;
+    const maxLead = 0.5 - (CONFIG.cameraLeadFrac === undefined ? MELON_SCREEN_FRAC : CONFIG.cameraLeadFrac);
+    if (leadFrac < restLead) leadFrac = restLead;
+    if (leadFrac > maxLead) leadFrac = maxLead;
+    const targetX = ix + fwdBias * leadFrac * width / zoom;
     if (shot) {
       cam.x = shot.x;
       cam.y = shot.y;
@@ -2273,6 +2293,7 @@ function createRenderer(canvas) {
 
   // Fragment dress by kind: 0 fleck, 1 chunk, 2 rind, 3 slab.
   const FRAG_COLOR = ['#ff6b7d', '#ff4757', '#0f8f3a', '#0c7a31'];
+  const PX_SLIVER = 2.5;   // buffer pixels: an edge-on panel's least thickness in pixel mode
   const STAIN_COLOR = 'rgba(24, 18, 20, 0.6)';
 
   function drawDebris(ctx, state, cam, w, h, toScreenX, toScreenY, zoom) {
@@ -2308,7 +2329,16 @@ function createRenderer(canvas) {
         // is turned into the panel's frame because the frame is
         // already rotated here.
         const c = Math.cos(f.fold);
-        const k = Math.max(Math.abs(c), f.sliver / (f.foldAxis === 0 ? f.ph : f.pw));
+        // THE PIXEL FLOOR (2026-09-02, from the device: side-on panels
+        // vanished for a frame). The pixel pass's AA-killer snaps any
+        // pixel that is not a whole-coverage colour to its neighbours;
+        // a 7 px sliver is ~1.7 buffer pixels, so no row of it is ever
+        // pure and the whole strip is eaten. In pixel mode the sliver
+        // is floored at PX_SLIVER buffer pixels (self-scaling with the
+        // camera), so at least one solid row survives the snap. Vector
+        // mode keeps the bevel-width sliver.
+        const sliver = pxMode ? Math.max(f.sliver, PX_SLIVER / zoom) : f.sliver;
+        const k = Math.max(Math.abs(c), sliver / (f.foldAxis === 0 ? f.ph : f.pw));
         const kx = f.foldAxis === 0 ? 1 : k, ky = f.foldAxis === 0 ? k : 1;
         const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
         const sunL = { x: sunD.x * ca + sunD.y * sa, y: -sunD.x * sa + sunD.y * ca };
@@ -2318,7 +2348,7 @@ function createRenderer(canvas) {
         ctx.scale(kx, ky);
         drawBoxKraft(ctx, [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], 0, sunL,
           { face: f.col, lit: f.colLit, dark: f.colDark, ink: f.colDark },
-          f.sliver, prints, { seam: f.seam && c > 0 });
+          f.sliver, prints, { seam: false });   // no seam on a loose panel (ruled: it read as two halves)
       } else if (f.verts) {
         // Irregular seeded shard: vertices in units of r.
         ctx.beginPath();

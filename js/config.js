@@ -28,9 +28,12 @@ const DEFAULTS = Object.freeze({
   // track and its furniture can be explored without bots racing
   // through the noodling. The player keeps their seat; furniture
   // mints and wakes exactly as in a full race (the wake law follows
-  // the leader, which is now you). Ships FALSE; flag-off is
-  // bit-parity by construction (the flag is read only in raceInit's
-  // field build, which the gates never enter — and the gates held).
+  // the leader, which is now you). SHIPS TRUE from v349 (Eddie,
+  // 2026-09-02: "make sure soloRace in config is set to true in
+  // future versions") — the field is you alone while the prop work
+  // is played in. Flag-off is bit-parity by construction (the flag
+  // is read only in raceInit's field build, which the gates never
+  // enter — and the gates held); verify-objects S1 holds the value.
   soloRace: true,
   // PHASE-6 §5.5: iterations of the UNIFIED contact pass (prop
   // islands only — terrain and pair sweeps interleaved). A CONFIG
@@ -156,6 +159,16 @@ const DEFAULTS = Object.freeze({
   squashRef: 2473,         // strain (severity/mass) reading as full squash — rescaled by 2200/4450, so near-death deformation looks the same
   squashDecay: 9,          // 1/s
   cameraLerp: 5.5,         // camera follow speed (1/s)
+  // THE SPEED LEAD (ruled 2026-09-02): the camera runs ahead of the
+  // followed body in its direction of travel by its horizontal speed
+  // times cameraLeadSec, never less than the parked framing (the
+  // melon at MELON_SCREEN_FRAC of the width, renderer.js) and never
+  // further than the melon at cameraLeadFrac of the width — 0.25 puts
+  // three quarters of the 16.2 m view ahead of you. At 0.3 s the cap
+  // engages at racing pace (13.5 m/s and up). One law: spectate and
+  // ghost follows inherit it, the followed body is all that changes.
+  cameraLeadSec: 0.3,
+  cameraLeadFrac: 0.25,
 });
 
 // ---- Presets ----
@@ -364,6 +377,8 @@ const SCHEMA = [
   { group: 'Feel' },
   { key: 'squashStrength', min: 0,    max: 0.0002, step: 0.000005 },
   { key: 'cameraLerp',     min: 0.5,  max: 20,    step: 0.5 },
+  { key: 'cameraLeadSec',  min: 0,    max: 1,     step: 0.05 },
+  { key: 'cameraLeadFrac', min: 0.1,  max: 0.5,   step: 0.01 },
 ];
 
 // Restore the active preset (undoes slider fiddling).
