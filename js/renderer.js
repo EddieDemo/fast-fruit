@@ -131,7 +131,6 @@ const SKY_BASE = '#1d3f8a';   // last-resort fill if the library is absent
 
 const VIEW_W_M = 16.2;
 const VIEW_H_MIN_M = 7.5;   // escape hatch only: see the zoom law
-const MELON_SCREEN_FRAC = 0.38; // original anchor: ~10m lookahead on phones
 
 
 // Reused per-frame list of interpolated body poses (no per-frame GC).
@@ -709,11 +708,27 @@ function createRenderer(canvas) {
     const vHatch = height / (VIEW_H_MIN_M * CONFIG.pxPerMetre);
     if (vHatch < zoom) zoom = vHatch;
 
-    // ---- Camera: forward-biased on x, centered on y ----
-    // Target puts the melon at MELON_SCREEN_FRAC of screen width;
-    // cameraLerp (tuning panel, Feel group) is the catch-up knob —
-    // low = long dreamy lag, high = locked. Vertical stays centered:
-    // jump arcs need vision both ways.
+    // ---- Camera: the SPEED LEAD on x, centred on y (ruled 2026-09-02, v350) ----
+    // Camera x is LOCKED to the followed body's x plus an offset. The
+    // offset is the body's SIGNED horizontal velocity times a lead time
+    // (config cameraLeadSec), capped at cameraLeadFrac of the view —
+    // 0.25: three quarters of the 16.2 m view ahead — and it is the
+    // OFFSET that is eased by cameraLerp, never the position. Signed
+    // velocity is direction and magnitude in one number: leftward
+    // travel leads left, stationary is centred, a bounce backward
+    // slides the view through centre and out the other side, and slow
+    // dithering barely moves it because the offset is small at low
+    // speed. No spine, no direction logic.
+    //
+    // WHY NOT THE OLD LERP-TO-TARGET: a lerp chasing a target moving
+    // at v settles v/cameraLerp BEHIND it — 2.7 m at 15 m/s — which ate
+    // the whole lead at speed (measured on device, v349: the melon
+    // nearly centred at racing pace with a 4 m lead ruled). Locking x
+    // to the body removes the chase; the lead is what you see. The old
+    // spine lookahead (turn the camera before the track does) also
+    // led the wrong way after a rebound, when the melon rolled back
+    // while the track said forward. Vertical keeps its lerp: jumps
+    // need vision both ways.
     const cam = state.camera;
     // THE GRID WALK: while gridstart holds a shot, the shot owns the
     // frame absolutely — pose and zoom both — so no follow lerp can
@@ -723,38 +738,25 @@ function createRenderer(canvas) {
     const shot = (window.FF.gridStart && window.FF.gridStart.cameraShot)
       ? window.FF.gridStart.cameraShot(state) : null;
     if (shot) zoom *= shot.zoomMul;
-    const fwdBias = cam.fwd === undefined ? 1 : cam.fwd;
-    // THE SPEED LEAD (ruled 2026-09-02): how far ahead the camera
-    // sits is the followed body's HORIZONTAL speed times a lead time,
-    // as a fraction of the view — floored at the parked framing (the
-    // melon at 38% of the width, ~1.9 m ahead: a parked melon frames
-    // exactly as before) and capped at the melon at cameraLeadFrac
-    // (0.25: three quarters of the 16.2 m view ahead, ~4 m). Speed,
-    // not velocity: a ski-jump drop must not yank the view forward;
-    // the DIRECTION is cam.fwd, read from the spine ahead and swung
-    // through reversals below, so the lead collapses through zero on
-    // the way round rather than flickering with every bounce. The
-    // follow lerp does the easing — accelerate and the view pulls
-    // ahead, brake and it settles back.
-    const leadM = Math.abs(m.vx || 0) / CONFIG.pxPerMetre * (CONFIG.cameraLeadSec || 0);
-    let leadFrac = leadM / VIEW_W_M;
-    const restLead = 0.5 - MELON_SCREEN_FRAC;
-    const maxLead = 0.5 - (CONFIG.cameraLeadFrac === undefined ? MELON_SCREEN_FRAC : CONFIG.cameraLeadFrac);
-    if (leadFrac < restLead) leadFrac = restLead;
-    if (leadFrac > maxLead) leadFrac = maxLead;
-    const targetX = ix + fwdBias * leadFrac * width / zoom;
+    const viewPx = width / zoom;
+    const maxLeadPx = (0.5 - (CONFIG.cameraLeadFrac === undefined ? 0.25 : CONFIG.cameraLeadFrac)) * viewPx;
+    let leadTarget = (m.vx || 0) * (CONFIG.cameraLeadSec || 0);
+    if (leadTarget > maxLeadPx) leadTarget = maxLeadPx;
+    else if (leadTarget < -maxLeadPx) leadTarget = -maxLeadPx;
     if (shot) {
       cam.x = shot.x;
       cam.y = shot.y;
       // initialized stays false through the walk, so the first frame
       // after the shot snaps rather than travels.
     } else if (!cam.initialized) {
-      cam.x = targetX;
+      cam.lead = leadTarget;
+      cam.x = ix + cam.lead;
       cam.y = iy;
       cam.initialized = true;
     } else {
       const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
-      cam.x += (targetX - cam.x) * k;
+      cam.lead += (leadTarget - cam.lead) * k;
+      cam.x = ix + cam.lead;
       cam.y += (iy - cam.y) * k;
     }
     // THE SNAP (pixelation only): the camera lerp stays smooth in
@@ -769,76 +771,11 @@ function createRenderer(canvas) {
     const toScreenX = (wx) => (wx - camX) * zoom + cxs;
     const toScreenY = (wy) => (wy - camY) * zoom + cys;
 
-    // ---- CAMERA DIRECTION v1 (stage 3 amendment) ----
-    // FORWARD-BIAS FOLLOWS TRAVEL: on a reversed deck the player
-    // drives -x, so the look-ahead margin flips to the left — the
-    // camera keeps showing where they are GOING. The sign comes from
-    // the same projection oracle progress and semantic input use,
-    // smoothed so the flip is a pan, not a cut.
-    //
-    // GROUNDED-GATED (fix, 2026-08-17): travel direction is a
-    // property of the deck you are ON, not of whichever face happens
-    // to be nearest mid-flight. A big drop falls past a STACK of
-    // faces with alternating point-order signs (lip deck +1, drop
-    // faces and return deck -1, landing deck +1), and reading the
-    // oracle airborne made the camera slosh through every one of
-    // them. Airborne, the bias HOLDS the last grounded direction —
-    // you fly the way you left — and flips only on landing, as a
-    // smoothed pan.
-    //
-    // PREDICTIVE BIAS (Eddie, 2026-08-18). Reading the direction UNDER
-    // the melon made the camera lag through serpentine reversals: the
-    // bias only began swinging once the reversal had already happened,
-    // it passes through ZERO on the way (lookahead vanishing exactly
-    // when it is needed most), and a second reversal arriving before
-    // the first settled left the camera permanently behind. It was
-    // also late by construction near turnarounds, because the read
-    // only happened while grounded and a turnaround is where you are
-    // briefly airborne.
-    //
-    // The cure is what a good chase camera does: LOOK WHERE THE TRACK
-    // GOES, not where the melon is. s increases with travel on every
-    // strand — including reversed decks, whose points are s-ordered
-    // leftward — so the tangent's x-sign at (s + lead) IS the travel
-    // direction there. Sampling ahead means the camera starts turning
-    // BEFORE the melon does, and it works airborne, because arc
-    // progress does not care whether you are touching the ground.
-    {
-      let fwdT = cam.fwd === undefined ? 1 : (cam.fwd < 0 ? -1 : 1);
-      const sp = state.spine;
-      let read = false;
-      if (state.melon && sp && sp.progressOf && sp.surfaceAt) {
-        const s0 = sp.progressOf(state.melon);
-        if (s0 !== null && s0 !== undefined && isFinite(s0)) {
-          // Lead scales with speed: dawdling needs no anticipation,
-          // full flight needs about a second of it. Clamped so the
-          // camera never reads so far ahead that it turns for a
-          // reversal the melon may never reach.
-          const spd = Math.hypot(state.melon.vx || 0, state.melon.vy || 0);
-          const lead = Math.max(260, Math.min(1100, spd * 0.85));
-          const ahead = sp.surfaceAt(s0 + lead);
-          if (ahead) { fwdT = ahead.tx < 0 ? -1 : 1; read = true; }
-        }
-      }
-      // Fallbacks, in order: the ground under the melon (the old law,
-      // still right when the lookahead runs off the end of a strand),
-      // then hold the last direction.
-      if (!read && state.melon && state.melon.grounded
-          && sp && sp.projectPoint) {
-        const pr = sp.projectPoint(ix, iy);
-        if (pr) fwdT = pr.dirX;
-      }
-      if (cam.fwd === undefined || !cam.initialized) cam.fwd = fwdT;
-      else {
-        // Crossing the dead zone fast, settling slow: |fwd| below the
-        // floor means lookahead has collapsed, so the swing is pushed
-        // through at triple rate. Ordinary settling keeps the dreamy
-        // feel cameraLerp was tuned for.
-        const swinging = (fwdT > 0) !== (cam.fwd > 0) || Math.abs(cam.fwd) < 0.45;
-        const fk = Math.min(1, CONFIG.cameraLerp * (swinging ? 3 : 1) * dtFrame);
-        cam.fwd += (fwdT - cam.fwd) * fk;
-      }
-    }
+    // (CAMERA DIRECTION v1 — the spine lookahead that swung a forward
+    // bias through reversals — RETIRED 2026-09-02 with the speed lead:
+    // direction now rides on the followed body's signed velocity. Its
+    // history — grounded gating, the dead-zone swing at triple rate —
+    // is in the handover, addendum 33.)
     // Screen y where world y=0 sits this frame (grid anchor).
     const groundScreenY = toScreenY(0);
 

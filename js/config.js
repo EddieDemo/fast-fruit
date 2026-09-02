@@ -159,14 +159,14 @@ const DEFAULTS = Object.freeze({
   squashRef: 2473,         // strain (severity/mass) reading as full squash — rescaled by 2200/4450, so near-death deformation looks the same
   squashDecay: 9,          // 1/s
   cameraLerp: 5.5,         // camera follow speed (1/s)
-  // THE SPEED LEAD (ruled 2026-09-02): the camera runs ahead of the
-  // followed body in its direction of travel by its horizontal speed
-  // times cameraLeadSec, never less than the parked framing (the
-  // melon at MELON_SCREEN_FRAC of the width, renderer.js) and never
-  // further than the melon at cameraLeadFrac of the width — 0.25 puts
-  // three quarters of the 16.2 m view ahead of you. At 0.3 s the cap
-  // engages at racing pace (13.5 m/s and up). One law: spectate and
-  // ghost follows inherit it, the followed body is all that changes.
+  // THE SPEED LEAD (ruled 2026-09-02, v2 in v350): the camera sits at
+  // the followed body's x plus its SIGNED horizontal velocity times
+  // cameraLeadSec, capped at the melon at cameraLeadFrac of the width
+  // — 0.25 puts three quarters of the 16.2 m view ahead of you.
+  // Stationary is centred; at 0.3 s the cap engages at racing pace
+  // (13.5 m/s and up). The offset is eased (cameraLerp), the position
+  // is locked. One law: spectate and ghost follows inherit it, the
+  // followed body is all that changes.
   cameraLeadSec: 0.3,
   cameraLeadFrac: 0.25,
 });

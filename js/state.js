@@ -84,8 +84,8 @@ function createState() {
     camera: {
       x: 0,
       y: 0,
-      fwd: 1,          // travel sign at the focus: +1 right, -1 left
-                       // (the camera NEVER rotates — ruled 2026-08-17)
+      lead: 0,         // the eased lead offset, world px (renderer: the
+                       // speed lead; the camera NEVER rotates — ruled 2026-08-17)
       initialized: false,
     },
 
