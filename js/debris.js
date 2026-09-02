@@ -38,6 +38,7 @@ const HOT_TICKS = 180;        // 1.5s of full simulation after the burst
 const WAKE_TICKS = 120;       // hot time granted when a racer shoves a fragment
 const CELL = 24;              // spatial hash cell size (px)
 const FRAG_RESTITUTION = 0.35;
+const VOID_DEPTH = 4000;      // px of ground looked for beneath an airborne fragment
 
 const fragments = [];
 for (let i = 0; i < MAX_FRAGS; i++) {
@@ -46,6 +47,7 @@ for (let i = 0; i < MAX_FRAGS; i++) {
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, omega: 0, r: 4,
     hotUntil: 0, rest: 0, born: 0,
     offWorld: 0,   // ticks with no terrain below (the void reaper's count)
+    card: false,   // MATERIAL (2026-09-02): true = cardboard flap, false = pulp
   });
 }
 let spawnCursor = 0;
@@ -69,6 +71,7 @@ function reset() {
 function allocate() {
   const f = allocateSlot();
   f.offWorld = 0;
+  f.card = false;   // pulp unless a spawner says otherwise
   return f;
 }
 function allocateSlot() {
@@ -336,9 +339,11 @@ function spawnFromProp(m, state, tick, bodyIndex) {
       const ly = -hy + (iy + 0.5) * ch + (rng() - 0.5) * ch * 0.4;
       const f = allocate();
       f.active = true; f.cold = false; f.grounded = false;
-      f.kind = 2;          // the rind family: stiff, slabby, rests early
+      f.kind = 2;          // the rind family's SHAPE class (slabby, rests early)
       f.rind = true;
       f.seed = false;
+      f.card = true;       // ...but the CARDBOARD material: dry and light (see
+                           // the three readers: ground response, wake, and here)
       f.x = m.x + lx * cos - ly * sin;
       f.y = m.y + lx * sin + ly * cos;
       f.r = Math.min(cw, ch) * 0.5 * (0.7 + 0.6 * rng());
@@ -366,13 +371,14 @@ function spawnFromProp(m, state, tick, bodyIndex) {
       }
       // The melon burst strips 85% of the rebound: a smash is the
       // failure to bounce. A kicked box is different — its velocity
-      // along the escape normal IS the kick, and the flaps of a box
-      // hit at speed carry on ahead of the melon. Half is stripped
-      // (breaking ate some of the push), half rides on.
-      let pvx = m.vx - m.omega * ry;
-      let pvy = m.vy + m.omega * rx;
-      const rb = pvx * nx + pvy * ny;
-      if (rb > 0) { pvx -= nx * rb * 0.5; pvy -= ny * rb * 0.5; }
+      // along the escape normal IS the kick (ruled 2026-09-02, after
+      // the device showed flaps dropping): NOTHING is stripped. The
+      // flaps leave with everything the box had, and the melon's
+      // wake (racerShove) delivers the rest of the push it was
+      // mid-way through — the pulp's own momentum machinery, now
+      // reading cardboard as light.
+      const pvx = m.vx - m.omega * ry;
+      const pvy = m.vy + m.omega * rx;
       const jit = isFlyer ? 50 : 16;
       f.vx = pvx + sxv + (rng() - 0.5) * jit;
       f.vy = pvy + syv + (rng() - 0.5) * jit;
@@ -575,9 +581,11 @@ function collideFragTerrain(f, terrain) {
         // the pink kinds get near-zero restitution and hard damping.
         // Seeds are the one exception — they're hard little pips, and
         // letting them skitter is honest.
-        const damp = f.seed ? 0.8
+        // CARDBOARD (2026-09-02) is the seed's family, not the slab's:
+        // dry and light, it skips and skids where pulp splats.
+        const damp = f.card ? 0.96 : f.seed ? 0.8
           : f.kind === 3 ? 0.55 : f.kind === 2 ? 0.66 : f.kind === 1 ? 0.6 : 0.62;
-        const rest = f.seed ? 0.3 : f.kind >= 2 ? 0.18 : 0.05;
+        const rest = f.card ? 0.45 : f.seed ? 0.3 : f.kind >= 2 ? 0.18 : 0.05;
         f.vx -= (1 + rest) * vn * nx;
         f.vy -= (1 + rest) * vn * ny;
         f.vx *= damp; f.vy *= damp;
@@ -643,7 +651,19 @@ function stepDebris(state, dt) {
     f.x += f.vx * dt;
     f.y += f.vy * dt;
     f.angle += f.omega * dt;
-    const sawTerrain = collideFragTerrain(f, terrain);
+    let sawTerrain = collideFragTerrain(f, terrain);
+    // THE REAPER'S QUESTION IS "IS THERE GROUND BELOW?", and the
+    // contact query only ever asked "is there ground within 60 px?"
+    // (found 2026-09-02 when lofted flaps vanished mid-air at 61
+    // airborne ticks: a piece 300 px up over solid track counted as
+    // void). Pulp from a mid-air pair kill fell into the same hole —
+    // anything spawned more than ~300 px over the deck was reaped on
+    // the way down. Only when the near query is empty (airborne
+    // pieces, the rare case) is the deep question asked.
+    if (!sawTerrain) {
+      const world = window.FF.slab.worldFor(terrain);
+      sawTerrain = world.query(f.x - f.r, f.y, f.x + f.r, f.y + VOID_DEPTH, FRAG_CAND) > 0;
+    }
 
     // Off-world reaper: a fragment with no terrain anywhere below its
     // x (flung past the pruned edge) is falling into the void forever.
@@ -739,7 +759,12 @@ function racerShove(m, state, bodyR, period, tick) {
     //    mode the original up-pop existed to prevent.)
     //  * SLOW TUMBLE: angular kick halved and mass-scaled — wet lumps
     //    rotate sluggishly; flutter is lightness.
-    const massK = Math.min(1, Math.max(0.15, 25 / (f.r * f.r)));
+    // CARDBOARD (2026-09-02): mass by MATERIAL, not area. A flap is
+    // as big as a rind slab and weighs nothing (sixteen of them are
+    // 0.12 melons), so it takes the whole fling. This is where the
+    // rest of a kick's ten-tick push reaches the pieces of a box that
+    // broke on tick one.
+    const massK = f.card ? 1 : Math.min(1, Math.max(0.15, 25 / (f.r * f.r)));
     // Mass scales BOTH the target and the blend rate: the shove
     // reapplies every overlap step, so a blend alone converges heavy
     // pieces to the full fling anyway (measured: 16 contact steps ate
@@ -756,11 +781,23 @@ function racerShove(m, state, bodyR, period, tick) {
     // Vertical: mostly ignore the rim's velocity field — a spinning
     // wheel flings sticky debris skyward (mud on a tire), but wet
     // pulp doesn't ride the rim. Small share, hard ceiling.
-    let tyRaw = pvy * 0.15 - Math.abs(ny) * kick * 0.22 - 25;
-    if (tyRaw < -240) tyRaw = -240;
+    // ...unless it is cardboard, which does ride the rim and does
+    // loft: a melon running over flaps pops them up and they flutter
+    // (the loft cap is raised, the floor cap is the same).
+    let tyRaw = f.card
+      ? pvy * 0.35 - Math.abs(ny) * kick * 0.6 - 60
+      : pvy * 0.15 - Math.abs(ny) * kick * 0.22 - 25;
+    if (tyRaw < (f.card ? -480 : -240)) tyRaw = f.card ? -480 : -240;
     if (tyRaw > 160) tyRaw = 160; // and never drive pulp hard INTO the floor
     const tyv = tyRaw * mix;
-    f.vx += (txv - f.vx) * massK;
+    // The wake is a TARGET velocity, and pulp is pulled to it whether
+    // that speeds it up or slows it down (wet matter takes the
+    // melon's motion). Cardboard already outrunning the melon is not
+    // slowed by it: the melon can only push a flap on, never reach
+    // forward and drag it back (measured: full-blend card flaps went
+    // 1,137 -> 252 px/s the moment the melon caught up).
+    const outrunning = f.card && (txv - f.vx) * (m.vx >= 0 ? 1 : -1) < 0;
+    if (!outrunning) f.vx += (txv - f.vx) * massK;
     f.vy += (tyv - f.vy) * massK;
     f.omega += nx * 4 * massK;
   }
