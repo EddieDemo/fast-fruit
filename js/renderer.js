@@ -243,7 +243,7 @@ function drawStonePoly(ctx, verts, angle, sun, C, bands) {
   ctx.restore();
 }
 
-function drawBoxKraft(ctx, verts, angle, sun, C, bevel) {
+function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   const n = verts.length;
   const W = [];
@@ -264,6 +264,12 @@ function drawBoxKraft(ctx, verts, angle, sun, C, bevel) {
   ctx.save();
   pathAll();
   ctx.clip();
+  // FACTORY PRINTS (2026-09-02): painted on the face, inside the
+  // clip, UNDER the bevel strips — a print keeps a margin off the edge
+  // so the two never fight. Ink and paper are the box's own slots.
+  if (prints && prints.length && window.FF.prints) {
+    window.FF.prints.paint(ctx, prints, angle, { ink: C.dark, paper: C.lit });
+  }
   // The bevels. Each edge gets a strip inset toward the centre; its
   // tone is decided by that edge's own outward normal against the sun.
   // Canonically wound (positive area), so the outward normal of edge
@@ -2608,6 +2614,10 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // hullSig: a per-instance hull must not share a sprite with a
   // different hull of the same species and colour. Cheap, total, and
   // stable — vertex count plus rounded coordinates.
+  function printSig(seed) {
+    // A layout is a pure function of (seed, face); the seed keys it.
+    return (seed === undefined || seed === null) ? '' : ('s' + (seed >>> 0));
+  }
   function hullSig(hull) {
     if (!hull || hull.length < 3) return '';
     let s = 'h' + hull.length;
@@ -2616,10 +2626,10 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     }
     return s;
   }
-  function variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull) {
+  function variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed) {
     const key = color + '|' + seedKey + '|' + (fruit || '') + '|'
       + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals)
-      + '|' + hullSig(hull);
+      + '|' + hullSig(hull) + '|' + printSig(printSeed);
     let e = melonSprites.get(key);
     if (e !== undefined) return e;
     if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
@@ -2630,7 +2640,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // hold. The bake scale must divide by the SAME quantity, or a box
     // would be drawn sqrt(2) too large inside its own sprite.
     e = { spr, rPx, bR: spriteBoundR(fruit, a, b, hull), a, b, color, seedKey,
-      species: fruit, decals, hull: hull || null, frames: new Map(),
+      species: fruit, decals, hull: hull || null, printSeed, frames: new Map(),
       big: null, btx: null };
     melonSprites.set(key, e);
     return e;
@@ -2687,7 +2697,10 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // instance one — risk R2, half-done, which is worse than not
     // started. The hull rides on the same object the painter already
     // reads.
-    const sqH = e.hull ? Object.assign({}, sq || {}, { poly: e.hull }) : sq;
+    const sqH = (e.hull || e.printSeed !== undefined)
+      ? Object.assign({}, sq || {}, e.hull ? { poly: e.hull } : {},
+        e.printSeed !== undefined ? { printSeed: e.printSeed } : {})
+      : sq;
     drawMelonVector(btx, big / 2, big / 2, rot * 2 * Math.PI / SPRITE_ANGLES,
       sqH, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals);
     let src;
@@ -2880,8 +2893,8 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     return { ax, mag };
   }
 
-  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull) {
-    return variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull);
+  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed) {
+    return variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed);
   }
   // Verification surface for the cache's pure parts.
   window.FF._pxBake = { squashSlot, frameKey, SS, SQ_AXES, SQ_MAGS,
@@ -2901,8 +2914,9 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       // circumradius for a polygon species and exactly `a` for every
       // smooth one, so the existing sprites are byte-unmoved.
       const hull = (squash && squash.poly) || null;
+      const printSeed = squash ? squash.printSeed : undefined;
       const rPx = Math.max(3, Math.round(spriteBoundR(fruit, a, b, hull) * zoom));
-      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull);
+      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed);
       const slot = squashSlot(squash);
       if (e) {
         const TAU = Math.PI * 2;
@@ -3044,12 +3058,21 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         return;
       }
       const base = color || COLORS.rind;
+      // Prints: from the body's seed and the face's own size. `squash`
+      // is the body in play and the synthetic squash in the pixel bake,
+      // which carries printSeed across (see bakeFrame).
+      let prints = null;
+      if (SPP && SPP.prints && window.FF.prints && squash && squash.printSeed !== undefined) {
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (const v of V) { if (v[0] < x0) x0 = v[0]; if (v[0] > x1) x1 = v[0]; if (v[1] < y0) y0 = v[1]; if (v[1] > y1) y1 = v[1]; }
+        prints = window.FF.prints.layoutFor(squash.printSeed, x1 - x0, y1 - y0);
+      }
       drawBoxKraft(ctx, V, angle, { x: sunV.x / sl, y: sunV.y / sl }, {
         face: RIG.slotColor(base, RIG.P.baseFillSlot),
         lit: RIG.slotColor(base, RIG.P.highlightFillSlot),
         dark: RIG.slotColor(base, RIG.bands()[0].fillSlot),
         ink: RIG.slotColor(base, RIG.bands()[0].fillSlot),
-      }, Math.max(2, a * 0.14));
+      }, Math.max(2, a * 0.14), prints);
       ctx.restore();
       return;
     }

@@ -294,7 +294,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-31f';
+const BUILD = '2026-09-02c';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -533,7 +533,30 @@ CONFIG.furniture = {
         [[0, 0], [1, 0], [2, 0], [0.25, 1], [1.25, 1], [2.25, 1]],                // C bricked wall 3+3
         [[0, 0], [1, 0], [2, 0], [3, 0], [0.5, 1], [1.5, 1], [2.5, 1], [1, 2], [2, 2], [1.5, 3]], // D big pyramid
         [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [0, 2]],                      // E staircase 3-2-1
+        // MIXED SIZES (2026-09-02): cells [col, row, w, h] in units.
+        [[0, 0], [1, 0], [0, 1, 2, 1]],                                        // F table: two pillars, a 1x2 lying across
+        [[0, 0, 1, 2], [1, 0], [1, 1]],                                        // G a tall 1x2 beside two stacked 1x1s
+        [[0, 0], [1, 0], [2, 0], [0.5, 1, 2, 1]],                              // H wall with a lintel
+        // NO PLINTH LAYOUTS (2026-09-02, measured): a tall 1x2 on a lying
+        // 2x1 leaned 13 deg from the wake jolt alone, and a small pyramid
+        // on the same plinth slid 81 px — a light lying carton with weight
+        // on it lands hard. A layout that cannot stand is not a layout.
+        // Lying cartons go ON TOP (F, H), never underneath.
       ],
+    },
+    {
+      // CARTONS (Eddie, 2026-09-02): the 1x1.5 and 1x2 boxes standing
+      // alone, dealt in rotation, each in BOTH orientations over the
+      // cycle. Own stream; minted before the piles so the piles yield
+      // to them, not the reverse (a carton is the rarer thing).
+      species: 'cardboardBox15', name: 'CARTON',
+      speciesCycle: ['cardboardBox15', 'cardboardBox2'],
+      orientCycle: ['tall', 'lying', 'lying', 'tall'],
+      salt: 0xCA47B0E5,
+      sites: 'flat',
+      countMin: 1, countMax: 2,
+      minSeparation: 260,
+      candidatesCap: 3,
     },
     {
       // THE ROCK SCATTER (Eddie, 2026-08-31): the large boulder is no
@@ -543,7 +566,9 @@ CONFIG.furniture = {
       // same law as before: the claim list is global and a later
       // species yields.
       species: 'pebble', name: 'ROCKS',
-      speciesCycle: ['pebble', 'gravel'],   // dealt in rotation
+      // Dealt in rotation. The small boulder (55 px, 0.72 masses) is
+      // RARER by ruling (Eddie, 2026-09-02): one in five rocks.
+      speciesCycle: ['pebble', 'gravel', 'pebble', 'gravel', 'boulderSmall'],
       scatter: true,     // fill the runs by sub-siting, not one per run
       mustMint: true,    // at least one per track
       salt: 0xB0D1E5B0,  // its OWN stream: every existing kind's deal is bit-unmoved

@@ -304,6 +304,31 @@ const OBJECTS = {
     stone: true,          // the smallest measured class
     anchorBand: { h: [200, 220], s: [0.02, 0.06], l: [0.34, 0.46] },
   },
+  // ---- MORE CARDBOARD (Eddie, 2026-09-02): 1x1.5 and 1x2 boxes ----
+  // Same material as the 1x1 box, so the SAME density: mass falls out
+  // of volume by the prism law (1x1.5 = 1.5x the mass, 1x2 = 2x).
+  // Nothing per-size to rule. Authored TALL (1 wide); a lying one is
+  // the same body at 90 degrees, chosen at mint (orientCycle).
+  cardboardBox15: {
+    misc: true,
+    shape: 'poly',
+    poly: [[-50, -75], [50, -75], [50, 75], [-50, 75]],
+    sizeMult: 1,
+    density: 0.030,
+    toughnessMult: 0,
+    prints: true,       // factory prints (prints.js), explicit
+    anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
+  },
+  cardboardBox2: {
+    misc: true,
+    shape: 'poly',
+    poly: [[-50, -100], [50, -100], [50, 100], [-50, 100]],
+    sizeMult: 1,
+    density: 0.030,
+    toughnessMult: 0,
+    prints: true,       // factory prints (prints.js), explicit
+    anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
+  },
   beachball: {
     misc: true,          // seaside equipment, not produce
     // THE ANNEX'S FIRST FULL CUSTOMER (ruled 2026-08-26): a sphere
@@ -363,12 +388,20 @@ const OBJECTS = {
     // 20,000 px/s hop-off exit speed both halve with it; neither is
     // FIXED by it — those are the sandwich/tunnelling/way-out builds,
     // still pending — but both are amplified less.
-    density: 0.015,
+    // AND AGAIN 2026-09-02 (Eddie, after playing): 0.015 -> 0.030 =
+    // 0.120 melon masses. NOTE THE CROSSOVER: the box is now HEAVIER
+    // than the beach ball (0.104). That inverts the ball-lightest
+    // relation ruled when the ball was in play; the ball is disabled
+    // today, so nothing shows — when it returns, the ball needs a
+    // ruling. Hop-off launch ~5,000 px/s; sink amplifier ~8:1.
+    density: 0.030,
     restitutionFloor: 0.08,  // cardboard thuds; flare adds, never removes
     toughnessMult: 0,    // INDESTRUCTIBLE for v1 (ruled), like the ball:
                          // impulses and breadcrumbs fully live, only the
                          // damage ledger is deaf. Un-zero to make it
                          // crushable later.
+    prints: true,       // factory prints (prints.js), explicit: the flag,
+                         // never inferred from being cardboard
     anchorBand: { h: [50, 60], s: [0.56, 0.68], l: [0.31, 0.39] },
     // Kraft cardboard, SOLVED PRE-SUN (2026-08-28). The first cut used
     // h 28-36 / s 0.35-0.50 / l 0.42-0.52 — the brown you would pick

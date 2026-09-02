@@ -142,8 +142,18 @@ function tryWakeProp(state, p) {
     // stackCol (2026-08-31, box piles): a member's column offset from
     // the base, in pitches — fractional for a bricked course. Absent
     // on a plain column, so the crate stack is byte-unmoved.
-    p.x = base.x + (p.stackCol || 0) * (supportRadius(p, 1, 0) * 2 + FC.stackGap);
-    p.y = base.y - p.stackTier * pitch;
+    if (p.stackDx !== undefined) {
+      // SIZED CELLS (2026-09-02): offsets from the base's CENTRE in
+      // units of one metre plus the gap, precomputed at mint from each
+      // cell's own width and height. The plain column and the five
+      // unit-cell layouts never set these, so they are byte-unmoved.
+      const U = CONFIG.pxPerMetre + FC.stackGap;
+      p.x = base.x + p.stackDx * U;
+      p.y = base.y - p.stackDy * U;
+    } else {
+      p.x = base.x + (p.stackCol || 0) * (supportRadius(p, 1, 0) * 2 + FC.stackGap);
+      p.y = base.y - p.stackTier * pitch;
+    }
     // A bottom-row member of a PILE sits on ITS OWN column's ground,
     // not the base's: on a 0.6% run the far column's ground is 2.5 px
     // lower, the box landed rocking (-2.1 deg) and the course above
@@ -201,8 +211,20 @@ function tryWakeProp(state, p) {
   //            rests on. The support along world-down at the wake
   //            pose, which for a box is the half-extent and for a
   //            sphere is the radius (so the ball is bit-unmoved).
-  const clearR = p.boundR;
   const restH = supportRadius(p, 0, 1);
+  // THE CIRCLE CAN BE NO LARGER THAN THE GROUND ALLOWS (2026-09-02).
+  // The probe inflates the enclosing circle, and for every body so
+  // far that circle cleared the floor at the standard gap (a 1x1 box:
+  // corner 71 vs 50 + 30). A LYING 1x2 carton has a corner radius of
+  // 112 and rests 50 up, so the enclosing circle dipped 32 px into
+  // the very ground it rests on, fouled every candidate, took the
+  // fallback lift and fell 700 px (measured, seeds 7911/20665). The
+  // radius is now capped so that radius + probeMargin sits one pixel
+  // above the floor: still the enclosing circle for every body that
+  // ever cleared (the 1x1 box clears by exactly one pixel, so it is
+  // byte-unmoved), and for a wide flat body the circle its rest pose
+  // actually defines.
+  const clearR = Math.min(p.boundR, restH + FCFG.wakeGap - FCFG.probeMargin - 1);
   // pileShiftPx (2026-08-31): a pile's base stands off the site so the
   // PILE is centred on it. Absent on everything else: byte-unmoved.
   const cx = sp.x + (p.pileShiftPx || 0);
@@ -220,7 +242,9 @@ function tryWakeProp(state, p) {
   // a lone prop stackTiers is absent and this is exactly the one
   // circle it always probed.
   const probeTiers = p.stackTiers || 1;
-  const pitch = probeTiers > 1 ? supportRadius(p, 0, 1) * 2 + FCFG.stackGap : 0;
+  // stackPitch (2026-09-02): a sized pile's column is walked in units;
+  // a plain column keeps its own body height as the pitch.
+  const pitch = probeTiers > 1 ? (p.stackPitch || (supportRadius(p, 0, 1) * 2 + FCFG.stackGap)) : 0;
   let foul = false;
   for (let tier = 0; tier < probeTiers && !foul; tier++) {
     const py = cy - tier * pitch;
