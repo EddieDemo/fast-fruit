@@ -169,8 +169,19 @@ function createTrackProvider(def) {
       if (j > i) {
         const len = template[j].s - template[i].s;
         if (len >= window.FF.CONFIG.furniture.flatMinRun) {
+          // The run's steepest segment, as |dy/dx| (2026-08-31): a
+          // "flat" run may grade up to flatGrade, and bricked box
+          // piles CREEP on anything past ~2% (measured: 24 px in 5 s
+          // at 5%). Kinds that care filter on it; kinds that don't
+          // never read it, so no deal moves.
+          let grade = 0;
+          for (let q = i; q < j; q++) {
+            const gx = template[q + 1].x - template[q].x;
+            const gy = template[q + 1].y - template[q].y;
+            if (gx !== 0) grade = Math.max(grade, Math.abs(gy / gx));
+          }
           flatSites.push({ s: (template[i].s + template[j].s) * 0.5,
-            k: template[i].k || 'runway', len,
+            k: template[i].k || 'runway', len, grade,
             s0: template[i].s, s1: template[j].s });   // the run it claims
         }
       }

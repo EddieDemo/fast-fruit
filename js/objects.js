@@ -355,7 +355,15 @@ const OBJECTS = {
     // old intent lost to the new feel ruling.
     // (2026-08-28, historical: prism volume law makes a 1 m box
     // 4.0045 melon volumes; 0.06 was 0.240 melon masses.)
-    density: 0.0075,
+    // RE-RULED AGAIN 2026-08-31 (Eddie, after playing it): "boxes are
+    // too light — twice as dense." 0.0075 -> 0.015, i.e. 0.030 ->
+    // 0.060 melon masses: still lighter than the ball (0.080), still
+    // sent flying, at half the absurdity. The 33:1 mass ratio behind
+    // the box-into-the-ground defect (handover, "boxes sink") and the
+    // 20,000 px/s hop-off exit speed both halve with it; neither is
+    // FIXED by it — those are the sandwich/tunnelling/way-out builds,
+    // still pending — but both are amplified less.
+    density: 0.015,
     restitutionFloor: 0.08,  // cardboard thuds; flare adds, never removes
     toughnessMult: 0,    // INDESTRUCTIBLE for v1 (ruled), like the ball:
                          // impulses and breadcrumbs fully live, only the

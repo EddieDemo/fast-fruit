@@ -887,7 +887,10 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
     // on two corners. Either way the ordinary solver holds it — no
     // pin, no drag, no exemption. What happens AFTER the first strike
     // is the game's, not ours.
-    const source = kind.sites === 'flat' ? (flatSites || []) : (restSites || []);
+    let source = kind.sites === 'flat' ? (flatSites || []) : (restSites || []);
+    // maxGrade (2026-08-31): a kind may demand a gentler floor than
+    // flatGrade allows. Box piles creep on anything steeper than ~2%.
+    if (kind.maxGrade !== undefined) source = source.filter((q) => (q.grade || 0) <= kind.maxGrade);
     // FOOTPRINT: derived, never guessed. The run must hold the whole
     // body with room either side.
     const ph = window.FF.derivePhysique(kind.species,
@@ -964,6 +967,30 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
       // shuffle, the earlier kinds are untouched by construction, and
       // the stream is sacred. A track whose runs are all short may
       // still yield nothing; that is stated, not hidden.
+      // THE SCATTER (2026-08-31, Eddie: "replace the large boulder
+      // with a group of the two smallest"). A kind marked `scatter`
+      // does not want one site per run — it wants MANY small bodies
+      // along the runs. So after the deal, it fills its remaining
+      // lists by sub-siting the runs longest first, stepping along
+      // each run by its own footprint, taking every position clear of
+      // every claim. Pure arithmetic after the count draw, so the
+      // earlier kinds are unmoved and the stream is untouched.
+      if (kind.scatter) {
+        const half = ph.boundR + FCFG.wakeGap;
+        const sepS = kind.minSeparation;
+        const clearS = (pos) => {
+          for (const c of claimed) if (Math.abs(c - pos) < sepS) return false;
+          return true;
+        };
+        const runs = band.slice().sort((p, q) => (q.len || 0) - (p.len || 0));
+        for (const q of runs) {
+          if (lists.length >= count) break;
+          if (q.s0 === undefined || q.s1 === undefined) continue;
+          for (let pos = q.s0 + half; pos <= q.s1 - half && lists.length < count; pos += sepS) {
+            if (clearS(pos)) { lists.push([pos]); claimed.push(pos); }
+          }
+        }
+      }
       if (kind.mustMint && lists.length === 0) {
         const half = ph.boundR + FCFG.wakeGap;
         // THE GUARANTEE'S SEPARATION is the PHYSICAL minimum — the
@@ -1005,8 +1032,16 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
         while (list.length < 1) list.push((0.25 + rng() * 0.6) * arc);
       }
     }
+    let propIdx = 0;   // this kind's prop counter, for speciesCycle
     for (const cands of lists) {
       cands.sort((a, b) => a - b);
+      // SPECIES CYCLE (2026-08-31, the rock scatter): a kind may deal
+      // several species in rotation — pebble, gravel, pebble... — so a
+      // scatter is a MIX without a second stream or a second kind.
+      // Pure arithmetic on the prop index; no draw.
+      const species = kind.speciesCycle
+        ? kind.speciesCycle[propIdx % kind.speciesCycle.length] : kind.species;
+      propIdx++;
       // THE STACK DEAL (2026-08-30, authored stacks ruling). DRAW
       // ORDER IS LAW for this kind's stream: after count and the
       // shuffle above, each stack draws its TIER COUNT, then one
@@ -1015,20 +1050,71 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
       const tiers = kind.stackMin
         ? kind.stackMin + Math.floor(rng() * (kind.stackMax - kind.stackMin + 1))
         : 1;
+      // BOX PILES (Eddie, 2026-08-31): a kind may carry `layouts` — a
+      // list of 2-D box arrangements as [col, row] cells. The layout
+      // is chosen to FIT THE RUN this site sits on: the widest layouts
+      // that fit are the pool, and one draw picks among them. So a
+      // long run gets the big pyramid and a short run gets the tower,
+      // and no pile ever overhangs its run. One draw per pile, on
+      // this kind's own stream.
+      let cells = null, pileShift = 0;
+      if (kind.layouts && kind.layouts.length) {
+        const site = band.find((q) => Math.abs(q.s - cands[0]) < 1e-6) || null;
+        const runLen = site && site.len ? site.len : Infinity;
+        const pitch = ph.boundR * 2 / Math.SQRT2 + FCFG.stackGap;   // a box's edge + gap
+        const fits = kind.layouts.filter((L) => {
+          const cols = Math.max.apply(null, L.map((c) => c[0])) + 1;
+          return cols * pitch + 2 * FCFG.wakeGap <= runLen;
+        });
+        // THE POOL IS THE WIDEST THAT FIT — "the biggest configuration
+        // that fits each run", as promised. (First cut pooled every
+        // fitting layout and the 1-wide tower, which fits anywhere,
+        // won half the draws.) Ties in width are the draw's to break.
+        const widthOf = (L) => Math.max.apply(null, L.map((c) => c[0]));
+        let pool;
+        if (fits.length) {
+          const wMax = Math.max.apply(null, fits.map(widthOf));
+          pool = fits.filter((L) => widthOf(L) === wMax);
+        } else {
+          pool = [kind.layouts.reduce((a, b) => (widthOf(a) <= widthOf(b)) ? a : b)];
+        }
+        const pick = Math.floor(rng() * pool.length);
+        cells = pool[pick].slice().sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+        // The BASE is the bottom-row cell nearest the pile's centre,
+        // so the pile stands roughly centred on its site.
+        const bottom = cells.filter((c) => c[1] === 0);
+        const mid = (Math.max.apply(null, cells.map((c) => c[0])) + Math.min.apply(null, cells.map((c) => c[0]))) / 2;
+        let bi = 0, bd = Infinity;
+        for (let i = 0; i < bottom.length; i++) {
+          const d = Math.abs(bottom[i][0] - mid);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        const b0 = bottom[bi];
+        cells = [b0].concat(cells.filter((c) => c !== b0));
+        // CENTRE THE PILE ON ITS SITE. The base takes the site's x,
+        // but the pile's centre is (mid - base col) pitches away —
+        // half a box for an even width. Uncorrected, a 4-wide pile on
+        // a 484 px run put its far column 50 px past the run's end
+        // onto the slope beyond; it landed rocking (-1.6 deg) and the
+        // course above slid a quarter box (measured, seed 7102).
+        pileShift = -(mid - b0[0]) * pitch;
+      }
+      const members = cells ? cells.length : tiers;
       let base = null;
-      for (let tier = 0; tier < tiers; tier++) {
+      for (let tier = 0; tier < members; tier++) {
         // Minted DORMANT: a record, parked far above the void it must
         // never touch — no stepping, no bodyList, no render until the
         // wake law (physics.js tryWakeProp) places it against streamed
         // ground. The placement solve happens ONLY at wake time.
         const p = createBody((spawnX || 0), -100000,
-          (FOB[kind.species].sizeMult) || 1, kind.species);
+          (FOB[species].sizeMult) || 1, species);
         p.dormant = true;
         if (tier === 0) {
           // The BASE owns the wake walk and probes clearance for the
           // WHOLE column (it knows its height via stackTiers).
           p.wake = { cands, idx: 0 };
-          p.stackTiers = tiers;
+          p.stackTiers = cells ? (Math.max.apply(null, cells.map((c) => c[1])) + 1) : tiers;
+          if (pileShift) p.pileShiftPx = pileShift;
           base = p;
         } else {
           // Upper tiers carry no walk: they wake the same tick the
@@ -1038,14 +1124,22 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
           // the wake sweep clears its dormant flag before any tier
           // asks.
           p.stackBase = base;
-          p.stackTier = tier;
+          if (cells) {
+            // A pile member: its row is its tier, its column offset
+            // is relative to the base's column (fractional for a
+            // bricked course).
+            p.stackTier = cells[tier][1];
+            p.stackCol = cells[tier][0] - cells[0][0];
+          } else {
+            p.stackTier = tier;
+          }
         }
         p.name = kind.name;
         // The furniture's pigment: the species anchor, seeded from the
         // SAME salted stream (the seed owns the colour, one per prop —
         // one per TIER for a stack).
         if (window.FF.shading && window.FF.shading.anchorColor) {
-          p.bodyColor = window.FF.shading.anchorColor(kind.species,
+          p.bodyColor = window.FF.shading.anchorColor(species,
             (rng() * 0xFFFFFFFF) >>> 0);
         }
         // PER-INSTANCE GEOMETRY (boulders, phase 2). The hull seed is
@@ -1056,14 +1150,14 @@ function mintFurniture(state, trackSeed, lapArc, spawnX, restSites, flatSites) {
         // boulder would deal different numbers the day the side range
         // changed. Arithmetic disturbs nothing, and the seed is still
         // "same track, same boulders, forever".
-        if (speciesHullGen(kind.species)) {
+        if (speciesHullGen(species)) {
           p.hullSeed = (((trackSeed >>> 0) ^ kind.salt)
             + Math.imul(state.props.length + 1, 2654435761)) >>> 0;
           // Re-derive: createBody above ran before the seed existed,
           // so its hull is the registry fallback. One door
           // (setBodyScale) recomputes vertices, mass, inertia and
           // boundR together — they must never disagree.
-          setBodyScale(p, (FOB[kind.species].sizeMult) || 1);
+          setBodyScale(p, (FOB[species].sizeMult) || 1);
         }
         p.pilot = '';
         p.isProp = true;

@@ -294,7 +294,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-08-31b';
+const BUILD = '2026-08-31f';
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
@@ -514,28 +514,46 @@ CONFIG.furniture = {
       stackMin: 2, stackMax: 3,
     },
     {
-      // MINTED LAST, DELIBERATELY. mintFurniture's own law: the claim
-      // list is global and "a later species is the one that must
-      // yield". The first cut placed this kind mid-list and MEASURED
-      // the consequence — the crate stack vanished on 5 of 6 suite
-      // seeds, because up to three boulders ate the flat band before
-      // the stack was dealt. Last means the box and the stack deal
-      // exactly what they always dealt, and the boulder takes what is
-      // left (which is why its count is a RANGE from 1: a track with
-      // a busy flat band gets fewer rocks, not a starved stack).
-      species: 'boulder', name: 'BOULDER',
-      mustMint: true,    // at least one per track (Eddie, 2026-08-31): see
-                         // the guarantee in mintFurniture — sub-sites the
-                         // longest flat run when the deal came up empty
-      salt: 0xB0D1E5B0,  // its OWN stream: every existing kind's deal is bit-unmoved
-      sites: 'flat',     // FLAT ONLY for now (Eddie's ruling) — a slope
-                         // start would let a boulder tumble from mint,
-                         // which is risk R3 and its own ruling.
-      countMin: 1, countMax: 3,
-      // 2r = 136 at R 65 before jitter; 260 is the standard gap and
-      // leaves room, same law as every other kind.
+      // BOX PILES (Eddie, 2026-08-31): five 2-D arrangements, chosen
+      // per site to FIT the flat run — the widest that fit form the
+      // pool, one draw picks. In ADDITION to the lone box and the
+      // straight crate stack above, which are untouched. Own stream.
+      species: 'cardboardBox', name: 'BOX PILE',
+      salt: 0xB0C5F1E5,
+      sites: 'flat',
+      maxGrade: 0.02,    // bricked boxes creep past ~2% (measured: 24 px
+                         // in 5 s at 5%); the tower would stand anywhere,
+                         // the pyramids will not
+      countMin: 1, countMax: 1,
       minSeparation: 260,
       candidatesCap: 4,
+      layouts: [
+        [[0, 0], [1, 0], [2, 0], [0.5, 1], [1.5, 1], [1, 2]],                  // A pyramid 3-2-1
+        [[0, 0], [0, 1], [0, 2], [0, 3]],                                      // B tower, 4 tall
+        [[0, 0], [1, 0], [2, 0], [0.25, 1], [1.25, 1], [2.25, 1]],                // C bricked wall 3+3
+        [[0, 0], [1, 0], [2, 0], [3, 0], [0.5, 1], [1.5, 1], [2.5, 1], [1, 2], [2, 2], [1.5, 3]], // D big pyramid
+        [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [0, 2]],                      // E staircase 3-2-1
+      ],
+    },
+    {
+      // THE ROCK SCATTER (Eddie, 2026-08-31): the large boulder is no
+      // longer minted — it is reserved for the timed rolling-obstacle
+      // system (handover addendum 16). In its place, a scatter of the
+      // two SMALLEST classes along the flat runs. MINTED LAST, by the
+      // same law as before: the claim list is global and a later
+      // species yields.
+      species: 'pebble', name: 'ROCKS',
+      speciesCycle: ['pebble', 'gravel'],   // dealt in rotation
+      scatter: true,     // fill the runs by sub-siting, not one per run
+      mustMint: true,    // at least one per track
+      salt: 0xB0D1E5B0,  // its OWN stream: every existing kind's deal is bit-unmoved
+      sites: 'flat',
+      countMin: 6, countMax: 12,
+      // Rocks may be neighbours; they may not overlap. A pebble is
+      // ~39 px across, gravel ~27: 90 keeps clear of a box's corner
+      // (71) plus a pebble's radius (20) with a hair to spare.
+      minSeparation: 90,
+      candidatesCap: 2,
     },
   ],
   // Vertical daylight between stacked tiers at placement, px. One

@@ -139,8 +139,21 @@ function tryWakeProp(state, p) {
     if (base.dormant || !base.alive) return;   // a dead-at-wake base strands its tiers dormant, honestly
     const FC = CONFIG.furniture;
     const pitch = supportRadius(p, 0, 1) * 2 + FC.stackGap;
-    p.x = base.x;
+    // stackCol (2026-08-31, box piles): a member's column offset from
+    // the base, in pitches — fractional for a bricked course. Absent
+    // on a plain column, so the crate stack is byte-unmoved.
+    p.x = base.x + (p.stackCol || 0) * (supportRadius(p, 1, 0) * 2 + FC.stackGap);
     p.y = base.y - p.stackTier * pitch;
+    // A bottom-row member of a PILE sits on ITS OWN column's ground,
+    // not the base's: on a 0.6% run the far column's ground is 2.5 px
+    // lower, the box landed rocking (-2.1 deg) and the course above
+    // it slid a quarter box (measured, seed 7102). Upper rows keep
+    // the base's pitch so the courses stay level.
+    if (p.stackCol && p.stackTier === 0 && base.wakeSurfY !== undefined
+        && spine && spine.surfaceAt && base.wakeArc !== undefined) {
+      const spc = spine.surfaceAt(base.wakeArc + (p.x - base.x));
+      if (spc && isFinite(spc.y)) p.y = base.y + (spc.y - base.wakeSurfY);
+    }
     p.vx = 0; p.vy = 0; p.omega = 0;
     if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
     p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
@@ -190,7 +203,9 @@ function tryWakeProp(state, p) {
   //            sphere is the radius (so the ball is bit-unmoved).
   const clearR = p.boundR;
   const restH = supportRadius(p, 0, 1);
-  const cx = sp.x;
+  // pileShiftPx (2026-08-31): a pile's base stands off the site so the
+  // PILE is centred on it. Absent on everything else: byte-unmoved.
+  const cx = sp.x + (p.pileShiftPx || 0);
   const cy = sp.y - restH - FCFG.wakeGap;
   // THE CLEARANCE PROBE: the whole inflated circle against every
   // nearby face (canonical query order; point-vs-segment distance).
@@ -233,6 +248,7 @@ function tryWakeProp(state, p) {
   // fallback, generous height over the surface, never a loop.
   p.x = cx;
   p.y = foul ? sp.y - restH - FCFG.fallbackLift : cy;
+  p.wakeArc = sCand; p.wakeSurfY = sp.y;   // for pile members' own-column ground
   p.vx = 0; p.vy = 0; p.omega = 0;
   if (!p.prev) p.prev = { x: p.x, y: p.y, angle: p.angle };
   p.prev.x = p.x; p.prev.y = p.y; p.prev.angle = p.angle;
