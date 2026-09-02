@@ -316,7 +316,7 @@ const OBJECTS = {
     sizeMult: 1,
     density: 0.030,
     toughnessMult: 1,    // breakable cardboard: same law as the box
-    crushK: 250,         // 0.270 masses -> breaks at 67 (see the box)
+    crushK: 325,         // 0.270 masses -> breaks at 88 (see the box)
     prints: true,       // factory prints (prints.js), explicit
     anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
   },
@@ -327,7 +327,7 @@ const OBJECTS = {
     sizeMult: 1,
     density: 0.030,
     toughnessMult: 1,    // breakable cardboard: same law as the box
-    crushK: 250,         // 0.481 masses -> breaks at 120 (see the box)
+    crushK: 325,         // 0.481 masses -> breaks at 156 (see the box)
     prints: true,       // factory prints (prints.js), explicit
     anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
   },
@@ -414,9 +414,15 @@ const OBJECTS = {
     // kicked pile broke on landing from 1.25 m, so one full-throttle
     // pass through the big pyramid broke 9 of 10; at 250 the same
     // pass breaks the box that was hit and the rest tumble whole.
-    // See damage.js breakThreshold and the handover addendum 29.
+    // 325 (box 39) from 2026-09-02k: Eddie asked for boxes "1.5x more
+    // difficult" (375); 1.3x was chosen because kick severities sit
+    // at 49-53 from 1,400 to 1,800 px/s, so at 45 a racing kick would
+    // have been a coin flip. At 39: kicks from ~1,400 break reliably,
+    // a box survives falls to ~2.2 m (was 1.5), a melon landing from
+    // 2 m (76) still crushes it, cartons break by falls/landings only.
+    // See damage.js breakThreshold and the handover addenda 29, 35.
     toughnessMult: 1,
-    crushK: 250,
+    crushK: 325,
     prints: true,       // factory prints (prints.js), explicit: the flag,
                          // never inferred from being cardboard
     anchorBand: { h: [50, 60], s: [0.56, 0.68], l: [0.31, 0.39] },

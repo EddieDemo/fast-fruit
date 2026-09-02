@@ -169,7 +169,7 @@ const DEFAULTS = Object.freeze({
   // followed body is all that changes.
   cameraLeadSec: 0.3,
   cameraLeadFrac: 0.333,   // two thirds ahead (re-ruled from 0.25, 2026-09-02j: "better balanced")
-  cameraSpeedSmooth: 0.25, // s: the rolling average of speed the lead rides on (v3, "too jerky")
+  cameraSpeedSmooth: 0.5,  // s: the rolling average of speed the lead rides on (v3 0.25; doubled 2026-09-02k, "twice as smooth")
 });
 
 // ---- Presets ----
