@@ -39,6 +39,18 @@ const WAKE_TICKS = 120;       // hot time granted when a racer shoves a fragment
 const CELL = 24;              // spatial hash cell size (px)
 const FRAG_RESTITUTION = 0.35;
 const VOID_DEPTH = 4000;      // px of ground looked for beneath an airborne fragment
+// Panel settling (2026-09-02): a grounded panel keels to flat and its
+// spin levels, as springs. Rates in 1/s^2, damps per tick. The level
+// spring carries no damping of its own: the ground contact's bounce
+// damping settles it (measured — a damped variant settled at the same
+// tick, so the damp was dead code). The cartwheel seen in the first
+// cut came from the wake's spin kick and a keeling panel dropped from
+// its old height, both fixed where they live.
+const PANEL_HOT_TICKS = 480;    // 4 s of full simulation for a panel (pulp: 1.5 s)
+const PANEL_KEEL = 140;
+const PANEL_KEEL_DAMP = 0.92;
+const PANEL_LEVEL = 90;
+const PANEL_AIR_DAMP = 0.995;
 
 const fragments = [];
 for (let i = 0; i < MAX_FRAGS; i++) {
@@ -47,7 +59,21 @@ for (let i = 0; i < MAX_FRAGS; i++) {
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, omega: 0, r: 4,
     hotUntil: 0, rest: 0, born: 0,
     offWorld: 0,   // ticks with no terrain below (the void reaper's count)
-    card: false,   // MATERIAL (2026-09-02): true = cardboard flap, false = pulp
+    card: false,   // MATERIAL (2026-09-02): true = cardboard, false = pulp
+    // A PANEL (2026-09-02, ruled from the six-panel mockup): one face
+    // of a box, pw x ph, with a FOLD — a pretend rotation about an
+    // axis in the screen plane, drawn as a squash by |cos(fold)| along
+    // one axis (foldAxis 0: a horizontal axis, the height squashes;
+    // 1: a vertical axis, the width squashes), floored at a sliver
+    // (`sliver` px) so an edge-on panel still reads as cardboard.
+    // Ordinary 2D spin (angle/omega) on top. Front/back start at fold
+    // 0, top/bottom at 90 about a horizontal axis, left/right at 90
+    // about a vertical one — which is exactly the bevel strips the
+    // intact box already draws, so frame zero of a break is the box.
+    panel: false, pw: 0, ph: 0, fold: 0, foldRate: 0, foldAxis: 0, sliver: 0,
+    printSeed: -1,     // the front panel keeps the box's print (ruled)
+    seam: false,       // front/back carry the box's seam line
+    colLit: null, colDark: null,   // the painter's lit / dark slots
   });
 }
 let spawnCursor = 0;
@@ -72,6 +98,7 @@ function allocate() {
   const f = allocateSlot();
   f.offWorld = 0;
   f.card = false;   // pulp unless a spawner says otherwise
+  f.panel = false; f.printSeed = -1; f.seam = false;
   return f;
 }
 function allocateSlot() {
@@ -281,9 +308,12 @@ function spawnFromBody(m, state, tick, bodyIndex) {
 // flyers along the escape normal, the far side slumps) — and drops
 // the third: a box is a SHELL, not a volume, so the field is the
 // face's own area and nothing unpacks from depth, and nothing leaks,
-// so there is no stain. Fragments are FLAPS: flat, angular, kraft in
-// the body's own three slots (face / lit / dark, the painter's), so a
-// debris field reads as the box that stood there.
+// so there is no stain. Fragments are the box's SIX PANELS (ruled
+// 2026-09-02 from the mockup, replacing the first cut's sixteen
+// shards: cardboard tears at its seams, it does not shatter), each
+// with a FOLD — see the fragment schema — in the body's own three
+// slots (face / lit / dark, the painter's), the front keeping the
+// box's print, so a debris field reads as the box that stood there.
 // Same seeding law as the melon burst; bodyIndex is the prop's
 // canonical index, unique across the field. Colours are presentation
 // strings derived without touching the stream.
@@ -324,86 +354,133 @@ function spawnFromProp(m, state, tick, bodyIndex) {
     ? [SH.slotColor(base, SH.P.baseFillSlot), SH.slotColor(base, SH.P.highlightFillSlot),
       SH.slotColor(base, SH.bands()[0].fillSlot)]
     : [base, base, base];
-  // Tile the local bounding box with cells; keep cells whose centre is
-  // inside the polygon (a box: all of them). ~24 px cells: a 1x1 box
-  // is 16 flaps, a 1x2 carton 32.
+  // SIX PANELS (ruled 2026-09-02 from the mockup: a box does not
+  // shatter, it comes apart at its seams). Front and back are the face
+  // (2a x 2b); top and bottom are 2a wide and BOX_DEPTH deep; left and
+  // right are BOX_DEPTH wide and 2b tall. A 1x1 is a cube and a 1x2
+  // carton is 100 deep (ruled). Panels spawn where they stood — front
+  // and back at the centre (back first, so it draws behind), the four
+  // sides on their edges, edge-on — and inherit the box's velocity
+  // field; the crush zone (nearest the blow) flies, the far side
+  // slumps, the pulp's own energy model. Fold rates come from the
+  // blow: every panel starts tumbling.
   const hx = m.a, hy = m.b;
-  const CELL = 24;
-  const nxCells = Math.max(2, Math.round((2 * hx) / CELL));
-  const nyCells = Math.max(2, Math.round((2 * hy) / CELL));
-  const cw = (2 * hx) / nxCells, ch = (2 * hy) / nyCells;
+  const D = BOX_DEPTH;
+  const sliver = Math.max(2, hx * 0.14);   // the kraft painter's bevel width
   const tx = -ny, ty = nx;
-  for (let iy = 0; iy < nyCells; iy++) {
-    for (let ix = 0; ix < nxCells; ix++) {
-      const lx = -hx + (ix + 0.5) * cw + (rng() - 0.5) * cw * 0.4;
-      const ly = -hy + (iy + 0.5) * ch + (rng() - 0.5) * ch * 0.4;
-      const f = allocate();
-      f.active = true; f.cold = false; f.grounded = false;
-      f.kind = 2;          // the rind family's SHAPE class (slabby, rests early)
-      f.rind = true;
-      f.seed = false;
-      f.card = true;       // ...but the CARDBOARD material: dry and light (see
-                           // the three readers: ground response, wake, and here)
-      f.x = m.x + lx * cos - ly * sin;
-      f.y = m.y + lx * sin + ly * cos;
-      f.r = Math.min(cw, ch) * 0.5 * (0.7 + 0.6 * rng());
-      const cr = rng();
-      f.col = cr < 0.6 ? cols[0] : cr < 0.85 ? cols[2] : cols[1];
-      makeFlap(f, rng);
-      // Crush zone vs far side, the melon burst's energy model with
-      // cardboard's numbers: flaps are light, so more of them fly and
-      // they fly a little further, but nothing here sprays.
-      const rx = f.x - m.x, ry = f.y - m.y;
-      let ax = f.x - cpx, ay = f.y - cpy;
-      const alen = Math.sqrt(ax * ax + ay * ay) || 1;
-      const proximity = Math.max(0.3, 1 - alen / (2.2 * Math.max(hx, hy)));
-      const isFlyer = rng() < 0.45 * (0.35 + 0.9 * energyK) * (0.5 + proximity);
-      let shock = shockBase * proximity * (0.7 + rng() * 0.6);
-      let sxv, syv;
-      if (isFlyer) {
-        const side = (rx * tx + ry * ty) >= 0 ? 1 : -1;
-        sxv = (tx * side * 0.6 + nx * 0.4) * shock;
-        syv = (ty * side * 0.6 + ny * 0.4) * shock;
-      } else {
-        shock *= 0.1;
-        sxv = (ax / alen) * shock;
-        syv = (ay / alen) * shock;
-      }
-      // The melon burst strips 85% of the rebound: a smash is the
-      // failure to bounce. A kicked box is different — its velocity
-      // along the escape normal IS the kick (ruled 2026-09-02, after
-      // the device showed flaps dropping): NOTHING is stripped. The
-      // flaps leave with everything the box had, and the melon's
-      // wake (racerShove) delivers the rest of the push it was
-      // mid-way through — the pulp's own momentum machinery, now
-      // reading cardboard as light.
-      const pvx = m.vx - m.omega * ry;
-      const pvy = m.vy + m.omega * rx;
-      const jit = isFlyer ? 50 : 16;
-      f.vx = pvx + sxv + (rng() - 0.5) * jit;
-      f.vy = pvy + syv + (rng() - 0.5) * jit;
-      f.angle = m.angle + (rng() - 0.5) * 0.6;
-      f.omega = m.omega + (rng() - 0.5) * (isFlyer ? 18 : 8);
-      f.hotUntil = tick + HOT_TICKS;
-      f.rest = 0;
-      f.born = tick;
+  const PANELS = [
+    // [ox, oy, pw, ph, fold0, axis, seam, isFront]
+    [0, 0, 2 * hx, 2 * hy, Math.PI, 0, true, false],           // back: fold 180 — its outside faces away
+    [0, -hy, 2 * hx, D, Math.PI / 2, 0, false, false],         // top
+    [0, hy, 2 * hx, D, Math.PI / 2, 0, false, false],          // bottom
+    [-hx, 0, D, 2 * hy, Math.PI / 2, 1, false, false],         // left
+    [hx, 0, D, 2 * hy, Math.PI / 2, 1, false, false],          // right
+    [0, 0, 2 * hx, 2 * hy, 0, 0, true, true],                  // front: last, in front
+  ];
+  for (let i = 0; i < PANELS.length; i++) {
+    const [ox, oy, pw, ph, fold0, axis, seam, isFront] = PANELS[i];
+    const f = allocate();
+    f.active = true; f.cold = false; f.grounded = false;
+    f.kind = 2;          // the rind family's SHAPE class (slabby, rests early)
+    f.rind = true;
+    f.seed = false;
+    f.card = true;       // ...but the CARDBOARD material: dry and light (see
+                         // the three readers: ground response, wake, and here)
+    f.panel = true;
+    f.pw = pw; f.ph = ph; f.fold = fold0; f.foldAxis = axis; f.sliver = sliver;
+    f.seam = seam;
+    f.printSeed = isFront && m.printSeed !== undefined ? m.printSeed : -1;
+    f.verts = null;
+    f.col = cols[0]; f.colLit = cols[1]; f.colDark = cols[2];
+    f.x = m.x + ox * cos - oy * sin;
+    f.y = m.y + ox * sin + oy * cos;
+    f.angle = m.angle;
+    // The front/back panels tumble about whichever axis the blow
+    // favours (a draw); the sides fold about the edge they hung on.
+    if (i === 0 || i === 5) f.foldAxis = rng() < 0.5 ? 0 : 1;
+    f.r = panelSupport(f);
+    // Crush zone vs far side, the melon burst's energy model with
+    // cardboard's numbers: panels are light, so they fly rather than
+    // heap, but nothing here sprays.
+    const rx = f.x - m.x, ry = f.y - m.y;
+    let ax = f.x - cpx, ay = f.y - cpy;
+    const alen = Math.sqrt(ax * ax + ay * ay) || 1;
+    const proximity = Math.max(0.3, 1 - alen / (2.2 * Math.max(hx, hy)));
+    const isFlyer = isFront || rng() < 0.5 * (0.35 + 0.9 * energyK) * (0.5 + proximity);
+    let shock = shockBase * proximity * (0.7 + rng() * 0.6);
+    let sxv, syv;
+    if (isFlyer) {
+      const side = (rx * tx + ry * ty) >= 0 ? 1 : -1;
+      sxv = (tx * side * 0.6 + nx * 0.4) * shock;
+      syv = (ty * side * 0.6 + ny * 0.4) * shock;
+    } else {
+      shock *= 0.1;
+      sxv = (ax / alen) * shock;
+      syv = (ay / alen) * shock;
     }
+    // The melon burst strips 85% of the rebound: a smash is the
+    // failure to bounce. A kicked box is different — its velocity
+    // along the escape normal IS the kick (ruled 2026-09-02, after
+    // the device showed flaps dropping): NOTHING is stripped. The
+    // panels leave with everything the box had, and the melon's wake
+    // (racerShove) delivers the rest of the push it was mid-way
+    // through — the pulp's own momentum machinery, reading cardboard
+    // as light.
+    const pvx = m.vx - m.omega * ry;
+    const pvy = m.vy + m.omega * rx;
+    const jit = isFlyer ? 50 : 16;
+    f.vx = pvx + sxv + (rng() - 0.5) * jit;
+    f.vy = pvy + syv + (rng() - 0.5) * jit - (isFlyer ? 40 + 120 * energyK : 0); // a little loft: the seams part upward
+    f.omega = m.omega + (rng() - 0.5) * (isFlyer ? 10 : 4);
+    // The fold rate: a tumble proportional to the blow, either way.
+    f.foldRate = (rng() < 0.5 ? -1 : 1) * (3 + 9 * energyK) * (0.6 + 0.8 * rng()) * (isFlyer ? 1 : 0.4);
+    // A longer hot budget than pulp: a panel slides at hundreds of
+    // px/s for seconds, and the pulp's 1.5 s freeze stopped one dead
+    // mid-slide at 423 px/s and snapped it flat (measured). Six per
+    // box, so the frame budget can afford it; the rest rule parks
+    // them when they actually stop.
+    f.hotUntil = tick + PANEL_HOT_TICKS;
+    f.rest = 0;
+    f.born = tick;
   }
 }
 
-// A cardboard flap: a flat, angular quadrilateral-ish lump — long one
-// way, thin the other — the way a box tears along its corrugation.
-function makeFlap(f, rng) {
-  const v = [];
-  const n = 4 + (rng() < 0.35 ? 1 : 0);
-  const stretch = 1.35 + rng() * 0.45;
-  const thin = 0.45 + rng() * 0.2;
-  for (let i = 0; i < n; i++) {
-    const t = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.3;
-    const rr = 0.8 + rng() * 0.3;
-    v.push(dcos(t) * rr * stretch, dsin(t) * rr * thin);
+// The box's third dimension: how deep a panel is when it opens out.
+// Ruled 2026-09-02: 100 px — a 1x1 is a cube, a 1x2 carton is 100 deep.
+const BOX_DEPTH = 100;
+
+// A panel's projected dimensions after the fold, in its own frame.
+function panelDims(f) {
+  const c = dcos(f.fold);
+  const k = c < 0 ? -c : c;
+  if (f.foldAxis === 0) {          // horizontal axis: the height squashes
+    const h = f.ph * k;
+    return { w: f.pw, h: h < f.sliver ? f.sliver : h };
   }
-  f.verts = v;
+  const w = f.pw * k;                // vertical axis: the width squashes
+  return { w: w < f.sliver ? f.sliver : w, h: f.ph };
+}
+// LYING FLAT, in the side view, is the projected rectangle's LONG side
+// horizontal: a panel folded about a horizontal axis lies along its
+// width (spin -> a whole turn), one folded about a vertical axis is
+// edge-on but STANDING — in 3D it can only lie down by turning in the
+// screen — so its spin goes to a quarter turn, where its height lies
+// along the ground. The nearest such angle to the current spin.
+function panelLevel(f) {
+  const d = panelDims(f);
+  if (d.w >= d.h) return Math.round(f.angle / Math.PI) * Math.PI;
+  return Math.round((f.angle - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+}
+// The projected rectangle's half-extent along WORLD UP — the panel's
+// contact radius. A flat-lying strip rests on the ground at half a
+// sliver; a panel standing on its edge stands a full half-height off
+// it. Re-read every tick, because the fold and the spin both move.
+function panelSupport(f) {
+  const d = panelDims(f);
+  const c = dcos(f.angle), s = dsin(f.angle);
+  const cs = c < 0 ? -c : c, ss = s < 0 ? -s : s;
+  const r = (d.w / 2) * ss + (d.h / 2) * cs;
+  return r < 2 ? 2 : r;
 }
 
 // Seeded irregular shard polygons — fracture STATISTICS, not fracture
@@ -651,6 +728,35 @@ function stepDebris(state, dt) {
     f.x += f.vx * dt;
     f.y += f.vy * dt;
     f.angle += f.omega * dt;
+    if (f.panel) {
+      // THE FOLD is kinematic — a tumble rate, not a physics — the
+      // same honesty as the pulp's shards (fracture statistics, not
+      // fracture simulation). In the air it tumbles at the rate the
+      // blow gave it; on the ground a panel keels over to lie FLAT
+      // (fold -> the nearest odd multiple of 90 deg, i.e. edge-on, the
+      // sketch's thin bar) and its spin levels out (angle -> the
+      // nearest half turn), both as damped springs. Contact radius is
+      // the projected half-extent along world up, re-read every tick.
+      f.fold += f.foldRate * dt;
+      if (f.grounded) {
+        const flat = Math.round((f.fold - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+        f.foldRate += (flat - f.fold) * PANEL_KEEL * dt;
+        f.foldRate *= PANEL_KEEL_DAMP;
+        const level = panelLevel(f);
+        f.omega += (level - f.angle) * PANEL_LEVEL * dt;
+      } else {
+        f.foldRate *= PANEL_AIR_DAMP;
+      }
+      // The contact radius follows the pose. A GROUNDED panel whose
+      // support just shrank (it keeled from standing toward flat)
+      // keeps its bottom on the ground rather than being left
+      // hanging at the old height to free-fall and bounce — that
+      // drop, re-fed by the bounce, was a perpetual motion machine
+      // (measured: a strip cartwheeling at 9 rad/s eight seconds on).
+      const rPrev = f.r;
+      f.r = panelSupport(f);
+      if (f.grounded && f.r < rPrev) f.y += rPrev - f.r;
+    }
     let sawTerrain = collideFragTerrain(f, terrain);
     // THE REAPER'S QUESTION IS "IS THERE GROUND BELOW?", and the
     // contact query only ever asked "is there ground within 60 px?"
@@ -673,10 +779,26 @@ function stepDebris(state, dt) {
     if (f.offWorld > 60) { f.active = false; continue; }
 
     const slowLim = f.kind === 3 ? 95 : f.kind === 2 ? 70 : 45;
-    const slow = dhyp(f.vx, f.vy) < slowLim && Math.abs(f.omega) < (f.kind >= 2 ? 6 : 4);
+    let slow = dhyp(f.vx, f.vy) < slowLim && Math.abs(f.omega) < (f.kind >= 2 ? 6 : 4);
+    // A panel is not at rest until it lies flat and still: cold
+    // would freeze it standing on its edge or mid-keel.
+    if (f.panel && slow) {
+      const flat = Math.round((f.fold - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+      slow = Math.abs(f.fold - flat) < 0.09 && Math.abs(f.foldRate) < 1.5 && Math.abs(f.angle - panelLevel(f)) < 0.09;
+    }
     f.rest = (f.grounded && slow) ? f.rest + 1 : 0;
     if (f.rest > 10 || (tick > f.hotUntil && f.grounded)) {
       f.cold = true; f.vx = 0; f.vy = 0; f.omega = 0;
+      if (f.panel) {
+        // Parked flat and level, exactly (the springs got it close;
+        // the freeze must not leave a sliver of tilt for good).
+        f.fold = Math.round((f.fold - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+        f.foldRate = 0;
+        f.angle = panelLevel(f);
+        const rPrev = f.r;
+        f.r = panelSupport(f);
+        f.y += rPrev - f.r;   // the bottom stays on the ground through the snap
+      }
     } else if (tick > f.hotUntil + 360) {
       // Hard failsafe: nothing stays hot past 3s over budget.
       if (f.grounded) { f.cold = true; f.vx = 0; f.vy = 0; f.omega = 0; }
@@ -799,7 +921,9 @@ function racerShove(m, state, bodyR, period, tick) {
     const outrunning = f.card && (txv - f.vx) * (m.vx >= 0 ? 1 : -1) < 0;
     if (!outrunning) f.vx += (txv - f.vx) * massK;
     f.vy += (tyv - f.vy) * massK;
-    f.omega += nx * 4 * massK;
+    // (A panel's tumble is its fold; the wake spins it only a little,
+    // or a plowed panel cartwheels at 14 rad/s — measured.)
+    f.omega += nx * (f.panel ? 1 : 4) * massK;
   }
 }
 

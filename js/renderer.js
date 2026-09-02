@@ -243,7 +243,7 @@ function drawStonePoly(ctx, verts, angle, sun, C, bands) {
   ctx.restore();
 }
 
-function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints) {
+function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints, opts) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   const n = verts.length;
   const W = [];
@@ -305,6 +305,10 @@ function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints) {
   // already do — the box's boundary against the terrain is now the
   // dark bevel on its away-from-sun edges and the light bevel on the
   // others, which is one mechanism instead of two arguing.
+  // (A PANEL of a broken box — the debris painter — passes
+  // { seam: false } for the four sides: only the front and back carry
+  // the fold line. Boxes pass nothing and draw exactly as before.)
+  if (opts && opts.seam === false) { ctx.restore(); return; }
   let hx = 0;
   for (const v of verts) if (Math.abs(v[0]) > hx) hx = Math.abs(v[0]);
   const rot = (x, y) => [x * ca - y * sa, x * sa + y * ca];
@@ -2274,6 +2278,11 @@ function createRenderer(canvas) {
   function drawDebris(ctx, state, cam, w, h, toScreenX, toScreenY, zoom) {
     const frags = window.FF.debris.fragments;
     const period = state.period;
+    // The panel painter's sun (the body painter's own source).
+    const RIG = window.FF.shading;
+    const sunV = RIG && RIG.sun ? RIG.sun() : { x: 0, y: -1 };
+    const sl = Math.hypot(sunV.x, sunV.y) || 1;
+    const sunD = { x: sunV.x / sl, y: sunV.y / sl };
     for (const f of frags) {
       if (!f.active) continue;
       let fx = f.x, fy = f.y;
@@ -2288,7 +2297,29 @@ function createRenderer(canvas) {
       ctx.scale(zoom, zoom);
       ctx.rotate(f.angle);
       ctx.fillStyle = f.col || FRAG_COLOR[f.kind] || FRAG_COLOR[0];
-      if (f.verts) {
+      if (f.panel) {
+        // A PANEL of a broken box (2026-09-02): the kraft painter
+        // itself, on the panel's rectangle, under a squash by
+        // |cos(fold)| along the folded axis (floored at the sliver),
+        // in the panel's own frame — so the bevels light against the
+        // same sun as the box did, the front keeps the box's print,
+        // and an edge-on panel is a strip of cardboard. Past 90 deg
+        // the inside shows: the same kraft (ruled), no print. The sun
+        // is turned into the panel's frame because the frame is
+        // already rotated here.
+        const c = Math.cos(f.fold);
+        const k = Math.max(Math.abs(c), f.sliver / (f.foldAxis === 0 ? f.ph : f.pw));
+        const kx = f.foldAxis === 0 ? 1 : k, ky = f.foldAxis === 0 ? k : 1;
+        const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
+        const sunL = { x: sunD.x * ca + sunD.y * sa, y: -sunD.x * sa + sunD.y * ca };
+        const hw = f.pw / 2, hh = f.ph / 2;
+        const prints = (c > 0 && f.printSeed >= 0 && window.FF.prints)
+          ? window.FF.prints.layoutFor(f.printSeed, f.pw, f.ph) : null;
+        ctx.scale(kx, ky);
+        drawBoxKraft(ctx, [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], 0, sunL,
+          { face: f.col, lit: f.colLit, dark: f.colDark, ink: f.colDark },
+          f.sliver, prints, { seam: f.seam && c > 0 });
+      } else if (f.verts) {
         // Irregular seeded shard: vertices in units of r.
         ctx.beginPath();
         ctx.moveTo(f.verts[0] * f.r, f.verts[1] * f.r);
