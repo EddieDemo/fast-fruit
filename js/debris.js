@@ -45,6 +45,7 @@ for (let i = 0; i < MAX_FRAGS; i++) {
     active: false, cold: false, rind: false, grounded: false, kind: 0,
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, omega: 0, r: 4,
     hotUntil: 0, rest: 0, born: 0,
+    offWorld: 0,   // ticks with no terrain below (the void reaper's count)
   });
 }
 let spawnCursor = 0;
@@ -57,7 +58,20 @@ function reset() {
 
 // Prefer a free slot; else evict the oldest cold fragment; else (a
 // race of pure carnage) recycle whatever the cursor points at.
+// A REUSED SLOT FORGETS ITS LAST LIFE (found 2026-09-02 by the kraft
+// burst's count cell): offWorld was accreted, never declared, and
+// never reset — a slot freed BY the void reaper (offWorld 61+) is
+// exactly the slot allocate prefers next, so the next fragment born
+// into it was reaped on its first airborne tick. One flap in sixteen
+// vanished; melon bursts had been losing pulp the same way after any
+// off-world death, unseen. Reset at the one door every spawner uses.
+// Fragments never write to bodies, so this moves no gate.
 function allocate() {
+  const f = allocateSlot();
+  f.offWorld = 0;
+  return f;
+}
+function allocateSlot() {
   for (let n = 0; n < MAX_FRAGS; n++) {
     const i = (spawnCursor + n) % MAX_FRAGS;
     if (!fragments[i].active) { spawnCursor = (i + 1) % MAX_FRAGS; return fragments[i]; }
@@ -251,6 +265,139 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   // face itself, which really was hit. Pair-only deaths still burst
   // fragments; they just stain nothing.
   if (m.hitSeverity > 0) spawnStain(state, cpx, cpy, tick, rng);
+}
+
+// ---- THE KRAFT BURST (props; P0 of the compound-bodies plan,
+// 2026-09-02). A cardboard body that the break rule (physics.js
+// applyBreakRule) has judged broken bursts HERE, not through
+// spawnFromBody: that path bursts an ELLIPSE silhouette into rind,
+// flesh, pips and a stain, and none of that is cardboard. This one
+// keeps the two laws that transfer — CONTINUITY (frame zero is the
+// intact box with cracks in it: fragments tile the body's own polygon,
+// in place) and CONTACT PHYSICS (the crush zone near the blow sheds
+// flyers along the escape normal, the far side slumps) — and drops
+// the third: a box is a SHELL, not a volume, so the field is the
+// face's own area and nothing unpacks from depth, and nothing leaks,
+// so there is no stain. Fragments are FLAPS: flat, angular, kraft in
+// the body's own three slots (face / lit / dark, the painter's), so a
+// debris field reads as the box that stood there.
+// Same seeding law as the melon burst; bodyIndex is the prop's
+// canonical index, unique across the field. Colours are presentation
+// strings derived without touching the stream.
+function spawnFromProp(m, state, tick, bodyIndex) {
+  const rng = mulberry32((Math.imul(tick | 0, 2654435761) ^ Math.imul(bodyIndex + 1, 40503)) >>> 0);
+  const P = m.poly;
+  const cos = dcos(m.angle), sin = dsin(m.angle);
+  // Escape normal of the killing blow (away from what hit us), the
+  // body path's own rule.
+  let nx = 0, ny = -1;
+  if (m.pairSeverity >= m.hitSeverity && (m.pairNx || m.pairNy)) { nx = m.pairNx; ny = m.pairNy; }
+  else if (m.hitNx || m.hitNy) { nx = m.hitNx; ny = m.hitNy; }
+  const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+  nx /= nlen; ny /= nlen;
+  // Contact point: the polygon's support in the -n direction.
+  let rContact = 0;
+  if (P) {
+    for (let i = 0; i < P.length; i++) {
+      const wx = P[i][0] * cos - P[i][1] * sin, wy = P[i][0] * sin + P[i][1] * cos;
+      const d = -(wx * nx + wy * ny);
+      if (d > rContact) rContact = d;
+    }
+  } else rContact = m.b;
+  const cpx = m.x - nx * rContact;
+  const cpy = m.y - ny * rContact;
+  const byPair = m.pairSeverity >= m.hitSeverity;
+  const kJn = (byPair ? m.pairJn : m.hitJn) || 1500;
+  const shockBase = 60 + Math.min(420, kJn * 0.08);
+  const energyK = Math.min(1, kJn / 4000);
+  // The body's own kraft slots, exactly the painter's three (renderer
+  // drawBoxKraft's face / lit / dark). No literal fallback (the colour
+  // ratchet, verify-arch A11): a headless harness with no shading rig
+  // gets the body colour or nothing, and the painter's own default
+  // covers an empty f.col.
+  const SH = window.FF.shading;
+  const base = m.bodyColor;
+  const cols = (base && SH && SH.slotColor && SH.P && SH.bands)
+    ? [SH.slotColor(base, SH.P.baseFillSlot), SH.slotColor(base, SH.P.highlightFillSlot),
+      SH.slotColor(base, SH.bands()[0].fillSlot)]
+    : [base, base, base];
+  // Tile the local bounding box with cells; keep cells whose centre is
+  // inside the polygon (a box: all of them). ~24 px cells: a 1x1 box
+  // is 16 flaps, a 1x2 carton 32.
+  const hx = m.a, hy = m.b;
+  const CELL = 24;
+  const nxCells = Math.max(2, Math.round((2 * hx) / CELL));
+  const nyCells = Math.max(2, Math.round((2 * hy) / CELL));
+  const cw = (2 * hx) / nxCells, ch = (2 * hy) / nyCells;
+  const tx = -ny, ty = nx;
+  for (let iy = 0; iy < nyCells; iy++) {
+    for (let ix = 0; ix < nxCells; ix++) {
+      const lx = -hx + (ix + 0.5) * cw + (rng() - 0.5) * cw * 0.4;
+      const ly = -hy + (iy + 0.5) * ch + (rng() - 0.5) * ch * 0.4;
+      const f = allocate();
+      f.active = true; f.cold = false; f.grounded = false;
+      f.kind = 2;          // the rind family: stiff, slabby, rests early
+      f.rind = true;
+      f.seed = false;
+      f.x = m.x + lx * cos - ly * sin;
+      f.y = m.y + lx * sin + ly * cos;
+      f.r = Math.min(cw, ch) * 0.5 * (0.7 + 0.6 * rng());
+      const cr = rng();
+      f.col = cr < 0.6 ? cols[0] : cr < 0.85 ? cols[2] : cols[1];
+      makeFlap(f, rng);
+      // Crush zone vs far side, the melon burst's energy model with
+      // cardboard's numbers: flaps are light, so more of them fly and
+      // they fly a little further, but nothing here sprays.
+      const rx = f.x - m.x, ry = f.y - m.y;
+      let ax = f.x - cpx, ay = f.y - cpy;
+      const alen = Math.sqrt(ax * ax + ay * ay) || 1;
+      const proximity = Math.max(0.3, 1 - alen / (2.2 * Math.max(hx, hy)));
+      const isFlyer = rng() < 0.45 * (0.35 + 0.9 * energyK) * (0.5 + proximity);
+      let shock = shockBase * proximity * (0.7 + rng() * 0.6);
+      let sxv, syv;
+      if (isFlyer) {
+        const side = (rx * tx + ry * ty) >= 0 ? 1 : -1;
+        sxv = (tx * side * 0.6 + nx * 0.4) * shock;
+        syv = (ty * side * 0.6 + ny * 0.4) * shock;
+      } else {
+        shock *= 0.1;
+        sxv = (ax / alen) * shock;
+        syv = (ay / alen) * shock;
+      }
+      // The melon burst strips 85% of the rebound: a smash is the
+      // failure to bounce. A kicked box is different — its velocity
+      // along the escape normal IS the kick, and the flaps of a box
+      // hit at speed carry on ahead of the melon. Half is stripped
+      // (breaking ate some of the push), half rides on.
+      let pvx = m.vx - m.omega * ry;
+      let pvy = m.vy + m.omega * rx;
+      const rb = pvx * nx + pvy * ny;
+      if (rb > 0) { pvx -= nx * rb * 0.5; pvy -= ny * rb * 0.5; }
+      const jit = isFlyer ? 50 : 16;
+      f.vx = pvx + sxv + (rng() - 0.5) * jit;
+      f.vy = pvy + syv + (rng() - 0.5) * jit;
+      f.angle = m.angle + (rng() - 0.5) * 0.6;
+      f.omega = m.omega + (rng() - 0.5) * (isFlyer ? 18 : 8);
+      f.hotUntil = tick + HOT_TICKS;
+      f.rest = 0;
+      f.born = tick;
+    }
+  }
+}
+
+// A cardboard flap: a flat, angular quadrilateral-ish lump — long one
+// way, thin the other — the way a box tears along its corrugation.
+function makeFlap(f, rng) {
+  const v = [];
+  const n = 4 + (rng() < 0.35 ? 1 : 0);
+  const stretch = 1.35 + rng() * 0.45;
+  const thin = 0.45 + rng() * 0.2;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.3;
+    const rr = 0.8 + rng() * 0.3;
+    v.push(dcos(t) * rr * stretch, dsin(t) * rr * thin);
+  }
+  f.verts = v;
 }
 
 // Seeded irregular shard polygons — fracture STATISTICS, not fracture
@@ -620,6 +767,6 @@ function racerShove(m, state, bodyR, period, tick) {
 }
 
 window.FF = window.FF || {};
-window.FF.debris = { fragments, stains, reset, spawnFromBody, confettiBurst, step: stepDebris };
+window.FF.debris = { fragments, stains, reset, spawnFromBody, spawnFromProp, confettiBurst, step: stepDebris };
 
 })();

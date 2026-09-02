@@ -302,6 +302,34 @@ function restitutionToBounce(e) {
   return n <= 0 ? 0 : Math.max(-1, (e - n) / n);
 }
 
+// ---- THE ONE-BLOW BREAK LAW (props; P0 of the compound-bodies plan,
+// ruled 2026-09-02) --------------------------------------------------
+// Racers are judged by the cluster ledger above: energy summed across
+// a landing. Cardboard is judged BLOW BY BLOW, with no memory: a prop
+// breaks the tick its severity (terrain + pair, the same per-tick
+// total the ledger would have accumulated) reaches its threshold, and
+// a tick that falls short leaves nothing behind. Eddie's ruling, in
+// his words: "it should be if a certain force threshold is reached =
+// break", not accumulated damage. Nine gentle hits are a box; one
+// hard hit is fragments.
+//
+// The threshold is a MATERIAL constant scaled by how much material
+// there is: crushK (severity per melon mass, on the species) times
+// the body's mass in melon masses. One number for all cardboard; a
+// carton is more cardboard than a box, so it takes more to crush.
+// Measured consequence (exp/prop-break-rig.js): a light box absorbs
+// nearly all of a kick's energy and breaks at racing pace; a heavy
+// carton absorbs a smaller share of the melon's finite energy and
+// survives a standing kick, breaking when it falls or is landed on.
+// Zero means NEVER (rocks, boulders, the egg, every species without
+// crushK): the rule is a no-op for them, and so byte-inert.
+function breakThreshold(m) {
+  const F = window.FF.OBJECTS;
+  const k = F && F[m.species] && F[m.species].crushK;
+  if (!k) return 0;
+  return k / (m.invM * CONFIG.mass); // crushK x mass ratio (1/(invM*mass) = mass in melons)
+}
+
 // The MINIMUM restitution that would have survived this contact.
 // Severity scales with (1 - e^2) at fixed dissipated energy, so
 // solving sev * (1 - e^2)/(1 - e0^2) = T is closed-form and exact.
@@ -315,5 +343,5 @@ function restitutionToSurvive(sev, T, e0) {
   return Math.sqrt(need2);
 }
 
-window.FF.damage = { bodyRestitution, bodyToughness, toughnessKey, shapeToughness, dissipated, severityFromE, pairShares, bounceToRestitution, restitutionToBounce, restitutionToSurvive, clusterStep, resetCluster, SEV_SCALE, CLUSTER_ROLL_TICKS, CLUSTER_GAP_TICKS };
+window.FF.damage = { bodyRestitution, bodyToughness, toughnessKey, shapeToughness, dissipated, severityFromE, pairShares, breakThreshold, bounceToRestitution, restitutionToBounce, restitutionToSurvive, clusterStep, resetCluster, SEV_SCALE, CLUSTER_ROLL_TICKS, CLUSTER_GAP_TICKS };
 })();

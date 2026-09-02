@@ -548,6 +548,13 @@ function createBody(x, y, scale, fruit) {
     canonIdx: -1,
     lastContactIdx: -1,
     lastContactTick: -1,
+    // THE BREAK BREADCRUMB (P0, 2026-09-02): a prop judged broken by
+    // the one-blow law (damage.js breakThreshold) records the tick and
+    // the canonical index of whoever touched it that tick (-1: the
+    // ground alone). Sim telemetry in the contact-breadcrumb mold;
+    // read by presentation, never by physics.
+    brokenTick: -1,
+    brokenBy: -1,
     pairWorst: 0,      // the single worst pair blow (blame breadcrumbs ride it)
     hitNx: 0, hitNy: -1,   // escape normal of the worst terrain blow
     pairNx: 0, pairNy: -1, // escape normal of the worst rival blow

@@ -666,6 +666,8 @@ function step(state, dt) {
     // overwritten by the brain before the next one, deciding nothing.
     applySmashRule(state.bots[i].melon, state, tick, false, state.players.length + i);
   }
+  // ---- The break rule: cardboard, blow by blow ----
+  applyBreakRule(state, tick);
 
   // ---- Debris: burst physics, guts collisions, wreckage shoving ----
   // Runs inside the fixed step so wreckage stays deterministic and
@@ -687,6 +689,57 @@ function step(state, dt) {
 function emit(state, type, payload) {
   const bus = window.FF.events;
   if (bus) bus.emit(type, payload, state);
+}
+
+// ---- THE BREAK RULE (props; P0 of the compound-bodies plan, ruled
+// 2026-09-02) ---------------------------------------------------------
+// Props already receive hitSeverity and pairSeverity every tick, from
+// the same contact charges racers do; until P0 the cardboard dial was
+// zero and the numbers were never read. This is the reader. It runs
+// AFTER the racer smash rules (a box that kills a melon and breaks in
+// the same tick still gets its name on the death) and BEFORE the
+// debris step, so the burst it spawns takes its first step this tick
+// like a melon's does. Judged bodies are the props the pair loop saw
+// this tick (alive, awake): a dormant record has no contacts, and a
+// dead prop has no severity. ONE BLOW, ONE VERDICT — damage.js
+// breakThreshold explains the law and why there is no ledger here.
+// Species without crushK have a threshold of zero and are never
+// judged: rocks, boulders, the egg and the ball are byte-inert.
+function applyBreakRule(state, tick) {
+  const props = state.props;
+  if (!props || !props.length) return;
+  for (let i = 0; i < props.length; i++) {
+    const p = props[i];
+    if (!p.alive || p.dormant) continue;
+    const T = damage.breakThreshold(p);
+    if (T <= 0) continue;
+    const tickSev = p.hitSeverity + p.pairSeverity;
+    if (tickSev >= T) breakProp(p, state, tick, tickSev);
+  }
+}
+
+// A prop breaks: burst BEFORE clearing the body (fragments inherit its
+// velocity field at the instant of failure, as a melon's do), then the
+// body leaves the sim — alive=false is the same door every reader
+// already filters on (bodyList, islands, wake, rehome, render). The
+// breadcrumb names the tick and whoever touched it THAT tick; a body
+// broken by the ground alone (a fall) reads -1. Announced on the bus
+// for presentation; the sim reads nothing back.
+//
+// THE PAYLOAD SPOT (agreed 2026-09-02): P1 "payload boxes" adds the
+// drop-out-what-was-inside line at the end of this function — the
+// body's velocity is still intact here, which is exactly what a
+// revealed payload inherits. Nothing reads p.payload until then.
+function breakProp(p, state, tick, tickSev) {
+  debris.spawnFromProp(p, state, tick, p.canonIdx);
+  p.alive = false;
+  p.brokenTick = tick;
+  p.brokenBy = (p.lastContactTick === tick) ? p.lastContactIdx : -1;
+  emit(state, 'propBreak', {
+    name: p.name || 'FURNITURE', species: p.species, tick,
+    severity: tickSev, threshold: damage.breakThreshold(p),
+    brokenBy: p.brokenBy, x: p.x, y: p.y,
+  });
 }
 
 function applySmashRule(m, state, tick, isPlayer, bodyIndex) {

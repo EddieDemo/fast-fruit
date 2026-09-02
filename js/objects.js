@@ -315,7 +315,8 @@ const OBJECTS = {
     poly: [[-50, -75], [50, -75], [50, 75], [-50, 75]],
     sizeMult: 1,
     density: 0.030,
-    toughnessMult: 0,
+    toughnessMult: 1,    // breakable cardboard: same law as the box
+    crushK: 250,         // 0.270 masses -> breaks at 67 (see the box)
     prints: true,       // factory prints (prints.js), explicit
     anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
   },
@@ -325,7 +326,8 @@ const OBJECTS = {
     poly: [[-50, -100], [50, -100], [50, 100], [-50, 100]],
     sizeMult: 1,
     density: 0.030,
-    toughnessMult: 0,
+    toughnessMult: 1,    // breakable cardboard: same law as the box
+    crushK: 250,         // 0.481 masses -> breaks at 120 (see the box)
     prints: true,       // factory prints (prints.js), explicit
     anchorBand: { h: [28, 40], s: [0.40, 0.55], l: [0.50, 0.62] },
   },
@@ -396,10 +398,25 @@ const OBJECTS = {
     // ruling. Hop-off launch ~5,000 px/s; sink amplifier ~8:1.
     density: 0.030,
     restitutionFloor: 0.08,  // cardboard thuds; flare adds, never removes
-    toughnessMult: 0,    // INDESTRUCTIBLE for v1 (ruled), like the ball:
-                         // impulses and breadcrumbs fully live, only the
-                         // damage ledger is deaf. Un-zero to make it
-                         // crushable later.
+    // BREAKABLE (P0 of the compound-bodies plan, ruled 2026-09-02:
+    // "only boxes and cartons break"). The dial is x1 — the box's
+    // severity is read exactly as a melon's would be — and crushK is
+    // the ONE-BLOW LAW's material constant: a cardboard body breaks the
+    // TICK its severity reaches crushK x its mass (in melon masses).
+    // No ledger, no accumulation (Eddie: "a certain force threshold is
+    // reached = break"). One number for all cardboard, scaled by how
+    // much cardboard there is; read off exp/prop-break-rig.js:
+    //   1x1 box (0.120 masses) breaks at 30: a clean kick at roughly
+    //   1,000 px/s and up breaks it (racing pace is 1,200-1,800), a
+    //   581 px/s nudge (11) and a fall of under 1.5 m do not, a fall
+    //   from 1.5 m up and a melon landing on it from 2 m (76) do.
+    // 200 was measured first and rejected: at 24 a box tumbling off a
+    // kicked pile broke on landing from 1.25 m, so one full-throttle
+    // pass through the big pyramid broke 9 of 10; at 250 the same
+    // pass breaks the box that was hit and the rest tumble whole.
+    // See damage.js breakThreshold and the handover addendum 29.
+    toughnessMult: 1,
+    crushK: 250,
     prints: true,       // factory prints (prints.js), explicit: the flag,
                          // never inferred from being cardboard
     anchorBand: { h: [50, 60], s: [0.56, 0.68], l: [0.31, 0.39] },

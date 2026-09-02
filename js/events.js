@@ -24,6 +24,7 @@
 // EVENT TYPES (payloads are certificates from physics unless noted):
 //   'death'     — a body was smashed          { ...cert, isPlayer }
 //   'nearMiss'  — survived >= 85% of lethal   { ...cert, survived: true }
+//   'propBreak' — cardboard broke (one-blow law) { name, species, tick, severity, threshold, brokenBy, x, y }
 //   (later elements add: 'overtake', 'lap', 'record', 'airtime')
 // ============================================================
 
