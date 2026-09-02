@@ -162,13 +162,14 @@ const DEFAULTS = Object.freeze({
   // THE SPEED LEAD (ruled 2026-09-02, v2 in v350): the camera sits at
   // the followed body's x plus its SIGNED horizontal velocity times
   // cameraLeadSec, capped at the melon at cameraLeadFrac of the width
-  // — 0.25 puts three quarters of the 16.2 m view ahead of you.
+  // — 0.333 puts two thirds of the 16.2 m view ahead of you.
   // Stationary is centred; at 0.3 s the cap engages at racing pace
   // (13.5 m/s and up). The offset is eased (cameraLerp), the position
   // is locked. One law: spectate and ghost follows inherit it, the
   // followed body is all that changes.
   cameraLeadSec: 0.3,
-  cameraLeadFrac: 0.25,
+  cameraLeadFrac: 0.333,   // two thirds ahead (re-ruled from 0.25, 2026-09-02j: "better balanced")
+  cameraSpeedSmooth: 0.25, // s: the rolling average of speed the lead rides on (v3, "too jerky")
 });
 
 // ---- Presets ----
@@ -379,6 +380,7 @@ const SCHEMA = [
   { key: 'cameraLerp',     min: 0.5,  max: 20,    step: 0.5 },
   { key: 'cameraLeadSec',  min: 0,    max: 1,     step: 0.05 },
   { key: 'cameraLeadFrac', min: 0.1,  max: 0.5,   step: 0.01 },
+  { key: 'cameraSpeedSmooth', min: 0, max: 1,     step: 0.05 },
 ];
 
 // Restore the active preset (undoes slider fiddling).

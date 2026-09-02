@@ -86,6 +86,7 @@ function createState() {
       y: 0,
       lead: 0,         // the eased lead offset, world px (renderer: the
                        // speed lead; the camera NEVER rotates — ruled 2026-08-17)
+      vS: 0,           // the rolling average of the followed body's vx (v3)
       initialized: false,
     },
 

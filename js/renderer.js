@@ -242,6 +242,8 @@ function drawStonePoly(ctx, verts, angle, sun, C, bands) {
   ctx.restore();
 }
 
+function clampLead(v, cap) { return v > cap ? cap : v < -cap ? -cap : v; }
+
 function drawBoxKraft(ctx, verts, angle, sun, C, bevel, prints, opts) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   const n = verts.length;
@@ -738,25 +740,46 @@ function createRenderer(canvas) {
     const shot = (window.FF.gridStart && window.FF.gridStart.cameraShot)
       ? window.FF.gridStart.cameraShot(state) : null;
     if (shot) zoom *= shot.zoomMul;
+    // v3 (2026-09-02j, "too jerky"): three softeners, each exact at
+    // steady state so the lead is still what you see.
+    //  1. SMOOTHED SPEED: the lead is driven by a rolling average of
+    //     horizontal velocity (an exponential average, time constant
+    //     cameraSpeedSmooth), not the instantaneous value, so a
+    //     bounce off a box does not lurch the view.
+    //  2. X IS EASED WITH FEED-FORWARD: the camera lerps toward the
+    //     body PLUS the lag a lerp would otherwise settle into
+    //     (v x (1-k)/L, the v349 defect made exact and cancelled), so
+    //     jolts to the body are filtered while a steady run frames
+    //     exactly at x + lead. The feed-forward uses the TRUE velocity,
+    //     not the smoothed one: with the average, a hard reversal sent
+    //     the camera on the old way for a quarter second while the
+    //     melon went the other (measured 0.31 of the view past the
+    //     melon, beyond the cap); with the true velocity the camera
+    //     tracks the melon through the turn and only the LEAD swings.
+    // (v2's separate ease on the offset is gone: three lags in series
+    // — average, offset, position — answered a speed step in 0.6 s
+    // when two would do; the x ease already smooths the lead.)
     const viewPx = width / zoom;
-    const maxLeadPx = (0.5 - (CONFIG.cameraLeadFrac === undefined ? 0.25 : CONFIG.cameraLeadFrac)) * viewPx;
-    let leadTarget = (m.vx || 0) * (CONFIG.cameraLeadSec || 0);
-    if (leadTarget > maxLeadPx) leadTarget = maxLeadPx;
-    else if (leadTarget < -maxLeadPx) leadTarget = -maxLeadPx;
+    const maxLeadPx = (0.5 - (CONFIG.cameraLeadFrac === undefined ? 0.333 : CONFIG.cameraLeadFrac)) * viewPx;
+    const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
+    const smooth = CONFIG.cameraSpeedSmooth === undefined ? 0.25 : CONFIG.cameraSpeedSmooth;   // 0 is a legal setting: no average
+    const kv = smooth > 0 ? Math.min(1, dtFrame / smooth) : 1;
     if (shot) {
       cam.x = shot.x;
       cam.y = shot.y;
       // initialized stays false through the walk, so the first frame
       // after the shot snaps rather than travels.
     } else if (!cam.initialized) {
-      cam.lead = leadTarget;
+      cam.vS = m.vx || 0;
+      cam.lead = clampLead(cam.vS * (CONFIG.cameraLeadSec || 0), maxLeadPx);
       cam.x = ix + cam.lead;
       cam.y = iy;
       cam.initialized = true;
     } else {
-      const k = Math.min(1, CONFIG.cameraLerp * dtFrame);
-      cam.lead += (leadTarget - cam.lead) * k;
-      cam.x = ix + cam.lead;
+      cam.vS += ((m.vx || 0) - cam.vS) * kv;
+      cam.lead = clampLead(cam.vS * (CONFIG.cameraLeadSec || 0), maxLeadPx);
+      const feedForward = k >= 1 ? 0 : (m.vx || 0) * (1 - k) / Math.max(1e-6, CONFIG.cameraLerp);
+      cam.x += (ix + cam.lead + feedForward - cam.x) * k;
       cam.y += (iy - cam.y) * k;
     }
     // THE SNAP (pixelation only): the camera lerp stays smooth in
