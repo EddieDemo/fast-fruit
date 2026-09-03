@@ -1038,7 +1038,7 @@ function createRenderer(canvas) {
         ? window.FF.palette.groundTone() : COLORS.ground;
       const TINT_PX = window.FF.DEV_TERRAIN_COLORS ? {
         slope: '#3a3a3a', roller: '#37413a', flat: '#454545',
-        kicker: '#463c34', gap: '#46343c', sw: '#343c46',
+        kicker: '#463c34', gap: '#46343c', sw: '#343c46', lip: '#4a3d2e',
       } : null;
       // THE SLAB POLYGON IS THE ONE AUTHORITY (v3, 2026-08-19).
       // v1 indexed the bottom polyline by the top's segment index
@@ -1282,6 +1282,7 @@ function createRenderer(canvas) {
         roller: '#37413a',       // toward green: the rhythm section
         flat: '#454545',         // lighter: the rest note
         kicker: '#463c34',       // warm: air incoming
+        lip: '#4a3d2e',          // warmer still: the curve you leave from (v7)
         gap: '#46343c',          // toward red: the void
         sw: '#343c46',           // toward blue: the fold
         tunnel: '#3c3446',       // toward violet: the roof

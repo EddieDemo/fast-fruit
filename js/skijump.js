@@ -72,23 +72,10 @@ const B = {
 };
 function span(rng, b) { return b[0] + rng() * (b[1] - b[0]); }
 
-// The arc verb, local until a second customer (Sumo bowls and the
-// skate-park arenas will want it): append an arc of turning radius r
-// from angle a0 to a1 (radians, y-down), sampled so each crease
-// turns little enough to steer rather than strike.
-function arcTo(cur, r, a0, a1) {
-  const turn = Math.abs(a1 - a0);
-  // Steps sized by TURN (<= 6 deg each) but never sub-pixel: the old
-  // 8-step floor oversampled tiny join turns into ~1px steps whose
-  // clamped dx distorted their angles into phantom micro-creases.
-  const n = Math.max(1, Math.min(Math.ceil(turn / (6 * DEG)),
-    Math.max(1, Math.floor((r * turn) / 4))));
-  for (let i = 1; i <= n; i++) {
-    const a = a0 + (a1 - a0) * (i / n);
-    const L = r * (turn / n);
-    cur.slope(Math.max(1, Math.cos(a) * L), Math.sin(a) * L);
-  }
-}
+// The arc verb moved to the terrain cursor (cur.arc) on 2026-09-03:
+// the LIP word is the second customer. Same arithmetic, same bytes
+// (verify-skijump holds the hill).
+function arcTo(cur, r, a0, a1) { cur.arc(r, a0, a1); }
 
 let hill = null;
 function buildHill(seed) {

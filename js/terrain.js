@@ -6,7 +6,9 @@
 //    (mulberry32) is self-contained integer math — no Math.random,
 //    no engine-dependent behavior. This is the foundation the ghost
 //    system stands on: a run is (seed + recorded positions).
-//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v5
+//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v7 (2026-09-03:
+//    the silent kicker repaired, the LIP word added — every track
+//    changed) after v5
 //    (2026-08-17: v2 was the dialect rework; v3 is the CHECK-MARK
 //    PIT, same day); pre-launch that costs nothing, post-launch it
 //    means versioning.
@@ -78,6 +80,11 @@ function trackRecipe(seed) {
     // about them.
     tunnel: r() < 0.5 ? rr(r, 0.03, 0.07) : 0,
     trap: r() < 0.5 ? rr(r, 0.03, 0.08) : 0,
+    // THE LIP (terrain v7, 2026-09-03): the ski-jump's curved launch
+    // families at race scale — see lipPlan. Every dialect speaks it;
+    // the kicker (a straight ramp, one crease) stays beside it, ruled:
+    // "I want A, B, C and D so I can test them all".
+    lip: rr(r, 0.06, 0.20),
   };
   // THE DRAINED GAP (stage 4, terrain v5): a track speaks its gaps
   // WALLED (the stage-2 check-mark) or DRAINED (the pit floor IS the
@@ -89,8 +96,16 @@ function trackRecipe(seed) {
   // weight silently distorts every other's (stage 5: tunnel + trap
   // were briefly outside it).
   const total = w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw
-    + w.tunnel + w.trap;
+    + w.tunnel + w.trap + w.lip;
   for (const k of Object.keys(w)) w[k] /= total;
+  // THE LIP FAMILIES are a dialect lean, not a per-chunk coin: three
+  // weights drawn per track (pop / quarter / ski), every one live, so
+  // a track prefers one family and still speaks all three — Eddie
+  // wants all of them on the road for the test weeks; the dialect
+  // law keeps the preference the track's own.
+  const lipFam = [rr(r, 0.2, 1), rr(r, 0.2, 1), rr(r, 0.2, 1)];
+  const lfSum = lipFam[0] + lipFam[1] + lipFam[2];
+  for (let i = 0; i < 3; i++) lipFam[i] /= lfSum;
 
   return {
     gapDrained,
@@ -118,6 +133,10 @@ function trackRecipe(seed) {
     // one-time ruling.
     gapLen: subRange(r, 260, 520, 0.3, 0.8),
     gapDrop: subRange(r, 0, 70, 0.3, 1.0),
+    // the lip: family lean, and this dialect's climb budget (px the
+    // lip may rise above the arc's start; the ski-jump's is 330)
+    lipFam,
+    lipClimb: subRange(r, 60, 120, 0.3, 1.0),
   };
 }
 
@@ -154,6 +173,60 @@ function kickerPlan(r, rec) {
     T, grade, easeRise, rampLen, rise,
     extraBelow: rr(r, 140, 280),        // the face bottoms out this far
     landLen: rr(r, 420, 700),           //   below the chunk start
+    landDy: rr(r, 130, 220),
+  };
+}
+
+// THE LIP (terrain v7, 2026-09-03): the ski-jump's three launch
+// families (skijump.js, ruled there 2026-08-26 — LAW 1: every
+// junction is an arc, no crease anywhere on the hill turns hard;
+// LAW 2: the exit angle is capped low, distance comes from speed
+// retained through a smooth transition) brought to race scale. The
+// kicker is a straight ramp you leave at the ramp's angle; a lip is
+// a CURVE you leave from — sustained centripetal contact, and WHERE
+// you leave the curve sets your angle: hop early, go long.
+//   POP     — the tight curve, r 280-420, exit 30-40 deg: the sharp
+//             pop, air control.
+//   QUARTER — r 400-700, exit 20-40: mellower and longer, speed
+//             retained; the pump word.
+//   SKI     — r 700-1100 (the hill's 1200-2400 would run 12 m of arc
+//             in a 4-9 m chunk), exit 8-18: barely a lip, the skill
+//             moves up the hill into carrying speed.
+// THE NO-BLADES LAW: r >= SLAB_T + 20 = 280 px, every family — the
+// slab is 260 px thick and a tighter concave curve's inside offset
+// crosses itself. Same climb law as the hill: r is cut back so the
+// lip rises no more than the dialect's climb budget (~1 m, not the
+// hill's 3.3), so a field at pace clears it and a field at walking
+// pace is not parked on it. After the lip, the kicker's own face and
+// landing: net-downhill by arithmetic.
+// The entry tangent is the cursor's last heading (the momentum
+// grammar guarantees a slope or roller before it), so the arc joins
+// without a crease — Law 1 at the join, not only inside the arc.
+const LIP_R_MIN = 280;
+const LIP_FAMS = [
+  { name: 'pop', r: [280, 420], end: [30, 40] },
+  { name: 'quarter', r: [400, 700], end: [20, 40] },
+  { name: 'ski', r: [700, 1100], end: [8, 18] },
+];
+function lipPlan(r, rec, entryAngle) {
+  const fw = rec.lipFam || [1 / 3, 1 / 3, 1 / 3];
+  const pick = r();
+  const famIdx = pick < fw[0] ? 0 : pick < fw[0] + fw[1] ? 1 : 2;
+  const fam = LIP_FAMS[famIdx];
+  const end = -rr(r, fam.end[0], fam.end[1]) * Math.PI / 180;   // up = negative (y down)
+  const climb = window.FF.dmath.sin(entryAngle) + window.FF.dmath.sin(-end);
+  const budget = rrr(r, rec.lipClimb);
+  let radius = rrr(r, fam.r);
+  if (radius * Math.max(0.05, climb) > budget) radius = budget / Math.max(0.05, climb);
+  if (radius < LIP_R_MIN) radius = LIP_R_MIN;
+  return {
+    family: fam.name, famIdx,
+    approach: rr(r, 100, 220),
+    entryAngle, end, radius,
+    // the lip rises about r*(sin(entry) + sin(-end)) above the arc's
+    // start; the face then drops that plus extraBelow, as the kicker's
+    extraBelow: rr(r, 140, 280),
+    landLen: rr(r, 420, 700),
     landDy: rr(r, 130, 220),
   };
 }
@@ -479,6 +552,7 @@ function createTerrainGen(seed, recipeOverride) {
     // runs 0 -> grade with constant curvature, so the approach meets
     // the ramp with NO CREASE. This is what the kicker law buys its
     // steepness with.
+    arc(r, a0, a1) { cursorArc(this, r, a0, a1); },   // the shared arc verb (below)
     easeInto(T, grade, segs = 6) {
       const x0 = this.x, y0 = this.y;
       for (let i = 1; i <= segs; i++) {
@@ -544,7 +618,8 @@ function nextChunk(g, rOpt, recOpt) {
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap) kind = 'gap';
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw) kind = 'sw';
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw + w.tunnel) kind = 'tunnel';
-  else kind = 'trap';
+  else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw + w.tunnel + w.trap) kind = 'trap';
+  else kind = 'lip';
   // placement grammar: a rest note never follows a rest note
   if (kind === 'flat' && g.lastKind === 'flat') kind = 'slope';
   // MOMENTUM GRAMMAR (2026-08-17): a set piece (kicker, gap) may only
@@ -553,14 +628,14 @@ function nextChunk(g, rOpt, recOpt) {
   // corrections, the field could face a launch ramp at walking pace:
   // the first lap hand-test showed twelve melons parked on one. Not a
   // difficulty tweak — a stall on a ramp is a soft-lock.
-  if ((kind === 'kicker' || kind === 'gap' || kind === 'sw' || kind === 'trap')
+  if ((kind === 'kicker' || kind === 'gap' || kind === 'sw' || kind === 'trap' || kind === 'lip')
       && g.lastKind !== 'slope' && g.lastKind !== 'roller') {
     kind = 'slope';
   }
   // The tunnel's converse gate: its mouth cap sits at head height, so
   // it may not follow a word that launches the field airborne.
   if (kind === 'tunnel' && (g.lastKind === 'kicker' || g.lastKind === 'gap'
-      || g.lastKind === 'sw' || g.lastKind === 'trap')) {
+      || g.lastKind === 'sw' || g.lastKind === 'trap' || g.lastKind === 'lip')) {
     kind = 'flat';
   }
   // THE LAUNCH LAW (stage 5): the grid dumps twelve bodies at walking
@@ -687,7 +762,15 @@ function nextChunk(g, rOpt, recOpt) {
     da.entry = { kind: 'sw', lipX, lipY, farX: lipX + p.span, demand: p.demand,
       wallX: aprR };
     g.branches.push(da);
-  } else if (kind === 'kicker') {  } else if (kind === 'kicker') {
+  } else if (kind === 'kicker') {
+    // THE SILENT KICKER (found 2026-09-03): from some edit before v345
+    // this read `else if (kind === 'kicker') {  } else if (kind ===
+    // 'kicker') {` — an empty branch that caught every kicker and
+    // laid NO POINTS. The dialect chose a kicker 6-24% of the time
+    // and spoke nothing; no lap template ever held one; and
+    // verify-terrain H printed "0/40 kicker" on every green run
+    // without asserting it (a count that cannot fail says yes). H
+    // asserts it now, and M243 keeps the branch honest.
     const p = kickerPlan(r, rec);
     g.flat(p.approach);
     g.easeInto(p.T, p.grade);
@@ -695,6 +778,21 @@ function nextChunk(g, rOpt, recOpt) {
     // the face: from the lip (easeRise + rise above start) down to
     // extraBelow BELOW the chunk start — net-downhill by arithmetic
     g.slope(12, p.easeRise + p.rise + p.extraBelow);
+    g.slope(p.landLen, p.landDy);
+  } else if (kind === 'lip') {
+    // The entry tangent: the heading of the last laid segment (a
+    // slope or roller, by the grammar). The approach is laid ALONG
+    // that heading, not flat, so the arc joins it without a crease.
+    const n = g.pts.length;
+    const a = g.pts[n - 1], b = g.pts[n - 2] || a;
+    const entryAngle = (a.x > b.x) ? window.FF.dmath.atan2(a.y - b.y, a.x - b.x) : 0;   // dmath: pinned on every phone
+    const p = lipPlan(r, rec, entryAngle);
+    g.slope(p.approach * window.FF.dmath.cos(entryAngle), p.approach * window.FF.dmath.sin(entryAngle));
+    const y0 = g.y;
+    g.arc(p.radius, entryAngle, p.end);
+    const rise = y0 - g.y;              // how far the lip stands above the arc's start
+    // the face: from the lip down to extraBelow BELOW the arc's start
+    g.slope(12, rise + p.extraBelow);
     g.slope(p.landLen, p.landDy);
   } else if (kind === 'tunnel') {
     const p = tunnelPlan(r, rec);
@@ -867,6 +965,23 @@ window.FF.createTerrainGen = createTerrainGen;
 // makeCursor: the primitive vocabulary without the streaming shell —
 // same push/flat/slope/bump/easeInto the generator uses, on a bare
 // point list, so the lap-template builder lays IDENTICAL geometry.
+// THE ARC VERB (shared 2026-09-03; it lived in skijump.js "local until
+// a second customer" — the lip is the second; both cursors — the
+// streaming generator's and the lap builder's — call this one). Steps
+// sized by TURN (<= 6 deg each) but never sub-pixel. Same arithmetic,
+// same bytes: verify-skijump holds the hill.
+function cursorArc(cur, r, a0, a1) {
+  const DEG = Math.PI / 180;
+  const turn = Math.abs(a1 - a0);
+  const n = Math.max(1, Math.min(Math.ceil(turn / (6 * DEG)),
+    Math.max(1, Math.floor((r * turn) / 4))));
+  for (let i = 1; i <= n; i++) {
+    const a = a0 + (a1 - a0) * (i / n);
+    const L = r * (turn / n);
+    cur.slope(Math.max(1, Math.cos(a) * L), Math.sin(a) * L);
+  }
+}
+
 function makeCursor(x0, y0) {
   const c = {
     x: x0, y: y0, s: 0, lastKind: '', chunkKind: 'runway',
@@ -898,6 +1013,7 @@ function makeCursor(x0, y0) {
       this.x = x1 + len;
       this.y = y1 + baseDy;
     },
+    arc(r, a0, a1) { cursorArc(this, r, a0, a1); },   // the shared arc verb (below)
     easeInto(T, grade, segs = 6) {
       const x1 = this.x, y1 = this.y;
       for (let i = 1; i <= segs; i++) {
@@ -913,7 +1029,7 @@ function makeCursor(x0, y0) {
   return c;
 }
 
-window.FF.terrainLaws = { trackRecipe, kickerPlan, gapPlan, switchPlan, tunnelPlan, trapPlan, kickerMaxGrade,
+window.FF.terrainLaws = { trackRecipe, kickerPlan, lipPlan, LIP_FAMS, LIP_R_MIN, gapPlan, switchPlan, tunnelPlan, trapPlan, kickerMaxGrade,
   subRange, speakChunk: nextChunk, makeCursor, G_GRIND,
   GAP_ENTRY_F, GAP_FLOOR_F, GAP_EXIT_F };
 

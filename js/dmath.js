@@ -107,7 +107,39 @@ function mulberry32(seed) {
 }
 
 window.FF = window.FF || {};
-window.FF.dmath = { sin: dsin, cos: dcos, ln: dln, exp: dexp, pow: dpow };
+// ---- atan (2026-09-03, for the LIP word's entry heading): halve the
+// argument twice by the exact identity atan(x) = 2 atan(x / (1 +
+// sqrt(1 + x^2))) (sqrt is spec-pinned: correctly rounded), which
+// brings |x| under 0.27, then an odd Taylor of degree 15 — the same
+// recipe as dsin. Error against the true value < 2e-12 over the
+// whole line (verify-terrain K sweeps it). Math.atan / Math.atan2 are
+// not spec-pinned, and a heading that differs in the last bit on one
+// phone is a track that differs on that phone.
+function datan(x) {
+  if (x !== x) return NaN;
+  const neg = x < 0;
+  if (neg) x = -x;
+  let big = false;
+  if (x > 1) { x = 1 / x; big = true; }            // atan(x) = pi/2 - atan(1/x)
+  x = x / (1 + Math.sqrt(1 + x * x));              // halve
+  x = x / (1 + Math.sqrt(1 + x * x));              // halve again: |x| <= tan(pi/16) ~ 0.199
+  const x2 = x * x;
+  let a = x * (1 + x2 * (-3.3333333333333333e-1 + x2 * (2e-1 + x2 * (-1.4285714285714285e-1
+    + x2 * (1.1111111111111111e-1 + x2 * (-9.090909090909091e-2 + x2 * (7.692307692307693e-2
+    + x2 * -6.666666666666667e-2)))))));
+  a *= 4;
+  if (big) a = HALF_PI - a;
+  return neg ? -a : a;
+}
+function datan2(y, x) {
+  if (x > 0) return datan(y / x);
+  if (x < 0) return y >= 0 ? datan(y / x) + PI : datan(y / x) - PI;
+  if (y > 0) return HALF_PI;
+  if (y < 0) return -HALF_PI;
+  return 0;
+}
+
+window.FF.dmath = { sin: dsin, cos: dcos, ln: dln, exp: dexp, pow: dpow, atan: datan, atan2: datan2 };
 window.FF.mulberry32 = mulberry32;
 
 })();
