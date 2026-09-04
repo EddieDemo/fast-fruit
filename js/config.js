@@ -34,7 +34,7 @@ const DEFAULTS = Object.freeze({
   // is played in. Flag-off is bit-parity by construction (the flag
   // is read only in raceInit's field build, which the gates never
   // enter — and the gates held); verify-objects S1 holds the value.
-  soloRace: true,
+  soloRace: false,
   // PHASE-6 §5.5: iterations of the UNIFIED contact pass (prop
   // islands only — terrain and pair sweeps interleaved). A CONFIG
   // entry, not a magic number, because it is tuned against a
