@@ -2616,8 +2616,61 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (idx[best + 1] !== undefined && idx[best + 1] !== 255) idx[best + 1] = hiIdx;
     return true;
   }
+  // THE PUPIL GUARANTEE (2026-09-04). A feature's projected centre
+  // (cx, cy) and the white disc it sits in (ex, ey, rw), all in sprite
+  // pixels, plus a lightness function over colour indices. Inside the
+  // white: every DARK pixel (L* < 50) the vote produced is reverted to
+  // the disc's dominant light colour, then ONE pixel is stamped at the
+  // rounded centre in the darkest colour the disc held (the band-lit
+  // ink), or `inkIdx` if it held none. A centre that lands off the
+  // opaque body (an eye at the rim) stamps the nearest opaque pixel
+  // within two: a pupil peeking past the white reads as an eye at the
+  // rim; a missing pupil reads as a bug. Pure over the index map, like
+  // the highlight guarantee beside it, so a suite can hold it.
+  function pxPupilGuarantee(idx, w, h, lOf, cx, cy, ex, ey, rw, inkIdx) {
+    const r2 = rw * rw;
+    const light = new Map(); let darkest = -1, darkL = Infinity;
+    const x0 = Math.max(0, Math.floor(ex - rw - 1)), x1 = Math.min(w - 1, Math.ceil(ex + rw + 1));
+    const y0 = Math.max(0, Math.floor(ey - rw - 1)), y1 = Math.min(h - 1, Math.ceil(ey + rw + 1));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if ((x + 0.5 - ex) * (x + 0.5 - ex) + (y + 0.5 - ey) * (y + 0.5 - ey) > r2) continue;
+        const k = idx[y * w + x];
+        if (k === 255) continue;
+        const L = lOf(k);
+        if (L < 50) { if (L < darkL) { darkL = L; darkest = k; } }
+        else light.set(k, (light.get(k) || 0) + 1);
+      }
+    }
+    let lightIdx = -1, lc = -1;
+    for (const [k, c] of light) if (c > lc) { lc = c; lightIdx = k; }
+    if (lightIdx < 0) return false;            // no white here: the eye is behind the rim
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if ((x + 0.5 - ex) * (x + 0.5 - ex) + (y + 0.5 - ey) * (y + 0.5 - ey) > r2) continue;
+        const p = y * w + x;
+        if (idx[p] !== 255 && lOf(idx[p]) < 50) idx[p] = lightIdx;
+      }
+    }
+    const ink = darkest >= 0 ? darkest : inkIdx;
+    let px = Math.floor(cx), py = Math.floor(cy);
+    if (px < 0 || py < 0 || px >= w || py >= h || idx[py * w + px] === 255) {
+      let best = -1, bd = Infinity;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = px + dx, y = py + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h || idx[y * w + x] === 255) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = y * w + x; }
+      }
+      if (best < 0) return false;
+      idx[best] = ink;
+      return true;
+    }
+    idx[py * w + px] = ink;
+    return true;
+  }
   window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee,
-    blockWinner: pxBlockWinner, close: pxClose };
+    blockWinner: pxBlockWinner, close: pxClose, pupil: pxPupilGuarantee };
   // Dev-lane capture (Eddie, 2026-08-18): the actual 320 buffer as a
   // PNG data URL — ground truth for visual iteration, because PIL
   // reconstructions passed proofs while the real device regressed.
@@ -2804,6 +2857,35 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (hiInt >= 0 && hiRec) {
       pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
         hiRec.sx / hiRec.c, hiRec.sy / hiRec.c);
+    }
+    // THE PUPIL GUARANTEE (2026-09-04): for every worn decal whose art
+    // declares a pupil, project the pupil and the white through the
+    // sticker's own mesh maths, rotate by this frame's angle (the
+    // raster is drawn under ctx.rotate(angle): screen = R(angle) * body),
+    // scale to sprite pixels, and if the pupil would be under 1.5 px
+    // stamp it. Unsquashed frames only — a splat is a splat.
+    if (e.decals && e.decals.length && window.FF.decals && sh && mag === 0) {
+      const D = window.FF.decals, F = D.FEATURES;
+      const k = e.rPx / (e.bR || e.a);
+      const ang = rot * 2 * Math.PI / SPRITE_ANGLES;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const lOf = (ci) => { const kk = colors[ci]; return sh.lstarOf((kk >> 16) & 255, (kk >> 8) & 255, kk & 255); };
+      let inkIdx = -1;
+      for (const wd of e.decals) {
+        const item = D.byId(wd.id); const ft = item && F[item.art];
+        if (!ft) continue;
+        const half = wd.s * e.b;
+        const pr = ft.pupil.r * half * k;
+        if (pr >= 1.5) continue;                       // big enough to vote: leave it
+        const P = D.stickerPoint(wd.u, wd.v, wd.rot, half, e.a, e.b, ft.pupil.x * half, ft.pupil.y * half);
+        const E = D.stickerPoint(wd.u, wd.v, wd.rot, half, e.a, e.b, 0, 0);
+        if (!P || P.z < 0 || !E || E.z < 0) continue;  // the far side
+        const cx = spr / 2 + (P.x * ca - P.y * sa) * k, cy = spr / 2 + (P.x * sa + P.y * ca) * k;
+        const ex = spr / 2 + (E.x * ca - E.y * sa) * k, ey = spr / 2 + (E.x * sa + E.y * ca) * k;
+        const rw = Math.max(1, ft.white * half * k * 0.85);
+        if (inkIdx < 0) { const ir = sh.INK_RGB; inkIdx = cOf((ir[0] << 16) | (ir[1] << 8) | ir[2]); }
+        pxPupilGuarantee(idx, spr, spr, lOf, cx, cy, ex, ey, rw, inkIdx);
+      }
     }
     const fc = document.createElement('canvas');
     fc.width = spr; fc.height = spr;

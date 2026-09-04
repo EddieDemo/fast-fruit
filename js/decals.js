@@ -382,6 +382,30 @@ function shootGeodesic(p0, dir, arcLen, a, b, c) {
 // Build the mesh for one worn decal. half is the sticker's half-size
 // in px of arc (wd.s * b). Returns null if the whole sticker is on
 // the far side.
+// ONE POINT of a sticker on the body — the mesh's per-node maths for a
+// single sticker-local (sx, sy), so a FEATURE (a pupil) can be found on
+// the rolled body without rasterising anything (2026-09-04, the pupil
+// guarantee). Body space, unrotated; z < 0 means the far side.
+function stickerPoint(u0, v0, rot, half, a, b, sx, sy) {
+  const c = b;
+  const su = Math.sin(u0), cu = Math.cos(u0), sv = Math.sin(v0), cv = Math.cos(v0);
+  const p0 = { x: cu * a, y: cv * su * b, z: sv * su * c };
+  const { tu, tv } = tangentsAt(u0, v0, a, b);
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  const fx = sx * cr - sy * sr;
+  const fy = sx * sr + sy * cr;
+  const rho = Math.sqrt(fx * fx + fy * fy);
+  if (rho < 1e-9) return p0;
+  let d = {
+    x: (fx * tu.x + fy * tv.x) / rho,
+    y: (fx * tu.y + fy * tv.y) / rho,
+    z: (fx * tu.z + fy * tv.z) / rho,
+  };
+  d = surfTangential(d, p0, a, b, c);
+  const dl = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z) || 1;
+  d = { x: d.x / dl, y: d.y / dl, z: d.z / dl };
+  return shootGeodesic(p0, d, rho, a, b, c);
+}
 function buildStickerMesh(u0, v0, rot, half, a, b, coarse) {
   const c = b;
   const su = Math.sin(u0), cu = Math.cos(u0), sv = Math.sin(v0), cv = Math.cos(v0);
@@ -567,6 +591,22 @@ function ring(nx, ny, r, w) {
 }
 function disc(nx, ny, r) { return nx * nx + ny * ny < r * r; }
 
+// FEATURES (2026-09-04, Eddie: the pupils in pixel view "turn from one
+// pixel to a couple of pixels and generally look a bit messy during
+// rotation"). An art routine may declare POINT FEATURES in its own
+// normalised coords (nx, ny; y down): the bake's majority vote gets a
+// second pass that, when the feature would be under ~1.5 sprite px,
+// clears whatever the vote made of it inside the white and STAMPS
+// exactly one pixel at its projected centre — every rotation frame,
+// never stretched, never gone. Above that size (the pre-race pan, the
+// editor) the vote is left alone: ruled fine as-is on device.
+// `white` is the disc the pupil sits in (the clearing radius).
+const FEATURES = {
+  googly: { white: 0.98, pupil: { x: 0.22, y: -0.18, r: 0.34 } },
+  wide: { white: 0.98, pupil: { x: 0, y: 0, r: 0.30 } },
+  sleepy: { white: 0.98, pupil: { x: 0, y: 0.28, r: 0.30 } },
+  angry: { white: 0.98, pupil: { x: 0, y: 0.05, r: 0.30 } },
+};
 const ART = {
   // --- eyes: always granted singly, never as a pair ---
   googly(nx, ny) {
@@ -1488,6 +1528,7 @@ window.FF.decals = {
   SETS, ALL, byId, MAX_DECALS,
   project, unproject, pointAt, unitAt, tangentsAt, sampleAt, foreshorten, visible,
   buildStickerMesh, meshSample, meshNFor, MESH_STEP, MESH_N_MIN, MESH_N_MAX, MESH_CELL,
+  stickerPoint, FEATURES,
   ART, VARSITY, FLAGS, sampleArt,
   worn, place, signature, paintArt, maxScaleFor, WRAP_POSE, WRAP_BLEED,
 };
