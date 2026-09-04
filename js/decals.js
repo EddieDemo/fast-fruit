@@ -557,6 +557,7 @@ function starHit(pts, x, y, cx, cy, R, aim) {
 // old literal [246,248,242] carried a green trace nobody authored —
 // re-pinned to the shared colourless pigment, a ~2-unit shift.
 const WHITE = window.FF.shading.WHITE_RGB;   // one source; shading loads first
+const BLACK = window.FF.shading.BLACK_RGB;   // the void, same source (the plain black wrap)
 
 function ring(nx, ny, r, w) {
   const d = Math.sqrt(nx * nx + ny * ny);
@@ -575,18 +576,26 @@ const ART = {
     if (disc(nx - 0.22, ny + 0.18, 0.34)) return INK;
     return WHITE;
   },
+  // NO STROKES ON THE WHITE EYES (Eddie, 2026-09-04, from the pixel-
+  // view mockup): at 6-7 px an outline ate a third of the sticker and
+  // the eye read as a dark blob. Whites and the pupil only; a lid or
+  // a brow is where the white STOPS (the cut), not a line. Pupils all
+  // 0.30 of the disc so wide and googly differ by position alone.
   wide(nx, ny) {
     if (!disc(nx, ny, 0.98)) return null;
-    if (!disc(nx, ny, 0.88)) return INK;
-    if (disc(nx, ny, 0.30)) return INK;
+    if (disc(nx, ny, 0.30)) return INK;               // the centred stare
     return WHITE;
   },
   sleepy(nx, ny) {
     if (!disc(nx, ny, 0.98)) return null;
-    if (ny < -0.12) return null;                       // heavy lid
-    if (!disc(nx, ny, 0.88)) return INK;
-    if (Math.abs(ny + 0.12) < 0.13) return INK;        // the lid line
+    if (ny < -0.12) return null;                       // heavy lid: the cut
     if (disc(nx, ny - 0.28, 0.30)) return INK;
+    return WHITE;
+  },
+  angry(nx, ny) {
+    if (!disc(nx, ny, 0.98)) return null;
+    if (ny < -0.15 + nx * 0.35) return null;           // the brow: a slanted cut
+    if (disc(nx, ny - 0.05, 0.30)) return INK;
     return WHITE;
   },
   bloodshot(nx, ny) {
@@ -644,16 +653,22 @@ const ART = {
   },
   // --- markings ---
   crashtest(nx, ny) {
-    // The quartered circle from a crash-test dummy's temple.
+    // The quartered circle from a crash-test dummy's temple. The black
+    // rim removed (Eddie, 2026-09-04: "remove the black outer stroke")
+    // — at 11 px it is four blocks, and the rim was a fifth thing.
     if (!disc(nx, ny, 0.95)) return null;
-    if (!disc(nx, ny, 0.82)) return INK;
     const q = (nx > 0) === (ny > 0);
-    return q ? [242, 208, 42] : INK;
+    return q ? PLAIN.yellow : INK;
   },
-  heart(nx, ny) {
+  // MARKINGS IN EIGHT COLOURS (Eddie, 2026-09-04): the heart and the
+  // star take their ink from the item (`color`, a plain-wrap colour
+  // key) the way flagwrap takes its flag — one routine each, not
+  // sixteen. The old single colours (heart 214,54,74; star 246,206,44)
+  // retuned to the wrap palette so the whole set is one palette.
+  heart(nx, ny, item) {
     const x = nx * 1.15, y = -ny * 1.15 + 0.25;
     const v = Math.pow(x * x + y * y - 0.36, 3) - x * x * y * y * y * 0.55;
-    return v < 0 ? [214, 54, 74] : null;
+    return v < 0 ? markInk(item, 'red') : null;
   },
   // A REAL five-pointed star, tip up. The formula this replaced
   // (0.42 + 0.46·|cos(2.5a)|) drew five wide rounded lobes phased to
@@ -661,8 +676,44 @@ const ART = {
   // no item ever referenced it. This one is the 10-vertex polygon,
   // even-odd tested: outer radius 0.95, inner 0.45 — chunkier than the
   // pentagram's 0.38, because a sticker star is a cartoon star.
-  star(nx, ny) {
-    return polyHit(STAR_PTS, nx, ny) ? [246, 206, 44] : null;
+  star(nx, ny, item) {
+    return polyHit(STAR_PTS, nx, ny) ? markInk(item, 'yellow') : null;
+  },
+  // THE POLKA DOT (Eddie, 2026-09-04): a plain disc, no stroke, in the
+  // plain-wrap colours. ONE DOT PER STICKER — the polka pattern is the
+  // player's to compose by wearing several (MAX_DECALS caps it; not
+  // moved for this). Sized at 75% of the ORIGINAL googly: s = 0.30 x
+  // 0.75 = 0.225 of the semi-minor, which on today's base of 0.375 is
+  // an item size of 0.6 — 16 world px, 3-4 px in pixel view; a dot is
+  // the one sticker with no interior to lose at that size.
+  dot(nx, ny, item) {
+    return disc(nx, ny, 0.98) ? markInk(item, 'white') : null;
+  },
+  // MORE MARKINGS (Eddie, 2026-09-04, from docs/proofs/mock-more.png).
+  // The diamond and the crescent in the plain colours; the bullseye,
+  // the teardrop and the roundel in their own. All markings size (2x),
+  // where the pixel-view sheet showed each one holding at 11 px.
+  diamond(nx, ny, item) {
+    return (Math.abs(nx) * 0.85 + Math.abs(ny)) < 0.95 ? markInk(item, 'red') : null;
+  },
+  crescent(nx, ny, item) {
+    // a disc with a second disc bitten out of its upper-right
+    return (disc(nx, ny, 0.95) && !disc(nx + 0.42, ny - 0.15, 0.80)) ? markInk(item, 'white') : null;
+  },
+  bullseye(nx, ny) {
+    if (disc(nx, ny, 0.33)) return PLAIN.red;
+    if (disc(nx, ny, 0.66)) return WHITE;
+    if (disc(nx, ny, 0.98)) return PLAIN.red;
+    return null;
+  },
+  teardrop(nx, ny, item) {
+    // a disc below, a point above (y runs down: the point is at ny -0.98)
+    if (ny > 0.05 && disc(nx, ny - 0.35, 0.62)) return markInk(item, 'cyan');
+    if (ny <= 0.05 && ny > -0.98) {
+      const w = 0.62 * (ny + 0.98) / 1.03;
+      if (Math.abs(nx) < w) return markInk(item, 'cyan');
+    }
+    return null;
   },
   bolt(nx, ny) {
     const x = nx, y = ny;
@@ -701,9 +752,40 @@ const ART = {
   flagwrap(nx, ny, item) {
     const H = 0.62;
     const S = 1 + 2 * WRAP_BLEED;
+    const f = FLAGS[(item && item.flag) || 'fr'];
+    // THE FACE-SPACE CROSS (2026-09-04, St Piran's): a wrap compresses
+    // the flag's width 1.5x onto the face and (fitted) its height 1x,
+    // so a cross defined on the artboard came out thinner across than
+    // down. The cross is an emblem laid on the FACE: half-thickness
+    // `t` in ny, the vertical arm narrowed by the melon's aspect so
+    // both bars are the same thickness in pixels (measured 3/3 px at
+    // phone scale for t 0.22). Resolved before the ground, like every
+    // emblem. Wraps only — the flag-sticker set is empty by ruling.
+    if (f && f.cross) {
+      const c = f.cross;
+      if (Math.abs(ny) < c.t || Math.abs(nx) < c.t / FACE_ASPECT) return c.color;
+    }
+    // THE CHECKER (2026-09-04): a face-space grid, `cols` cells across
+    // the face and rows derived so cells are SQUARE IN PIXELS, two
+    // colours. Ruled four across (a ~5 px cell on a phone melon: the
+    // densest that still shows whole cells). The whole wrap is the
+    // grid — no artboard, no letterbox.
+    if (f && f.checker) {
+      const k = f.checker;
+      const rows = Math.max(1, Math.round(k.cols / FACE_ASPECT));
+      const i = Math.floor((nx + 1) * 0.5 * k.cols), j = Math.floor((ny + 1) * 0.5 * rows);
+      return ((i + j) & 1) === 0 ? k.a : k.b;
+    }
     const fx = Math.max(-0.88, Math.min(0.88, nx * S));
-    const fy = Math.max(-H, Math.min(H, ny * S));
-    return flagInk(FLAGS[(item && item.flag) || 'fr'], fx, fy);
+    // FIT TO FACE (2026-09-04, the striped flags): `fit: 'face'` maps
+    // the flag's height onto the WHOLE face so every stripe gets an
+    // equal share — six Pride stripes at ~2.6 px on a phone melon,
+    // where the default clamp (the tricolours' law: height onto the
+    // middle two-thirds, end bands run out) squeezed the middle four
+    // to 2 px and gave red and violet a third each. Default unchanged:
+    // no existing wrap moves.
+    const fy = (f && f.fit === 'face') ? ny * H : Math.max(-H, Math.min(H, ny * S));
+    return flagInk(f, fx, fy);
   },
 
   // --- numbers: varsity block, with a derived outline ---------------
@@ -740,6 +822,10 @@ const ART = {
 // 0.25 puts the true-proportion flag on the central two-thirds; the
 // final number is a proof-render ruling, not arithmetic.
 const WRAP_BLEED = 0.25;
+// The standard melon's a:b, for face-space emblems that must read
+// square in pixels (the cross). Every species scales a and b together
+// (derivePhysique), so one ratio serves.
+const FACE_ASPECT = window.FF.CONFIG.semiMajor / window.FF.CONFIG.semiMinor;
 // A wrap's fixed pose: centred on the visible face at full square
 // coverage. Not resizable, not movable, not rotatable — a wrap is
 // binary. s = 2.0 covers the face; the mesh resolution law already
@@ -748,7 +834,12 @@ const WRAP_POSE = { u: Math.PI / 2, v: Math.PI / 2, rot: 0, s: 2.0 };
 // The one sticker size (PIXEL 320). Chosen so a size-1 art box lands
 // ~6 px across at race scale — the floor for a readable icon — and
 // multiplied by each item's own `size` so visual weight matches.
-const STICKER_S = 0.30;
+// 0.30 -> 0.375 (Eddie, 2026-09-04, v373: "make all non-wrap decals
+// 25% bigger — that should help with legibility in pixel view"). One
+// authored size still; the wrap pose is untouched. Stored stickers
+// on existing saves are scaled once by melon.js's migrate (flag
+// stickerS375), so a worn eye grows with the new ones.
+const STICKER_S = 0.375;
 
 // The flag's ink at a point INSIDE the rect — the letterbox lives in
 // the callers (the sticker letterboxes, the wrap clamps).
@@ -873,6 +964,48 @@ const FLAGS = {
         ] },
 };
 
+// ---- PLAIN WRAPS (Eddie, 2026-09-04): eight block colours — the RGB
+// primaries, their intermediates, and the two canonical pigments.
+// TEMPERED, not pure: chosen beside the flag colours above so they
+// read as the same authored set (the pure sRGB primaries shout on
+// the Sega palette and pure blue goes near-black in shadow). White
+// and black are the pigments by reference, never a literal.
+const PLAIN = {
+  red: [222, 32, 40], yellow: [250, 208, 0], green: [36, 168, 72],
+  cyan: [0, 178, 196], blue: [28, 84, 220], magenta: [214, 44, 160],
+};
+for (const k of Object.keys(PLAIN)) FLAGS['plain-' + k] = { field: PLAIN[k] };
+FLAGS['plain-white'] = { field: WHITE };
+FLAGS['plain-black'] = { field: BLACK };
+// ---- 2026-09-04: Cornwall, Pride, Trans (docs/proofs/mock-flags*.png)
+// St Piran's: black field, white cross drawn in FACE space (see
+// flagwrap), half-thickness 0.22 — ruled "a touch thinner" than 0.28.
+FLAGS.kw = { field: BLACK, cross: { t: 0.22, color: WHITE } };
+// The six-stripe Pride flag and the Trans flag: horizontal bands,
+// FIT TO FACE so every stripe has an equal share of the melon.
+FLAGS.pride = { h: true, fit: 'face',
+  bands: [[228, 3, 3], [255, 140, 0], [255, 237, 0], [0, 128, 38], [0, 76, 255], [115, 41, 130]] };
+FLAGS.trans = { h: true, fit: 'face',
+  bands: [[91, 206, 250], [245, 169, 184], WHITE, [245, 169, 184], [91, 206, 250]] };
+// ---- 2026-09-04: CHECKER wraps (docs/proofs/mock-checker.png), four
+// across, five colour pairs as ruled. (Blue/cyan was shown merging
+// toward one colour at 1:1 — chosen with that on the sheet.)
+const CHECK = 4;
+FLAGS['check-bw'] = { checker: { cols: CHECK, a: BLACK, b: WHITE } };
+FLAGS['check-mb'] = { checker: { cols: CHECK, a: PLAIN.magenta, b: BLACK } };
+FLAGS['check-yb'] = { checker: { cols: CHECK, a: PLAIN.yellow, b: BLACK } };
+FLAGS['check-bc'] = { checker: { cols: CHECK, a: PLAIN.blue, b: PLAIN.cyan } };
+FLAGS['check-rw'] = { checker: { cols: CHECK, a: PLAIN.red, b: WHITE } };
+// A marking's ink: the item's colour key resolved through the same
+// table as the plain wraps (white and black by pigment reference).
+function markInk(item, fallback) {
+  const k = (item && item.color) || fallback;
+  if (k === 'white') return WHITE;
+  if (k === 'black') return BLACK;
+  return PLAIN[k] || PLAIN[fallback];
+}
+
+
 // ---- THE VARSITY FACE ----------------------------------------------
 // Authored as a picture, because a block athletic numeral is a shape
 // and not a formula: '#' is stroke, '.' is empty.
@@ -976,8 +1109,16 @@ const SETS = {
     // is a better joke than a two-eyed one, and hunting a matching
     // second eye is a reason to race that costs nothing to build.
     single: true,
+    // FIVE EYES (Eddie, 2026-09-04): wide, sleepy and x-eye had been
+    // drawn since the first eye pass and never listed; angry is new.
+    // The set grows 1 -> 5, so the googly is no longer the certain
+    // first eye roll (rarity is set size).
     items: [
       { id: 'eye-googly', label: 'googly eye', art: 'googly' },
+      { id: 'eye-wide', label: 'wide eye', art: 'wide' },
+      { id: 'eye-sleepy', label: 'sleepy eye', art: 'sleepy' },
+      { id: 'eye-angry', label: 'angry eye', art: 'angry' },
+      { id: 'eye-x', label: 'x eye', art: 'xeye' },
     ],
   },
   markings: {
@@ -988,10 +1129,59 @@ const SETS = {
       // touches every edge, while a flag occupies only the middle 2:3
       // and a heart rather less — so a single global size renders some
       // items visibly smaller than others. Each item declares its own.
-      { id: 'mark-heart', label: 'heart', art: 'heart', size: 2 },
+      // EIGHT COLOURS EACH (Eddie, 2026-09-04): the plain-wrap palette.
+      // The two original ids keep their ids (worn ones need no
+      // migration) and become the red heart and the yellow star. One
+      // set of sixteen, ruled: "I don't care that they'll be rare."
+      { id: 'mark-heart', label: 'red heart', art: 'heart', size: 2, color: 'red' },
+      { id: 'mark-heart-yellow', label: 'yellow heart', art: 'heart', size: 2, color: 'yellow' },
+      { id: 'mark-heart-green', label: 'green heart', art: 'heart', size: 2, color: 'green' },
+      { id: 'mark-heart-cyan', label: 'cyan heart', art: 'heart', size: 2, color: 'cyan' },
+      { id: 'mark-heart-blue', label: 'blue heart', art: 'heart', size: 2, color: 'blue' },
+      { id: 'mark-heart-magenta', label: 'magenta heart', art: 'heart', size: 2, color: 'magenta' },
+      { id: 'mark-heart-white', label: 'white heart', art: 'heart', size: 2, color: 'white' },
+      { id: 'mark-heart-black', label: 'black heart', art: 'heart', size: 2, color: 'black' },
       // A star's box is tips-only at the edges, like the heart's lobes:
       // same multiplier keeps their visual weight matched.
-      { id: 'mark-star', label: 'yellow star', art: 'star', size: 2 },
+      { id: 'mark-star', label: 'yellow star', art: 'star', size: 2, color: 'yellow' },
+      { id: 'mark-star-red', label: 'red star', art: 'star', size: 2, color: 'red' },
+      { id: 'mark-star-green', label: 'green star', art: 'star', size: 2, color: 'green' },
+      { id: 'mark-star-cyan', label: 'cyan star', art: 'star', size: 2, color: 'cyan' },
+      { id: 'mark-star-blue', label: 'blue star', art: 'star', size: 2, color: 'blue' },
+      { id: 'mark-star-magenta', label: 'magenta star', art: 'star', size: 2, color: 'magenta' },
+      { id: 'mark-star-white', label: 'white star', art: 'star', size: 2, color: 'white' },
+      { id: 'mark-star-black', label: 'black star', art: 'star', size: 2, color: 'black' },
+      // POLKA DOTS (2026-09-04): individual dots; wear several for the
+      // pattern. size 0.6 = 75% of the original googly (see ART.dot).
+      { id: 'mark-dot-red', label: 'red dot', art: 'dot', size: 0.6, color: 'red' },
+      { id: 'mark-dot-yellow', label: 'yellow dot', art: 'dot', size: 0.6, color: 'yellow' },
+      { id: 'mark-dot-green', label: 'green dot', art: 'dot', size: 0.6, color: 'green' },
+      { id: 'mark-dot-cyan', label: 'cyan dot', art: 'dot', size: 0.6, color: 'cyan' },
+      { id: 'mark-dot-blue', label: 'blue dot', art: 'dot', size: 0.6, color: 'blue' },
+      { id: 'mark-dot-magenta', label: 'magenta dot', art: 'dot', size: 0.6, color: 'magenta' },
+      { id: 'mark-dot-white', label: 'white dot', art: 'dot', size: 0.6, color: 'white' },
+      { id: 'mark-dot-black', label: 'black dot', art: 'dot', size: 0.6, color: 'black' },
+      // MORE MARKINGS (2026-09-04): diamond and crescent in the plain
+      // colours; bullseye, teardrop, crash-test roundel as themselves.
+      { id: 'mark-diamond-red', label: 'red diamond', art: 'diamond', size: 2, color: 'red' },
+      { id: 'mark-diamond-yellow', label: 'yellow diamond', art: 'diamond', size: 2, color: 'yellow' },
+      { id: 'mark-diamond-green', label: 'green diamond', art: 'diamond', size: 2, color: 'green' },
+      { id: 'mark-diamond-cyan', label: 'cyan diamond', art: 'diamond', size: 2, color: 'cyan' },
+      { id: 'mark-diamond-blue', label: 'blue diamond', art: 'diamond', size: 2, color: 'blue' },
+      { id: 'mark-diamond-magenta', label: 'magenta diamond', art: 'diamond', size: 2, color: 'magenta' },
+      { id: 'mark-diamond-white', label: 'white diamond', art: 'diamond', size: 2, color: 'white' },
+      { id: 'mark-diamond-black', label: 'black diamond', art: 'diamond', size: 2, color: 'black' },
+      { id: 'mark-crescent-red', label: 'red crescent', art: 'crescent', size: 2, color: 'red' },
+      { id: 'mark-crescent-yellow', label: 'yellow crescent', art: 'crescent', size: 2, color: 'yellow' },
+      { id: 'mark-crescent-green', label: 'green crescent', art: 'crescent', size: 2, color: 'green' },
+      { id: 'mark-crescent-cyan', label: 'cyan crescent', art: 'crescent', size: 2, color: 'cyan' },
+      { id: 'mark-crescent-blue', label: 'blue crescent', art: 'crescent', size: 2, color: 'blue' },
+      { id: 'mark-crescent-magenta', label: 'magenta crescent', art: 'crescent', size: 2, color: 'magenta' },
+      { id: 'mark-crescent-white', label: 'white crescent', art: 'crescent', size: 2, color: 'white' },
+      { id: 'mark-crescent-black', label: 'black crescent', art: 'crescent', size: 2, color: 'black' },
+      { id: 'mark-bullseye', label: 'bullseye', art: 'bullseye', size: 2 },
+      { id: 'mark-teardrop', label: 'teardrop', art: 'teardrop', size: 2, color: 'cyan' },
+      { id: 'mark-crashtest', label: 'crash-test roundel', art: 'crashtest', size: 2 },
     ],
   },
   flags: {
@@ -1050,6 +1240,27 @@ const SETS = {
       { id: 'wrap-es', label: 'Spain', art: 'flagwrap', flag: 'es', wrap: true },
       { id: 'wrap-co', label: 'Colombia', art: 'flagwrap', flag: 'co', wrap: true },
       { id: 'wrap-th', label: 'Thailand', art: 'flagwrap', flag: 'th', wrap: true },
+      // ---- PLAIN WRAPS (2026-09-04): block colours, see PLAIN above.
+      // Same set as the flags, so the set-size law makes every wrap
+      // a little rarer (22 -> 30 members) — a decision, stated.
+      { id: 'wrap-red', label: 'red', art: 'flagwrap', flag: 'plain-red', wrap: true },
+      { id: 'wrap-yellow', label: 'yellow', art: 'flagwrap', flag: 'plain-yellow', wrap: true },
+      { id: 'wrap-green', label: 'green', art: 'flagwrap', flag: 'plain-green', wrap: true },
+      { id: 'wrap-cyan', label: 'cyan', art: 'flagwrap', flag: 'plain-cyan', wrap: true },
+      { id: 'wrap-blue', label: 'blue', art: 'flagwrap', flag: 'plain-blue', wrap: true },
+      { id: 'wrap-magenta', label: 'magenta', art: 'flagwrap', flag: 'plain-magenta', wrap: true },
+      { id: 'wrap-white', label: 'white', art: 'flagwrap', flag: 'plain-white', wrap: true },
+      { id: 'wrap-black', label: 'black', art: 'flagwrap', flag: 'plain-black', wrap: true },
+      // ---- 2026-09-04: Cornwall, Pride, Trans
+      { id: 'wrap-kw', label: 'Cornwall', art: 'flagwrap', flag: 'kw', wrap: true },
+      { id: 'wrap-pride', label: 'Pride', art: 'flagwrap', flag: 'pride', wrap: true },
+      { id: 'wrap-trans', label: 'Trans', art: 'flagwrap', flag: 'trans', wrap: true },
+      // ---- 2026-09-04: checkers, four across
+      { id: 'wrap-check-bw', label: 'black & white checker', art: 'flagwrap', flag: 'check-bw', wrap: true },
+      { id: 'wrap-check-mb', label: 'magenta & black checker', art: 'flagwrap', flag: 'check-mb', wrap: true },
+      { id: 'wrap-check-yb', label: 'yellow & black checker', art: 'flagwrap', flag: 'check-yb', wrap: true },
+      { id: 'wrap-check-bc', label: 'blue & cyan checker', art: 'flagwrap', flag: 'check-bc', wrap: true },
+      { id: 'wrap-check-rw', label: 'red & white checker', art: 'flagwrap', flag: 'check-rw', wrap: true },
     ],
   },
   numbers: {

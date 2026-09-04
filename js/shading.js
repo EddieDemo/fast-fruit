@@ -713,6 +713,7 @@ const PIGMENTS = {
 };
 const WHITE_HEX = PIGMENTS.WHITE;
 const WHITE_RGB = [246, 246, 246];
+const BLACK_RGB = [0, 0, 0];   // the void as an array, for the decal ink (plain black wrap, 2026-09-04)
 
 // ---- SPHERE TERMINATOR (rig S1, approved 2026-08-24) ----
 // Smoke (and later clouds) shade with the SAME solver as melons —
@@ -929,7 +930,7 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc, sphereContour, _sphereStats,
-  WHITE_HEX, WHITE_RGB, PIGMENTS,
+  WHITE_HEX, WHITE_RGB, BLACK_RGB, PIGMENTS,
   rgbToHsl,
   // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
   // law's 4-L* rungs. A gradient is the one place a long ramp of

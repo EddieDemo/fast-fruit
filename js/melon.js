@@ -185,6 +185,22 @@ function migrate(st) {
     st.eraRoll = true;
     dirty = true;
   }
+  // STICKERS 25% BIGGER (Eddie, 2026-09-04, v373): decals.js's one
+  // authored sticker size went 0.30 -> 0.375 for legibility in pixel
+  // view. A worn decal carries its own s, so stickers already on a
+  // melon are scaled ONCE here — non-wrap only (wraps keep their fixed
+  // pose; wrap ids are 'wrap-*') — versioned by the stickerS375 flag,
+  // never repeated, the eraRoll pattern.
+  if (!st.stickerS375) {
+    for (const m of st.melons) {
+      if (!Array.isArray(m.decals)) continue;
+      for (const d of m.decals) {
+        if (d && typeof d.s === 'number' && !(typeof d.id === 'string' && d.id.indexOf('wrap-') === 0)) d.s *= 1.25;
+      }
+    }
+    st.stickerS375 = true;
+    dirty = true;
+  }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
     else {
