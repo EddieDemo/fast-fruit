@@ -583,6 +583,16 @@ CONFIG.furniture = {
       // same law as before: the claim list is global and a later
       // species yields.
       species: 'pebble', name: 'ROCKS',
+      // >>> STATED-TEMPORARY DISABLE (Eddie, 2026-09-04): "stop any
+      // boulders of any sizes spawning on tracks — at the moment they
+      // don't add anything and are annoying." Same mechanism as the
+      // beach ball's: the kind keeps its salt and its entry, its own
+      // stream deals nothing and disturbs nothing, re-enabling is
+      // deleting this flag. The prop gate was re-baselined WITH this
+      // off (handover addendum 56); it re-baselines again when the
+      // flag comes out. verify-boulder tests the mint LAW with the
+      // flag lifted for the rig and restored on exit. <<<
+      disabled: true,
       // Dealt in rotation. The small boulder (55 px, 0.72 masses) is
       // RARER by ruling (Eddie, 2026-09-02): one in five rocks.
       speciesCycle: ['pebble', 'gravel', 'pebble', 'gravel', 'boulderSmall'],
@@ -602,6 +612,46 @@ CONFIG.furniture = {
   // settle tick closes it. (Eddie's number to tune with the rest.)
   stackGap: 1,
 };
+
+// ---- THE PREDICTION BUDGET (AI Phase 0, 2026-09-03) ----------------
+// The oracle's flare margin: a deliberate hair above the minimum
+// surviving flare, the expert's policy rather than an error (a
+// prescription that lands exactly on the threshold dies to rounding).
+// Held at the value it shipped with so that Phase 0's gate move is
+// attributable to the ask RULE alone; the sweep tunes it after.
+CONFIG.oracleFlareMargin = 0.04;
+// The meter (js/pilot.js): a token bucket denominated in clone-STEPS,
+// because peak asks-per-tick is just the field size while peak work is
+// 7.5x its own median (exp/ask-census.js, 12 seeds). Refill per tick,
+// burst ceiling; an ask is charged what it actually cost, so the worst
+// frame is bounded by burst + the 400-step horizon.
+// FIRST DRAFT, deliberately loose: these are set from the measured
+// post-Phase-0 shape, and a cap that bites in ordinary racing is a
+// cap that has made the field dumber without saying so. The census
+// counts denials per seat so that claim stays checkable.
+// The confirmation lead, in ticks: how far before its own predicted
+// landing the oracle looks again. First draft 12 (0.1 s) — far enough
+// out that the answer is still actionable, close enough that nothing
+// has had room to drift. Sweep-tuned.
+CONFIG.oracleConfirmLead = 12;
+// Sized from the measured post-Phase-0 shape (exp/ask-census.js): the
+// demand is 19 clone-steps a tick at the median, 167 at p99, with a
+// worst observed tick of 1626 when a pack lands together. The burst
+// sits above that worst tick; the refill is what actually binds, since
+// two heavy ticks in a row drain the bucket faster than p99 suggests
+// (at refill 240 that cost 25 denials on three seeds). At 600/2400 the
+// sweep records ZERO denials, so the meter does NOT bite in ordinary
+// racing — deliberately. A cap that throttles
+// the field in normal play has made the bots dumber without saying so,
+// and the first draft at 1200 did exactly that: 116 denials across
+// three seeds, distributed 0,2,3,5,7,9,13,15,15,21,26 by seat. The
+// meter consumes in seat order, so under pressure the last seat is
+// systematically the dumbest — deterministic, but a lie about the cast.
+// The fairness rule waits for the device to say the cap must bite; the
+// census counts denials per seat so that stays checkable rather than
+// assumed. verify-brains.js proves the cap holds by setting a tiny one.
+CONFIG.predictRefillSteps = 600;
+CONFIG.predictBurstSteps = 2400;
 // >>> DEV SCAFFOLD — STATED-TEMPORARY, DEFAULT ON FOR THIS BUILD <<<
 // PIN THE FURNITURE (2026-08-27l): on placement, the prop is pinned
 // at its wake pose and stays there — no rolling, no runaway, no
@@ -635,4 +685,15 @@ CONFIG.devPinFurniture = false;  // mirrored for sim-side reads
 // Deliberately not a live field rebuild — that would drag the world
 // door into a dev dial.
 window.FF.DEV_FIELD_SPECIES = null;
+// DEV FIELD BRAIN (AI Phase 0, 2026-09-03): seat EVERY bot with this
+// registered brain — the on-device timing hook. Eleven Rindfathers is
+// the worst case the cost model has to survive, and it cannot be
+// measured on this box: a phone is 3-5x slower, so the frame timer has
+// to run there. null = off; registered brains only (an unknown name
+// falls through to the roster's own, never a crash).
+// Same contract as the species dial: BOTS RESOLVE AT BODY CREATION, so
+// set it and restart the race from the pause menu. A browser reload
+// clears it — a dev dial that survives a reload quietly becomes the
+// game.
+window.FF.DEV_FIELD_BRAIN = null;
 })();

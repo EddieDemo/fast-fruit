@@ -74,11 +74,14 @@ function cloneWorld(state) {
       prevMelon: Object.assign({}, melon),
       input: Object.assign({}, b.input),
       brainName: b.brainName,
+      skill: b.skill,
       // A FRESH brain instance, loaded with the live one's state: the
       // clone must think exactly what the real bot thinks right now,
-      // without sharing the object it thinks with.
+      // without sharing the object it thinks with. The SKILL goes with
+      // it (AI Phase 1) — a clone created without it would be the
+      // ceiling, and the fast-forward would resolve a different race.
       brain: (FF.pilot && FF.pilot.create) ? (() => {
-        const br = FF.pilot.create(b.brainName || 'cruise');
+        const br = FF.pilot.create(b.brainName || 'cruise', b.skill);
         if (br.load && b.brain && b.brain.save) br.load(b.brain.save());
         return br;
       })() : null,

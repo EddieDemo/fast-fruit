@@ -69,6 +69,10 @@ function createState() {
     // seconds — sim time, deterministic like everything else.
     race: {
       mode: 'endless',   // 'endless' | 'track'
+      // RETIRE & WATCH (spectate.js): the player gave the wheel to
+      // the autopilot for good. Race state, one-way, a DNF. Sim-inert:
+      // nothing in physics reads it.
+      retired: false,
       lapLengthPx: 0,
       laps: 0,
       lapIndex: 0,       // floor(distance / lapLength)
@@ -437,6 +441,16 @@ function devSpecies(name) {
   const ov = window.FF.DEV_FIELD_SPECIES;
   return (ov && window.FF.OBJECTS && window.FF.OBJECTS[ov]) ? ov : name;
 }
+// THE BRAIN OVERRIDE, resolved in ONE place for the same reason as
+// devSpecies above: there are two bot-seating paths (the roster-entry
+// path and the seeded deal), and a dev dial honoured by only one of
+// them is a dial that lies about half the field. Registered brains
+// only — pilot.has is the registry itself, so an unknown name falls
+// through to the roster's own rather than crashing at create().
+function devBrain(name) {
+  const ov = window.FF.DEV_FIELD_BRAIN;
+  return (ov && window.FF.pilot && window.FF.pilot.has && window.FF.pilot.has(ov)) ? ov : name;
+}
 // THE UNIFORM LAW (ruled 2026-08-27f): under the override every body
 // is THAT species — "not a version of the beachball with certain
 // characteristics of themselves carried over" (Eddie). One canonical
@@ -741,9 +755,13 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
         melon,
         prevMelon: { ...melon },
         input: { rawAxis: 0, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 },
-        brainName: entry.brain || 'cruise',
+        brainName: devBrain(entry.brain || 'cruise'),
+        // THE SKILL NUMBERS ride on the entry (AI Phase 1): flare in
+        // [0, 1], lean in stick-side units. Absent = the ceiling.
+        skill: { flare: entry.flare === undefined ? 1 : entry.flare, lean: entry.lean || 0 },
         brain: (window.FF.pilot && window.FF.pilot.create)
-          ? window.FF.pilot.create(entry.brain || 'cruise') : null,
+          ? window.FF.pilot.create(devBrain(entry.brain || 'cruise'),
+            { flare: entry.flare === undefined ? 1 : entry.flare, lean: entry.lean || 0 }) : null,
       });
       continue;
     }
@@ -771,6 +789,7 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
     // "the grid is X, Y and three Zs" is a one-line config change.
     const roster = CONFIG.botRoster;
     let brainName = 'cruise';
+    let flare = 1, lean = 0;   // the ceiling unless the entry says otherwise (AI Phase 1)
     if (roster && roster.length) {
       // An entry is either a species string (every existing roster and
       // harness) or { fruit, brain } — backward compatible on purpose,
@@ -780,6 +799,8 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
       if (entry && typeof entry === 'object') {
         fruit = entry.species || 'watermelon';
         brainName = entry.brain || 'cruise';   // per-slot override (harnesses)
+        if (entry.flare !== undefined) flare = entry.flare;
+        if (entry.lean !== undefined) lean = entry.lean;
       } else {
         fruit = entry;
       }
@@ -820,8 +841,10 @@ function resetBots(state, count, x, y, sizeSeed, gridStart, cast) {
       // The brain drives this input every tick (physics.js pilot pass);
       // the values here are just its resting state.
       input: { rawAxis: 1, torqueAxis: 0, rawBounce: 0, bounceAxis: 0 },
-      brain: (window.FF.pilot && window.FF.pilot.create) ? window.FF.pilot.create(brainName) : null,
-      brainName,
+      brain: (window.FF.pilot && window.FF.pilot.create)
+        ? window.FF.pilot.create(devBrain(brainName), { flare, lean }) : null,
+      brainName: devBrain(brainName),
+      skill: { flare, lean },
     });
   }
 }
@@ -1311,6 +1334,27 @@ function computeGridSlots(keys, order, playerIdx) {
   return slots;
 }
 
+// THE FIRST GRID IS DEALT (Eddie, 2026-09-04): with no previous leg
+// the eleven were seated in the cast table's authored order — Gary
+// always first — and the player last. Now the eleven are SHUFFLED,
+// seeded: on the cup's seed for leg 1 (everyone on today's cup gets
+// the same grid; a restart is the same attempt), on the day's seed
+// for the exhibition. Fisher-Yates on a LOCAL mulberry32 with its own
+// salt — the shared stream is untouched, so terrain, casting and
+// every prop deal are bit-unmoved. Keys not in the returned order
+// grid after it (computeGridSlots): the player, when passed only the
+// bots' keys, is last as before.
+const GRID_DEAL_SALT = 0x6A1D5EED;
+function shuffledGridOrder(keys, seed) {
+  const out = keys.slice();
+  const rng = window.FF.mulberry32(((seed >>> 0) ^ GRID_DEAL_SALT) >>> 0);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
+}
+
 // Re-place every body by the given slots (same [players..., bots...]
 // indexing as computeGridSlots). prev snapshots re-sync so the first
 // drawn frame cannot interpolate a body across the grid.
@@ -1325,6 +1369,6 @@ function applyGridSlots(state, slots, lineX, fallbackY) {
 
 // Namespace registration (classic scripts, no modules).
 window.FF = window.FF || {};
-Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, mintFurniture, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots,
+Object.assign(window.FF, { createState, resetMelon, resetPlayers, resetBots, mintFurniture, devSpecies, applySpeciesDesign, speciesDensity, snapshotPrev, setBodyScale, racerKey, computeGridSlots, applyGridSlots, shuffledGridOrder,
   derivePhysique, speciesShape });
 })();

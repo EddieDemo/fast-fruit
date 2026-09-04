@@ -1002,9 +1002,21 @@ function buildPause() {
   const resume = el('button', 'ff-btn', 'RESUME');
   const restart = el('button', 'ff-btn ff-secondary', 'RESTART RACE');
   elPause._restart = restart;
+  // RETIRE & WATCH (2026-09-03p): give the wheel to the autopilot for
+  // good and watch the race. Solo races only; hidden once retired
+  // (one-way) and in netplay. The door is spectate.retire; this is
+  // a button.
+  const retire = el('button', 'ff-btn ff-secondary', 'RETIRE & WATCH');
+  elPause._retire = retire;
+  retire.addEventListener('click', () => {
+    const st = stateRef;
+    if (!st || !window.FF.spectate || !window.FF.spectate.retire) return;
+    if (window.FF.spectate.retire(st, { netplay: !!(netplayFn && netplayFn()) })) flow.go('race');
+  });
   const menu = el('button', 'ff-btn ff-secondary', 'MAIN MENU');
   const foot = el('div', 'ff-foot');
   foot.appendChild(resume);
+  foot.appendChild(retire);
   foot.appendChild(restart);
   foot.appendChild(menu);
   panel.appendChild(foot);
@@ -1311,6 +1323,18 @@ flow.register('pause', {
       elPause._restart.textContent = (partyOn
         || (c && c.isRunning()))
         ? 'RESTART CUP' : 'RESTART RACE';
+    }
+    // RETIRE & WATCH is a solo, one-way, race-only offer: hidden in
+    // netplay, once retired, and in open sessions (party games have
+    // no finish line to be a DNF at).
+    if (elPause._retire) {
+      const st = stateRef;
+      const np = !!(netplayFn && netplayFn());
+      const open = !!(st && st.session);   // a session (party game), not a race
+      const can = !!(st && st.race && !st.race.retired && !np && !open
+        && st.bots && st.bots.length   // somebody to watch (soloRace has nobody)
+        && window.FF.spectate && window.FF.spectate.retire && window.FF.autopilot);
+      elPause._retire.style.display = can ? '' : 'none';
     }
     elPause.style.display = 'flex';
   },

@@ -59,13 +59,18 @@ function computeStandings(state, resolved) {
     // clone and supplies the REAL time it would have set. Only a
     // body that could not finish at all stays null — and it is
     // marked DNF, which sorts LAST on time rather than first.
-    timeSec: (m.finishTick !== undefined && m.finishTick !== null)
+    timeSec: (isPlayer && state.race && state.race.retired) ? null
+      : (m.finishTick !== undefined && m.finishTick !== null)
       ? (m.finishTick - startTick) / hz
       : (resolved && resolved.byKey[window.FF.racerKey(m)] && !resolved.byKey[window.FF.racerKey(m)].dnf
         ? resolved.byKey[window.FF.racerKey(m)].timeSec
         : null),
     dnf: !!(resolved && resolved.byKey[window.FF.racerKey(m)] && resolved.byKey[window.FF.racerKey(m)].dnf
-      && (m.finishTick === undefined || m.finishTick === null)),
+      && (m.finishTick === undefined || m.finishTick === null))
+      // RETIRED (retire & watch): the autopilot crossed the line in
+      // the player's melon; the player did not. DNF, whatever the
+      // stamp says — and the stamp is what opened the finish screen.
+      || !!(isPlayer && state.race && state.race.retired),
     species: m.species || 'watermelon',
     color: m.bodyColor || '#37a01c',
     patKey: m.patKey || m.name || 'x',

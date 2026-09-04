@@ -118,7 +118,7 @@ function assignRosterNames(state, raceSeed) {
     // otherwise the name decides.
     if (want && b.brainName === 'cruise' && pilot && pilot.create) {
       b.brainName = want;
-      b.brain = pilot.create(want);
+      b.brain = pilot.create(want, b.skill);   // the seat's skill goes with it (AI Phase 1)
     }
   }
 }

@@ -573,15 +573,31 @@ function createRenderer(canvas) {
     // instead of the wreck. Resolved at CALL time (the trampoline
     // rule); null means the normal follow — which includes every
     // race and every conveyor session, untouched.
-    let m = state.melon, p = state.prevMelon;
     const _spec = (window.FF.spectate && window.FF.spectate.pose)
       ? window.FF.spectate.pose(state) : null;
-    if (_spec) { m = _spec.m; p = _spec.p; }
+    // TWO BODIES: the camera's and the player's (spectate.frameBodies).
+    // They were one variable until 2026-09-04, and a living spectator
+    // was drawn at the camera's body.
+    const _fb = (window.FF.spectate && window.FF.spectate.frameBodies)
+      ? window.FF.spectate.frameBodies(state, _spec)
+      : { camera: { m: state.melon, p: state.prevMelon }, player: { m: state.melon, p: state.prevMelon } };
+    const m = _fb.camera.m, p = _fb.camera.p;
+    // The spectated bot's thumb (drawInputSticks reads it this frame).
+    spectateStick = (_spec && window.FF.spectate.stick) ? window.FF.spectate.stick(state, _spec) : null;
+    if (!spectateStick) spectateStickSince = -1;
+    else if (spectateStickSince < 0) spectateStickSince = performance.now();
 
-    // Interpolated body pose for this frame.
+    // Interpolated CAMERA pose for this frame (the spectated body when
+    // spectating)...
     const ix = p.x + (m.x - p.x) * alpha;
     const iy = p.y + (m.y - p.y) * alpha;
     const iangle = p.angle + (m.angle - p.angle) * alpha;
+    // ...and the PLAYER's own pose, for drawing the player's melon and
+    // its rim. Identical to the camera's except while spectating.
+    const pm = _fb.player.m, pp = _fb.player.p;
+    const plx = pp.x + (pm.x - pp.x) * alpha;
+    const ply = pp.y + (pm.y - pp.y) * alpha;
+    const plangle = pp.angle + (pm.angle - pp.angle) * alpha;
 
     // ---- PIXELATION (FF.PIXELATE, toggled from the HUD) ----
     // The whole world pass renders into a 380-wide offscreen, then
@@ -1440,7 +1456,7 @@ function createRenderer(canvas) {
     if (state.melon.alive) {
       drawList.push({
         melon: state.melon,
-        x: ix, y: iy, angle: iangle,
+        x: plx, y: ply, angle: plangle,   // the player's OWN pose, not the camera's
         // The sacred #00ff00 retires from the BODY (it fought the
         // light marble bands); the player's body wears the palette
         // green their persistent melon's seed picked — Gerald's green
@@ -1534,7 +1550,9 @@ function createRenderer(canvas) {
       if (d.name) {
         const wy = surfY(state, dxw, dyw);
         if (wy !== null) {
-          const baseY = toScreenY(wy) + 34 + Math.round(150 * zoom);
+          // ONE METRE CLOSER (Eddie, 2026-09-04): 1.5 m below the surface
+          // under the melon became 0.5 m.
+          const baseY = toScreenY(wy) + 34 + Math.round(50 * zoom);
           // GLASS NAMEPLATES (re-ruled 2026-08-24, same layer ruling
           // as the position tags): the nameplate is broadcast
           // telemetry, so it collects here and draws at device
@@ -1705,9 +1723,9 @@ function createRenderer(canvas) {
     drawPuffs(ctx, state, cam, width, height, toScreenX, toScreenY, zoom);
 
     // The danger rim: the shipped landing-fate signal, worn by the body.
-    drawDangerRim(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
+    drawDangerRim(ctx, state, plx, ply, plangle, toScreenX, toScreenY, zoom);
     // Dev only (CONFIG.practiceSplat): the binary verdict ring.
-    drawSplatVerdict(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom);
+    drawSplatVerdict(ctx, state, plx, ply, plangle, toScreenX, toScreenY, zoom);
     ringLogFrame(state);
 
     // ---- Pixelation blit: world layer up to the screen ----
@@ -1755,12 +1773,16 @@ function createRenderer(canvas) {
     // ---- THE GLASS PASS ---- everything from here draws at device
     // resolution, outside the light column: position tags, then the
     // thumbstick on top of all.
+    drawGlassRim(ctx);
+    drawGlassPractice(ctx);
     drawGlassTags(ctx);
     drawGlassNames(ctx);
     drawTapRipples(ctx);
     drawInputSticks(ctx);
     glassTags = [];
     glassNames = [];
+    glassRim = null;
+    glassPractice = null;
   }
 
   function drawGlassNames(ctx) {
@@ -1792,10 +1814,7 @@ function createRenderer(canvas) {
       ctx.arcTo(x0, y0, x0 + w, y0, r);
       ctx.closePath();
       ctx.fillStyle = `rgba(${T.bg[0]}, ${T.bg[1]}, ${T.bg[2]}, ${T.bgAlpha})`;
-      ctx.fill();
-      ctx.strokeStyle = `rgb(${T.border[0]}, ${T.border[1]}, ${T.border[2]})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      ctx.fill();   // no hairline: the pills are unstroked (Eddie, 2026-09-04)
       ctx.font = fName;
       ctx.fillStyle = nm.col;
       ctx.fillText(nm.name, cx, y0 + T.padY + T.numPx - 2);
@@ -1852,10 +1871,7 @@ function createRenderer(canvas) {
       ctx.arcTo(x0, y0, x0 + w, y0, r);
       ctx.closePath();
       ctx.fillStyle = `rgba(${T.bg[0]}, ${T.bg[1]}, ${T.bg[2]}, ${T.bgAlpha})`;
-      ctx.fill();
-      ctx.strokeStyle = `rgb(${T.border[0]}, ${T.border[1]}, ${T.border[2]})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      ctx.fill();   // no hairline: the pills are unstroked (Eddie, 2026-09-04)
       const ty = y0 + h - T.padY - 2;
       ctx.fillStyle = `rgb(${T.text[0]}, ${T.text[1]}, ${T.text[2]})`;
       ctx.font = fNum;
@@ -1988,9 +2004,12 @@ function createRenderer(canvas) {
   // extra predicting body under the budget The Rindfather already
   // pays. The tapered egg draws an ellipse rim — a glow, not a
   // collider; the approximation is invisible at 6px of padding.
-  const RIM = { askTick: -1e9, askAxis: 0, verdict: 0 };
-  const RIM_REASK_TICKS = 10;   // the oracle's own re-ask cadence
-  const RIM_INPUT_TICKS = 3;    // floor for input-triggered re-asks
+  // The ask rule itself lives in pilot.js (rimStep) beside the
+  // forecast, so the suite can hold it: the 10-tick cadence, the
+  // input re-ask, the BUMP re-ask, and — the 2026-09-03q fix — an
+  // unanswered forecast (impactAt < 0) keeps the last verdict and
+  // asks again next tick instead of reading as "safe".
+  const RIM = { askTick: -1e9, askAxis: 0, verdict: 0, unanswered: false };
   function drawDangerRim(ctx, state, ix, iy, iangle, toScreenX, toScreenY, zoom) {
     if (!CONFIG.dangerRim) return;
     // The rim coaches a landing the player is about to make; under
@@ -1999,41 +2018,30 @@ function createRenderer(canvas) {
     if (window.FF.autopilot && !window.FF.autopilot.playerIsDriving()) return;
     if (window.FF.gridStart && window.FF.gridStart.isHolding && window.FF.gridStart.isHolding()) return;
     const m = state.melon;
-    if (!m.alive || m.hitSeverity > 0) { RIM.askTick = -1e9; RIM.verdict = 0; return; }
-    const ax = state.input.bounceAxis || 0;
-    const since = state.tick - RIM.askTick;
-    if (since >= RIM_REASK_TICKS || (since >= RIM_INPUT_TICKS && Math.abs(ax - RIM.askAxis) > 0.12)) {
-      RIM.askTick = state.tick;
-      RIM.askAxis = ax;
-      const p = window.FF.pilot.predictSplat(state, m);
-      if (!p.splat) {
-        RIM.verdict = 0;
-      } else {
-        const D = window.FF.damage;
-        const need = D.restitutionToSurvive(p.worst, p.T, D.bodyRestitution(m));
-        // null = unreachable at any bounciness; above bounceMax = the
-        // stick tops out short of it. Both are honest REDs — an amber
-        // that full flare cannot actually extinguish would be the rim
-        // promising a save it can't deliver.
-        RIM.verdict = (need === null || need > CONFIG.bounceMax) ? 2 : 1;
-      }
-    }
+    window.FF.pilot.rimStep(RIM, state, m);
     if (!RIM.verdict) return;
-    const col = RIM.verdict === 2 ? '255, 92, 74' : '255, 213, 74';
-    const sx = toScreenX(ix), sy = toScreenY(iy);
-    const pad = 6;
+    // GLASS, NOT WORLD (2026-09-04): the rim is a signal about the
+    // player's fate, like the nameplates and the stick — it collects
+    // here in world-pass coordinates and strokes at device resolution
+    // after the blit (drawGlassRim), perfectly round, red, on or off.
+    glassRim = { sx: toScreenX(ix), sy: toScreenY(iy), a: m.a, b: m.b, zoom };
+  }
+  let glassRim = null;
+  function drawGlassRim(ctx) {
+    if (!glassRim || !window.FF.glass || !window.FF.glass.rimGeometry) return;
+    const G = window.FF.glass;
+    const g = G.rimGeometry(glassRim.sx, glassRim.sy, glassRim.a, glassRim.b, glassRim.zoom, glassMap);
+    const col = G.RIM_STYLE.rgb;
     ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(iangle);
-    // Two strokes, no shadowBlur: a glow a phone can afford. World-
-    // scaled weights, same doctrine as the practice ring's stroke.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Two strokes, no shadowBlur: a glow a phone can afford.
     ctx.beginPath();
-    ctx.ellipse(0, 0, (m.a + pad) * zoom, (m.b + pad) * zoom, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(${col}, 0.20)`;
-    ctx.lineWidth = Math.max(2.5, 7 * zoom);
+    ctx.arc(g.cx, g.cy, g.r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${col}, ${G.RIM_STYLE.glowAlpha})`;
+    ctx.lineWidth = g.glowW;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(${col}, 0.85)`;
-    ctx.lineWidth = Math.max(1.1, 2.4 * zoom);
+    ctx.strokeStyle = `rgba(${col}, ${G.RIM_STYLE.coreAlpha})`;
+    ctx.lineWidth = g.coreW;
     ctx.stroke();
     ctx.restore();
   }
@@ -2048,23 +2056,23 @@ function createRenderer(canvas) {
     // hitSeverity > 0 IS the grounded test; airborne fires nothing.
     if (!m.alive || m.hitSeverity > 0) return;
     const p = predictSplat(state, m);
-    // BINARY, by design ruling: a fall either kills or it doesn't.
-    const col = p.splat ? '255, 92, 74' : '92, 235, 110';
-    const sx = toScreenX(ix), sy = toScreenY(iy);
-    const r = (Math.max(m.a, m.b) + 14) * zoom;
+    // BINARY, by design ruling: a fall either kills or it doesn't —
+    // and GREY when the clone never reached the landing (impactAt <
+    // 0): "I don't know" is not green. Glass like the rim (2026-09-04).
+    const col = p.impactAt < 0 ? '160, 160, 160' : (p.splat ? '255, 92, 74' : '92, 235, 110');
+    glassPractice = { sx: toScreenX(ix), sy: toScreenY(iy), a: m.a, b: m.b, zoom, col };
+  }
+  let glassPractice = null;
+  function drawGlassPractice(ctx) {
+    if (!glassPractice || !window.FF.glass || !window.FF.glass.rimGeometry) return;
+    const q = glassPractice;
+    const g = window.FF.glass.rimGeometry(q.sx, q.sy, q.a, q.b, q.zoom, glassMap);
     ctx.save();
-    ctx.strokeStyle = `rgba(${col}, 0.55)`;
-    // The ring belongs to the MELON, so its stroke is a world
-    // measurement like its radius — not a fixed screen width. A flat
-    // 3px looked right at desktop zoom 1 and heavy on a phone, where
-    // zoom is ~0.52: the melon shrank and the line did not. The floor
-    // keeps it from disappearing entirely if the view ever zooms far
-    // out. The coefficient is DESKTOP'S OWN look preserved: 3px at
-    // zoom 1 is 5% of the ring's radius, so 3 * zoom holds that 5%
-    // everywhere rather than inventing a new weight.
-    ctx.lineWidth = Math.max(1.25, 3 * zoom);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.strokeStyle = `rgba(${q.col}, 0.55)`;
+    ctx.lineWidth = g.coreW;
     ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.arc(g.cx, g.cy, g.r + 4 * (glassMap ? glassMap.scale : 1), 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -2169,10 +2177,25 @@ function createRenderer(canvas) {
     }
     if (n2) stickGlass.theme = window.FF.glass.stickThemeNext(stickGlass.theme, sum / n2);
   }
+  // THE SPECTATED BOT'S THUMB: set per frame in the follow branch,
+  // drawn below through the player's own stick routine — one widget,
+  // two hands. Fixed in the bottom-right corner at the player ring's
+  // own radius and a thumb's inset, so switching between your stick
+  // and theirs does not move the eye. Only while spectating a bot.
+  let spectateStick = null, spectateStickSince = -1;
+  const SPECTATE_STICK_INSET = 36;   // CSS px from the corner to the ring's edge
   function drawInputSticks(ctx) {
-    if (!window.FF.getInputSticks) return;
     const now = performance.now();
-    const sticks = window.FF.getInputSticks(now);
+    const sticks = window.FF.getInputSticks ? window.FF.getInputSticks(now) : [];
+    if (spectateStick) {
+      const R = STICK_UI.R;
+      sticks.push({
+        x0: width - SPECTATE_STICK_INSET - R, y0: height - SPECTATE_STICK_INSET - R,
+        dx: spectateStick.ax * R, dy: -spectateStick.ay * R,   // screen y is down; flare up is bouncy
+        ax: spectateStick.ax, ay: spectateStick.ay,
+        ageDown: now - spectateStickSince, ageUp: null,
+      });
+    }
     if (!sticks.length) return;
     if (sticks[0]) sampleStickLum(sticks[0], now);
     // Crossfade toward the chosen theme (~200ms), so a switch is a

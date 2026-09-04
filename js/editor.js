@@ -105,6 +105,9 @@ function bumpToTop(worn, i) {
 let elScreen = null;
 let cvs = null, ctx = null;
 let trayEl = null, slotsEl = null, nameEl = null;
+// The remove affordances' white — the X badge on a selection and the
+// REMOVE ALL glyph in the tray share it (one literal, one meaning).
+const BADGE_WHITE = 'rgba(255,255,255,0.95)';
 let onDone = null;
 
 // body + drawing
@@ -154,6 +157,7 @@ const CSS = `
 .ff-tray-chip .ff-chip-label { font-size: var(--fs-body); }
 .ff-tray-chip .ff-chip-rarity { font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro); color: var(--c-faint); }
+.ff-tray-clear { border-style: dashed; }
 .ff-editor-screen .ff-foot { flex-wrap: wrap; gap: 8px; }
 .ff-edit-zone { position: relative; }
 .ff-edit-readout { position: absolute; pointer-events: none; display: none;
@@ -275,7 +279,7 @@ function drawSelection(preview) {
     ctx.fillStyle = 'rgba(20,20,16,0.9)';
     ctx.fill();
     ctx.lineWidth = 1.6 / fit * dpr;
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = BADGE_WHITE;
     ctx.stroke();
     ctx.beginPath();
     const s = br * 0.42;
@@ -599,6 +603,48 @@ function buildTray() {
       trayEl.appendChild(chip);
     }
   }
+  // REMOVE ALL (Eddie, 2026-09-04): a wrap's X badge sits on a mesh
+  // corner that full coverage pushes off the silhouette, so a worn
+  // wrap had no visible way off. One extra slot at the end of the
+  // tray takes everything off in one tap — wraps and stickers alike.
+  // Same door as the X badge (spec.decals = null, save), so the two
+  // cannot disagree about what "bare" means.
+  const clear = el('button', 'ff-tray-chip ff-tray-clear');
+  const cv3 = el('canvas'); cv3.width = 88; cv3.height = 88;
+  paintClearGlyph(cv3);
+  clear.appendChild(cv3);
+  clear.appendChild(el('div', 'ff-chip-label', 'REMOVE ALL'));
+  clear.appendChild(el('div', 'ff-chip-rarity', 'bare melon'));
+  clear.addEventListener('click', () => removeAll());
+  trayEl.appendChild(clear);
+}
+
+// The clear chip's art: a bare ring with a cross, in the tray's own
+// tones — no sticker, so no painter; drawn here.
+function paintClearGlyph(cv) {
+  const c = cv.getContext('2d'); if (!c) return;
+  const w = cv.width, h = cv.height, r = w * 0.34;
+  c.clearRect(0, 0, w, h);
+  c.lineWidth = 5; c.strokeStyle = BADGE_WHITE; c.lineCap = 'round';   // the X badge's own white
+  c.beginPath(); c.arc(w / 2, h / 2, r, 0, Math.PI * 2); c.stroke();
+  const s = r * 0.42;
+  c.beginPath();
+  c.moveTo(w / 2 - s, h / 2 - s); c.lineTo(w / 2 + s, h / 2 + s);
+  c.moveTo(w / 2 + s, h / 2 - s); c.lineTo(w / 2 - s, h / 2 + s);
+  c.stroke();
+}
+
+// Take every decal off — wraps included. The X badge removes one;
+// this is the same write for all of them.
+function removeAll() {
+  const spec = body.spec;
+  if (!worn().length) return;
+  spec.decals = null;
+  selected = -1;
+  rebuildHitMeshes();
+  updateFoot();
+  draw(false);
+  window.FF.melon._save();
 }
 
 function applyItem(id, chipBtn) {

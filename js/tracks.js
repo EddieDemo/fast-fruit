@@ -236,6 +236,7 @@ function createTrackProvider(def) {
         for (let i = p === pLo ? 0 : 1; i < template.length; i++) {
           const o = { x: template[i].x + p * L, y: template[i].y + p * D,
             k: template[i].k,      // the kind survives the tiling
+            fam: template[i].fam,  // and the lip family (telemetry)
             s: template[i].s + p * lapArc }; // ...and so does the arc
           // the material-side override survives too — dropping it
           // re-created the verify-fold C defect in track mode only
@@ -248,7 +249,7 @@ function createTrackProvider(def) {
         // the branch's s and its anchor's s shift by p * lapArc.
         for (const br of tplBranches) {
           const cp = br.map((q) => {
-            const o = { x: q.x + p * L, y: q.y + p * D, k: q.k };
+            const o = { x: q.x + p * L, y: q.y + p * D, k: q.k, fam: q.fam };
             if (q.s !== undefined) o.s = q.s + p * lapArc; // ceilings carry no s
             if (q.mat !== undefined) o.mat = q.mat; // material override survives
             return o;

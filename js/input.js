@@ -42,6 +42,7 @@ function initInput(state, canvas) {
   // pointerId -> { x0, y0, x, y, t0 } stick anchors
   const pointers = new Map();
   let enabled = true;
+  let target = 'melon';   // 'melon' | 'camera' (retire & watch)
   // Recently released sticks, kept briefly so the renderer can fade
   // them out (pruned in getInputSticks). Presentation data only.
   const fading = [];
@@ -79,6 +80,17 @@ function initInput(state, canvas) {
     // input combination.
     const mag = Math.hypot(ax, ay);
     if (mag > 1) { ax /= mag; ay /= mag; }
+    // THE CAMERA HAND (2026-09-03p, retire & watch): once the player
+    // has retired, the autopilot owns state.input and the thumb's
+    // only job is choosing which melon to watch. So the shaped stick
+    // goes to state.spectateInput instead — the spectate chain reads
+    // it, the sim never does. Same pointers, same shaping, one
+    // destination switch.
+    if (target === 'camera') {
+      const c = state.spectateInput || (state.spectateInput = { rawAxis: 0, rawBounce: 0 });
+      c.rawAxis = ax; c.rawBounce = ay;
+      return;
+    }
     // The live local player's input object is the only hop-eligible
     // one — bots' input objects never carry the mark, so the sim's
     // hop branch can never fire for them.
@@ -213,6 +225,8 @@ function initInput(state, canvas) {
   if (window.FF.events) {
     window.FF.events.on('autopilot', (d) => {
       window.FF.setInputEnabled(!(d && d.engaged));
+      // The wheel coming back means the camera hand is over too.
+      if (!(d && d.engaged)) target = 'melon';
     });
   }
   window.FF.setInputEnabled = function (on) {
@@ -225,6 +239,18 @@ function initInput(state, canvas) {
       state.input.rawBounce = 0;
     }
   };
+  // Where the thumb writes: 'melon' (state.input, the sim) or 'camera'
+  // (state.spectateInput, the spectate chain). Setting 'camera' also
+  // re-enables the thumb, because retiring engages the autopilot,
+  // which switched it off one line earlier.
+  window.FF.setInputTarget = function (t) {
+    target = t === 'camera' ? 'camera' : 'melon';
+    if (target === 'camera') {
+      enabled = true;
+      if (state.spectateInput) { state.spectateInput.rawAxis = 0; state.spectateInput.rawBounce = 0; }
+    }
+  };
+  window.FF.getInputTarget = () => target;
 
   window.FF.getInputSticks = function (now) {
     if (!enabled) return [];

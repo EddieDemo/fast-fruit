@@ -219,9 +219,26 @@ function respawnRace(opts) {
   if (!netSession && !exhibition) {
     const keys = state.players.map(p => window.FF.racerKey(p.melon))
       .concat(state.bots.map(b => window.FF.racerKey(b.melon)));
-    const order = (window.FF.cup && window.FF.cup.isRunning && window.FF.cup.isRunning())
-      ? window.FF.cup.gridOrder() : null;
+    const inCup = !!(window.FF.cup && window.FF.cup.isRunning && window.FF.cup.isRunning());
+    let order = inCup ? window.FF.cup.gridOrder() : null;
+    // LEG 1 (or any race with no previous leg): the bots' grid is
+    // DEALT, seeded on the cup's seed (the day's seed outside a cup),
+    // player last (2026-09-04; was the cast table's authored order).
+    if (!order) {
+      const botKeys = state.bots.map(b => window.FF.racerKey(b.melon));
+      const dealSeed = (inCup && cupSeed !== null && cupSeed !== undefined) ? cupSeed : castSeed;
+      order = window.FF.shuffledGridOrder(botKeys, dealSeed >>> 0);
+    }
     const slots = window.FF.computeGridSlots(keys, order, localSlot);
+    window.FF.applyGridSlots(state, slots, SPAWN.x, -CONFIG.semiMinor - 200);
+  } else if (!netSession && exhibition && cast) {
+    // THE EXHIBITION SHUFFLES BY THE DAY (Eddie, 2026-09-04): the
+    // twelve, stand-in included, dealt on the day's seed — a parade
+    // with a different front every day. No player seat to hold last.
+    const keys = state.players.map(p => window.FF.racerKey(p.melon))
+      .concat(state.bots.map(b => window.FF.racerKey(b.melon)));
+    const order = window.FF.shuffledGridOrder(keys, castSeed >>> 0);
+    const slots = window.FF.computeGridSlots(keys, order, -1);
     window.FF.applyGridSlots(state, slots, SPAWN.x, -CONFIG.semiMinor - 200);
   }
 
@@ -243,6 +260,7 @@ function respawnRace(opts) {
   for (const b of state.bots) b.melon.finishTick = null;
 
   const race = state.race;
+  race.retired = false;   // retire & watch is one race's decision (spectate.js)
   const def = window.FF.trackDefByName(modeName);
   race.mode = def ? 'track' : 'endless';
   // lapLengthPx is a LAP OF ARC since stage 3 (the spine's unit):

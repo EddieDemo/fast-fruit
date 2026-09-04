@@ -54,22 +54,64 @@
 //     the rest of the project forbids.
 // Re-run the audit after ANY edit here — a new name changes only its
 // own body, but it can collide in colour with an existing one.
+//
+// THE SKILL COMES FROM THE NAME TOO (AI Phase 2, 2026-09-03; docs/
+// AI-RETHINK-2026-09-03.md §8.4-8.5). Every pilot drives the graded
+// 'oracle' brain with two authored numbers:
+//   * FLARE in [0, 1] — how well the pilot reads a landing and flares
+//     for it. One number, mapped through the shared curve table in
+//     pilot.js to every dial (whether it forecasts at all, how late it
+//     notices, how far it looks, how wide its thumb misses). 1 is the
+//     ceiling: the Rindfather, byte-identical to the brain before the
+//     gradient existed. 0.2 is the bottom of the ladder: rarely
+//     forecasts, yanks late and too little.
+//   * LEAN in about [-1, 1] — personality, not skill: the side the
+//     thumb tends to miss on. Negative is reckless (under-flares),
+//     positive is cautious (over-flares). Since Phase 3 it is a
+//     MARGIN, not an offset: see the margin law below.
+// Ruled spread across the eleven who race (§8.4): one at 1.0, two
+// near 0.85, four in 0.6-0.7, three in 0.4-0.5, one at 0.2. The field
+// tilts slightly reckless on purpose (lean sums to -1.4): an arcade
+// racer wants more spills than stalls. Assigned by the doctrine above
+// — NAMES KEEP THEIR PROMISES — so Baron von Splat splats and Ten Ton
+// Tessie drives like someone who knows she is heavy. THE BODY WINS at
+// the ends (v359 measured): the 0.2 was first Vlad the Impaled, whose
+// salt seats the cast's smallest body, and the size law makes runts
+// nearly unkillable — the bottom of the ladder died less than the
+// 0.4s. Eddie moved the 0.2 to a body that can die (2026-09-03);
+// Baron von Splat's name already promised it. Second Place
+// Steve, the stand-in, gets a solid reserve's 0.75: he races only the
+// exhibition, where that can win. Suite #55 holds the spread by count
+// and the two ends by name; a mutation of any row that moves a band
+// dies there. Eddie may override any row from the device session; the
+// spread must survive the edit.
+//   * ROUTE was a third column (v361-v362) and was REMOVED (v363): a
+//     fork-reading skill was measured twice and moved no outcome, and
+//     a number the player cannot see is a promise the game cannot
+//     keep. Every pilot makes the fork call at the ceiling's rule.
+//   * PACE is not a column: a cautious (positive lean) pilot eases
+//     the throttle into launches; that is what caution looks like on
+//     the stick, and one personality number should mean one thing.
+// The margin law (pilot.js, Phase 3): lean never adds stick units; it
+// scales every safety margin by 4^lean. A reckless pilot with a good
+// thumb loses nothing; a reckless pilot with a bad one has no margin
+// to hide the miss. Recklessness costs in proportion to clumsiness.
 // ============================================================
 
-// pilot, melon, brain, salt
+// pilot, melon, brain, salt, flare, lean
 const CAST = [
-  ['Bot Gary',     'The Rindfather',        'oracle',  7],
-  ['Bot Hollie',   'Melon Collie',          'cruise', 17],
-  ['Bot Jesse',    'Rindiana Jones',        'cruise',  0],
-  ['Bot Robin',    'The Green Baron',       'cruise',  0],
-  ['Bot Gertrude', 'Ten Ton Tessie',        'cruise', 25],
-  ['Bot Brenda',   'Grievous Bodily Charm', 'cruise',  5],
-  ['Bot Mabel',    'Baron von Splat',       'cruise',  0],
-  ['Bot Otis',     'Notorious M.E.L.',      'cruise',  7],
-  ['Bot Priya',    'Casaba Blanca',         'cruise',  6],
-  ['Bot Winnie',   'Lil Squish',            'cruise',  1],
-  ['Bot Klaus',    'Vlad the Impaled',      'cruise', 11],
-  ['Bot Trevor',   'Second Place Steve',    'cruise', 13],
+  ['Bot Gary',     'The Rindfather',        'oracle',  7, 1.00,  0.0], // the ceiling, ruled
+  ['Bot Hollie',   'Melon Collie',          'oracle', 17, 0.45,  0.7], // mournful, cautious, slow
+  ['Bot Jesse',    'Rindiana Jones',        'oracle',  0, 0.85, -0.3], // the adventurer: nearly perfect, a little reckless
+  ['Bot Robin',    'The Green Baron',       'oracle',  0, 0.85,  0.3], // the ace: nearly perfect, clean and cautious
+  ['Bot Gertrude', 'Ten Ton Tessie',        'oracle', 25, 0.65,  0.6], // heavy and knows it: over-flares, slow, survives
+  ['Bot Brenda',   'Grievous Bodily Charm', 'oracle',  5, 0.60, -0.6], // the name is violence
+  ['Bot Mabel',    'Baron von Splat',       'oracle',  0, 0.20, -0.8], // the bottom of the ladder: promises splats; delivers them (v360, was 0.45)
+  ['Bot Otis',     'Notorious M.E.L.',      'oracle',  7, 0.70, -0.3], // swagger
+  ['Bot Priya',    'Casaba Blanca',         'oracle',  6, 0.65,  0.1], // classy, even-handed
+  ['Bot Winnie',   'Lil Squish',            'oracle',  1, 0.40, -0.4], // small and scrappy; the size law makes her hard to kill
+  ['Bot Klaus',    'Vlad the Impaled',      'oracle', 11, 0.45, -1.0], // the runt (0.866, hardest body to kill), reckless with it (v360, was 0.20)
+  ['Bot Trevor',   'Second Place Steve',    'oracle', 13, 0.75,  0.3], // the stand-in: races only the exhibition
 ];
 
 // Whose seat the player takes. Named by PILOT, because the seat
@@ -98,12 +140,16 @@ function seedFor(melon, salt) {
 // answer, whatever asks the question (a race, the exhibition, a
 // future roster screen).
 function describe(row) {
-  const [pilot, melon, brain, salt] = row;
+  const [pilot, melon, brain, salt, flare, lean] = row;
   const seed = seedFor(melon, salt);
   const FF = window.FF;
   const d = FF.melon ? FF.melon.derive(seed) : null;
   return {
     pilot, melon, brain, salt, seed,
+    // THE SKILL (AI Phase 2): passed through as authored. state.js
+    // treats an absent flare as the ceiling, so a row that forgets its
+    // number would seat a Rindfather — suite #55 holds every row.
+    flare, lean,
     species: SPECIES,
     scale: d ? d.scale : 1,
     // Pigment and rind follow the same seed, so a character's whole

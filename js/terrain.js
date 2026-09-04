@@ -6,9 +6,9 @@
 //    (mulberry32) is self-contained integer math — no Math.random,
 //    no engine-dependent behavior. This is the foundation the ghost
 //    system stands on: a run is (seed + recorded positions).
-//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v7 (2026-09-03:
-//    the silent kicker repaired, the LIP word added — every track
-//    changed) after v5
+//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v8 (2026-09-03:
+//    the kicker's and lip's face is a 60-deg slide, not a wall) after
+//    v7 (the silent kicker repaired, the LIP word added) after v5
 //    (2026-08-17: v2 was the dialect rework; v3 is the CHECK-MARK
 //    PIT, same day); pre-launch that costs nothing, post-launch it
 //    means versioning.
@@ -171,11 +171,21 @@ function kickerPlan(r, rec) {
   return {
     approach: rr(r, 120, 220),
     T, grade, easeRise, rampLen, rise,
-    extraBelow: rr(r, 140, 280),        // the face bottoms out this far
-    landLen: rr(r, 420, 700),           //   below the chunk start
+    // THE FACE (re-ruled 2026-09-03, terrain v8): a 60-deg SLIDE, not
+    // the 12 px wall, bottoming 0.6-1.4 m below the chunk start (was
+    // 1.4-2.8). The wall made the word read as a cliff with a run-up
+    // (Eddie never recognised a kicker on device), and the sweep put
+    // it at 42.6 deaths per 100 crossings for the standard bot — worse
+    // than the trap and the gap; only the switchback was deadlier.
+    // A slide you can ride, like the gap's chute; the ramp, the rise
+    // and the landing are unchanged; the word still nets down.
+    extraBelow: rr(r, 60, 140),
+    landLen: rr(r, 420, 700),
     landDy: rr(r, 130, 220),
   };
 }
+// The face's run for its drop: 60 deg from horizontal.
+const FACE_RUN = 1 / 1.7320508075688772;   // 1/tan(60 deg)
 
 // THE LIP (terrain v7, 2026-09-03): the ski-jump's three launch
 // families (skijump.js, ruled there 2026-08-26 — LAW 1: every
@@ -225,7 +235,8 @@ function lipPlan(r, rec, entryAngle) {
     entryAngle, end, radius,
     // the lip rises about r*(sin(entry) + sin(-end)) above the arc's
     // start; the face then drops that plus extraBelow, as the kicker's
-    extraBelow: rr(r, 140, 280),
+    // (the same face law: the 60-deg slide, v8)
+    extraBelow: rr(r, 60, 140),
     landLen: rr(r, 420, 700),
     landDy: rr(r, 130, 220),
   };
@@ -518,7 +529,9 @@ function createTerrainGen(seed, recipeOverride) {
       const prev = this.pts[this.pts.length - 1];
       const dx = this.x - prev.x, dy = this.y - prev.y;
       this.s += Math.sqrt(dx * dx + dy * dy);
-      this.pts.push({ x: this.x, y: this.y, k: this.chunkKind, s: this.s });
+      const pt = { x: this.x, y: this.y, k: this.chunkKind, s: this.s };
+      if (this.chunkFam && this.chunkKind === 'lip') pt.fam = this.chunkFam;   // the lip's family (telemetry; physics reads x, y)
+      this.pts.push(pt);
     },
     flat(len) { this.x += len; this.push(); },
     slope(len, dy) { this.x += len; this.y += dy; this.push(); },
@@ -651,6 +664,7 @@ function nextChunk(g, rOpt, recOpt) {
   }
   g.lastKind = kind;
   g.chunkKind = kind;
+  g.chunkFam = null;    // set by the lip branch; every other word clears it
 
   if (kind === 'slope') {
     const len = rrr(r, rec.slopeLen);
@@ -777,7 +791,8 @@ function nextChunk(g, rOpt, recOpt) {
     g.slope(p.rampLen, -p.rise);
     // the face: from the lip (easeRise + rise above start) down to
     // extraBelow BELOW the chunk start — net-downhill by arithmetic
-    g.slope(12, p.easeRise + p.rise + p.extraBelow);
+    const faceDrop = p.easeRise + p.rise + p.extraBelow;
+    g.slope(faceDrop * FACE_RUN, faceDrop);   // the 60-deg slide (v8)
     g.slope(p.landLen, p.landDy);
   } else if (kind === 'lip') {
     // The entry tangent: the heading of the last laid segment (a
@@ -787,12 +802,14 @@ function nextChunk(g, rOpt, recOpt) {
     const a = g.pts[n - 1], b = g.pts[n - 2] || a;
     const entryAngle = (a.x > b.x) ? window.FF.dmath.atan2(a.y - b.y, a.x - b.x) : 0;   // dmath: pinned on every phone
     const p = lipPlan(r, rec, entryAngle);
+    g.chunkFam = p.family;
     g.slope(p.approach * window.FF.dmath.cos(entryAngle), p.approach * window.FF.dmath.sin(entryAngle));
     const y0 = g.y;
     g.arc(p.radius, entryAngle, p.end);
     const rise = y0 - g.y;              // how far the lip stands above the arc's start
     // the face: from the lip down to extraBelow BELOW the arc's start
-    g.slope(12, rise + p.extraBelow);
+    const faceDrop = rise + p.extraBelow;
+    g.slope(Math.max(12, faceDrop * FACE_RUN), faceDrop);   // the 60-deg slide (v8; a lip that did not rise keeps a 12 px minimum)
     g.slope(p.landLen, p.landDy);
   } else if (kind === 'tunnel') {
     const p = tunnelPlan(r, rec);
@@ -991,7 +1008,9 @@ function makeCursor(x0, y0) {
       const prev = this.pts[this.pts.length - 1];
       const dx = this.x - prev.x, dy = this.y - prev.y;
       this.s += Math.sqrt(dx * dx + dy * dy);
-      this.pts.push({ x: this.x, y: this.y, k: this.chunkKind, s: this.s });
+      const pt = { x: this.x, y: this.y, k: this.chunkKind, s: this.s };
+      if (this.chunkFam && this.chunkKind === 'lip') pt.fam = this.chunkFam;   // the lip's family (telemetry; physics reads x, y)
+      this.pts.push(pt);
     },
     flat(len) { this.x += len; this.push(); },
     slope(len, dy) { this.x += len; this.y += dy; this.push(); },

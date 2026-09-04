@@ -76,17 +76,46 @@ function stickThemeNext(current, lum) {
 // its gold/silver/bronze language.
 const TAG_STYLE = {
   bg: [10, 14, 10], bgAlpha: 0.9,
-  border: [42, 90, 52],
+  // No border: the tag and name pills are unstroked (Eddie, 2026-09-04).
   text: window.FF.shading.WHITE_RGB,   // canonical white (ruled 2026-08-27), one source
   numPx: 12, sufPx: 9,      // CSS px; suffix rides the shoulder
   padX: 8, padY: 4,
   liftPx: 14,               // pill bottom above the anchor point
 };
 
+// THE DANGER RIM'S GEOMETRY (2026-09-04, Eddie's rulings: UI not
+// world — vector in the glass pass like the names and the sticks;
+// perfectly round, not melon-shaped; red only, on or off; a touch
+// further out and thicker than the pixel-world rim it replaces).
+// Input is the world pass's own numbers (screen-px centre at that
+// pass's resolution, the body's semi-axes, the zoom); output is the
+// circle to stroke at device resolution. THE SNAP: in pixel mode the
+// body sits on the 380-wide grid, so the centre is rounded to that
+// grid BEFORE mapping — the ring steps with the melon instead of
+// sliding against it. The stroke itself stays vector-smooth.
+const RIM_STYLE = {
+  padWorldPx: 10,           // ring radius = larger semi-axis + this, world px
+  glowWorldPx: 10, glowMin: 2.5, glowAlpha: 0.22,
+  coreWorldPx: 3.4, coreMin: 1.1, coreAlpha: 0.88,
+  rgb: '255, 92, 74',       // the ember red: on = this landing kills as held
+};
+function rimGeometry(sx, sy, a, b, zoom, glassMap) {
+  const S = RIM_STYLE;
+  const scale = glassMap ? glassMap.scale : 1;
+  const ox = glassMap ? glassMap.ox : 0, oy = glassMap ? glassMap.oy : 0;
+  const cx = glassMap ? Math.round(sx) : sx, cy = glassMap ? Math.round(sy) : sy;
+  return {
+    cx: ox + cx * scale, cy: oy + cy * scale,
+    r: (Math.max(a, b) + S.padWorldPx) * zoom * scale,
+    glowW: Math.max(S.glowMin, S.glowWorldPx * zoom) * scale,
+    coreW: Math.max(S.coreMin, S.coreWorldPx * zoom) * scale,
+  };
+}
+
 G.FF.glass = {
   relLuminance, contrastRatio,
   STICK_THEMES, stickThemeNext, LUM_HI, LUM_LO,
-  TAG_STYLE,
+  TAG_STYLE, RIM_STYLE, rimGeometry,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = G.FF.glass;
 })();

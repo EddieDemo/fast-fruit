@@ -68,11 +68,11 @@ function grudgeOf(m, deathTick, assistTicks) {
   return -1;
 }
 
-function nearestAliveIdx(state, fromX) {
+function nearestAliveIdx(state, fromX, skipIdx) {
   const bodies = bodiesOf(state);
   let best = -1, bestD = Infinity;
   for (let i = 0; i < bodies.length; i++) {
-    if (!bodies[i].alive) continue;
+    if (i === skipIdx || !bodies[i].alive) continue;
     const d = Math.abs(bodies[i].x - fromX);
     if (d < bestD) { bestD = d; best = i; }
   }
@@ -93,20 +93,42 @@ function cycle(state, fromIdx, dir) {
 // { m, p } to spectate, or null for the normal player follow.
 function pose(state) {
   const s = state && state.session;
-  const active = !!(s && s.respawnDelayTicks === Infinity
+  // TWO GATES. Dead under permadeath (the derby's spectate, unchanged),
+  // or RETIRED (2026-09-03p): the player gave the wheel to the
+  // autopilot from the pause screen and is now a viewer. Retirement
+  // is one-way and is race state, cleared at race init.
+  const retired = !!(state && state.race && state.race.retired);
+  const active = retired || !!(s && s.respawnDelayTicks === Infinity
     && state.players && state.players[0] && !state.players[0].melon.alive);
   if (!active) { live = null; return null; }
 
   const me = state.players[0].melon;
-  if (!live || live.sessionRef !== s) {
+  const sessionKey = retired ? state.race : s;
+  if (!live || live.sessionRef !== sessionKey) {
     live = {
-      sessionRef: s,
+      sessionRef: sessionKey,
       deathTick: state.tick,      // frame-boundary capture: a few
                                   // ticks late at worst, invisible
                                   // at camera timescales
       grudgeIdx: -1, targetIdx: -1, manual: false,
       axisArmed: false, bounceArmed: false,
+      retired,
     };
+    if (retired) {
+      // No wreck to linger on and no killer to hold a grudge against:
+      // start in MANUAL on the nearest living melon and cycle from
+      // there. The flare press (grudge) has nothing to return to.
+      live.targetIdx = nearestAliveIdx(state, me.x, 0);   // not yourself
+      live.manual = true;
+      live.grudgeIsKiller = false;
+      // Nobody to watch (soloRace, or the whole field dead): the
+      // normal follow of your own melon, not an index that does not
+      // exist. Found on device 2026-09-03: soloRace + retire threw in
+      // prevOf(). retire() refuses an empty field too; this is the
+      // belt to that brace.
+      if (live.targetIdx < 0) return null;
+      return finish(state, live.targetIdx, true);
+    }
     const assist = (FF.derby && FF.derby.ASSIST_TICKS) || 360;
     live.grudgeIdx = grudgeOf(me, live.deathTick, assist);
     // A TRUE killer earns the wreck-watching exemption below; the
@@ -120,8 +142,12 @@ function pose(state) {
   }
 
   // ---- MANUAL input, edge-triggered with hysteresis --------------
-  const ax = (state.input && state.input.rawAxis) || 0;
-  const bn = (state.input && state.input.rawBounce) || 0;
+  // The camera hand: dead, the thumb still writes state.input (nobody
+  // else does); retired, the autopilot owns state.input and the thumb
+  // writes state.spectateInput (input.js, target 'camera').
+  const src = live.retired ? (state.spectateInput || null) : state.input;
+  const ax = (src && src.rawAxis) || 0;
+  const bn = (src && src.rawBounce) || 0;
   if (Math.abs(ax) < RELEASE) live.axisArmed = true;
   if (bn < RELEASE) live.bounceArmed = true;
   let switched = false;
@@ -175,8 +201,64 @@ function finish(state, idx, switched) {
   return { m: bodiesOf(state)[idx], p: prevOf(state, idx), idx };
 }
 
+// THE SPECTATED BOT'S THUMB (2026-09-03o, Eddie: "I literally just
+// want to see the bots using their thumbstick like how I can see
+// myself using my thumbstick"). Pure and presentation-facing: given
+// this frame's pose, the spectated BOT's stick as the sim actually
+// feels it — the SMOOTHED axes (torqueAxis, bounceAxis), because a
+// brain writes its raw stick in one tick (0 to 0.97 with no thumb in
+// between) and the physics eases it over a few frames; the eased
+// value is the honest thumb. Null for the player seat (the player's
+// own widget shows the player's own thumb) and for no target. The
+// renderer places it in the fixed corner where a right thumb lives
+// and draws it with the player's own routine; no name, no extra
+// information — the same widget, another hand.
+function stick(state, target) {
+  if (!target || !(target.idx > 0) || !state || !state.bots) return null;
+  const b = state.bots[target.idx - 1];
+  if (!b || !b.input) return null;
+  return { ax: b.input.torqueAxis || 0, ay: b.input.bounceAxis || 0 };
+}
+
+// RETIRE & WATCH (2026-09-03p, Eddie's rulings): from the pause
+// screen, mid-race, solo only. One-way — the melon goes to the
+// autopilot for good, the player's result is a DNF whatever the
+// autopilot achieves, the finish screen still opens when that melon
+// crosses, and the thumb becomes the camera hand. Everything here is
+// an existing door: the autopilot's engage (the same handover the
+// finish line makes at the crossing), input.js's target switch, and
+// the flag pose() gates on.
+function retire(state, opts) {
+  if (!state || !state.race) return false;
+  if (opts && opts.netplay) return false;          // peers exchange inputs; no local AI
+  if (state.race.retired) return false;            // one-way, idempotent
+  if (state.session) return false;                 // a party session has no line to DNF at
+  if (!state.players || !state.players[0]) return false;
+  if (!state.bots || !state.bots.length) return false;   // nobody to watch (soloRace)
+  state.race.retired = true;
+  if (FF.autopilot) FF.autopilot.engage(state, { netplay: false });
+  if (FF.setInputTarget) FF.setInputTarget('camera');
+  live = null;                                     // the chain re-enters in manual
+  return true;
+}
+
+// TWO BODIES PER FRAME (2026-09-04, found on device the first time a
+// LIVING player spectated): the renderer used one interpolated pose
+// for both the camera and the player's own melon, and swapped it to
+// the spectated body when a pose was live. Dead spectators are never
+// drawn, so it hid for a month; Retire & Watch drew the player's
+// melon on top of whatever it was watching. This resolves the two
+// separately so they cannot be confused again: the camera follows
+// the pose, the player is drawn where the player is.
+function frameBodies(state, pose) {
+  return {
+    camera: pose ? { m: pose.m, p: pose.p } : { m: state.melon, p: state.prevMelon },
+    player: { m: state.melon, p: state.prevMelon },
+  };
+}
+
 FF.spectate = {
-  pose,
+  pose, stick, retire, frameBodies,
   LINGER_TICKS, PRESS, RELEASE,
   _live: () => live,
   _reset: () => { live = null; },
