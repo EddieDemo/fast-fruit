@@ -157,6 +157,16 @@ function createTrackProvider(def) {
   const flatSites = [];
   {
     const FG = window.FF.CONFIG.furniture.flatGrade;
+    // THE TABLE-TOP'S DECK IS A SITE (ruled 2026-09-04, terrain v9,
+    // reversing the build's first ruling). The deck is level and 2-4 m
+    // long, so on geometry alone it is a flat site, and on a third of
+    // dialects it is the only level run outside the runway — with it
+    // excluded, 8 of 60 tracks shipped without their crate stack
+    // (measured; 4 of 60 with it offered, 2 of 60 on the v8 world).
+    // The ruling: the harvest is geometry, and the deck is geometry.
+    // A box on the deck stands in the mid-pace landing zone; the
+    // sweep (addendum 59) reports what that costs. verify-terrain T3
+    // holds that decks ARE offered.
     let i = 0;
     while (i < template.length - 1) {
       let j = i;

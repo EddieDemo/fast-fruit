@@ -6,8 +6,12 @@
 //    (mulberry32) is self-contained integer math — no Math.random,
 //    no engine-dependent behavior. This is the foundation the ghost
 //    system stands on: a run is (seed + recorded positions).
-//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v8 (2026-09-03:
-//    the kicker's and lip's face is a 60-deg slide, not a wall) after
+//    GENERATOR CHANGES BREAK RECORDED GHOSTS — this is v9 (2026-09-04:
+//    the arc verb draws from dmath, not Math — every lip moved by
+//    ~1e-9 px and every race hash with it, which is the phone-to-
+//    phone desync the change exists to prevent; and the TABLE-TOP
+//    word) after v8 (2026-09-03: the kicker's and lip's face is a
+//    60-deg slide, not a wall) after
 //    v7 (the silent kicker repaired, the LIP word added) after v5
 //    (2026-08-17: v2 was the dialect rework; v3 is the CHECK-MARK
 //    PIT, same day); pre-launch that costs nothing, post-launch it
@@ -85,6 +89,11 @@ function trackRecipe(seed) {
     // the kicker (a straight ramp, one crease) stays beside it, ruled:
     // "I want A, B, C and D so I can test them all".
     lip: rr(r, 0.06, 0.20),
+    // THE TABLE-TOP (terrain v9, 2026-09-04): a lip, a level deck at
+    // the lip's height, a rounded roll-off, a landing — the KIND gap:
+    // whatever the pace, ground catches you, and there is no face,
+    // pit or mouth anywhere in the word. Every dialect speaks it.
+    tabletop: rr(r, 0.05, 0.16),
   };
   // THE DRAINED GAP (stage 4, terrain v5): a track speaks its gaps
   // WALLED (the stage-2 check-mark) or DRAINED (the pit floor IS the
@@ -96,7 +105,7 @@ function trackRecipe(seed) {
   // weight silently distorts every other's (stage 5: tunnel + trap
   // were briefly outside it).
   const total = w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw
-    + w.tunnel + w.trap + w.lip;
+    + w.tunnel + w.trap + w.lip + w.tabletop;
   for (const k of Object.keys(w)) w[k] /= total;
   // THE LIP FAMILIES are a dialect lean, not a per-chunk coin: three
   // weights drawn per track (pop / quarter / ski), every one live, so
@@ -133,10 +142,16 @@ function trackRecipe(seed) {
     // one-time ruling.
     gapLen: subRange(r, 260, 520, 0.3, 0.8),
     gapDrop: subRange(r, 0, 70, 0.3, 1.0),
-    // the lip: family lean, and this dialect's climb budget (px the
-    // lip may rise above the arc's start; the ski-jump's is 330)
+    // the lip: family lean, and this dialect's budget for the arc's
+    // horizontal RUN (misnamed "climb" — see the retraction at
+    // lipPlan; kept as-is in v9 so no lip moves)
     lipFam,
     lipClimb: subRange(r, 60, 120, 0.3, 1.0),
+    // the table-top: this dialect's DECK HEIGHT (px the deck stands
+    // above the up-arc's start). Unlike lipClimb it is a number that
+    // is TRUE — tabletopPlan cuts the exit angle back until the
+    // realised climb fits it (see the law there).
+    deckClimb: subRange(r, 100, 200, 0.3, 1.0),
   };
 }
 
@@ -233,12 +248,102 @@ function lipPlan(r, rec, entryAngle) {
     family: fam.name, famIdx,
     approach: rr(r, 100, 220),
     entryAngle, end, radius,
-    // the lip rises about r*(sin(entry) + sin(-end)) above the arc's
-    // start; the face then drops that plus extraBelow, as the kicker's
-    // (the same face law: the 60-deg slide, v8)
+    // RETRACTED 2026-09-04 (v9, found by the table-top's spoken-law
+    // cell): the comment here and addendum 36 said the lip rises
+    // about r*(sin(entry) + sin(-end)). That is the arc's horizontal
+    // RUN. A circular arc from heading t0 to t1 rises r*(cos t0 -
+    // cos t1): measured on 235 spoken lips, mean 27 px above the arc
+    // start (max 69), 33 px above the trough (max 75), against a
+    // "claimed" mean of 160. Lips are 0.3 m humps — which is the true
+    // reason none has ever parked a field. `lipClimb` therefore
+    // budgets the x-run, not a height; K1 checks that same quantity.
+    // Geometry deliberately untouched in v9 (the sweep accepted these
+    // lips); the re-derivation is its own ruling. The face still
+    // drops the true rise plus extraBelow (the speaker measures it).
     extraBelow: rr(r, 60, 140),
     landLen: rr(r, 420, 700),
     landDy: rr(r, 130, 220),
+  };
+}
+
+// THE TABLE-TOP (terrain v9, 2026-09-04; the first of the geometry
+// words, docs/GEOMETRY-WORDS-2026-09-04.md): an up-arc off the entry
+// heading, a straight RAMP at the exit angle, a LEVEL DECK, a convex
+// ROLL-OFF, a concave TRANSITION to the run-out's heading, and the
+// run-out. The kind version of the gap — at 2400 px/s^2 a race-pace
+// melon (1500 px/s off 28 deg) returns to deck height 7.8 m out and
+// lands on the run-out; a mid-pace one (600-1000 px/s) lands on the
+// deck or the roll-off; a walking-pace one rolls over the lip, along
+// the deck and down. Three paces, three outcomes, every one of them
+// ground. No face, no pit, no mouth.
+//
+// THE DECK-HEIGHT LAW (ruled B, 2026-09-04): the deck stands
+// `deckClimb` above the TROUGH — the lowest point before it — and
+// that number is TRUE. An arc alone cannot buy height: a circular
+// arc from heading t0 to t1 rises r*(cos t0 - cos t1), a 0.1-0.65 m
+// hump at any radius the no-blades law allows (the formula the lip
+// inherited, r*(sin t0 + sin t1), is the arc's horizontal RUN — see
+// the retraction at lipPlan). So the arc is the transition (the
+// kicker's earning mechanism, honoured by construction), the ramp is
+// the kicker's straight, and the ramp's length is SOLVED from the
+// budget: ramp = (budget - r*(1 - cos exit)) / sin exit.
+//
+// NETS DOWN BY CONSTRUCTION: the run-out's end sits `extraBelow`
+// below the trough (the lip's own device), so the word's last point
+// is below its first whatever the lanes drew. The run-out heading is
+// drawn (landAngle, always under the roll-off's `down` so the
+// transition turns the right way) and its length solved from the
+// drop, floored at 500 px — a race-pace melon lands 7-9 m past the
+// lip and the run-out must be there to receive it.
+//
+// THE RAMP OBEYS THE GRIND LAW (derived, 2026-09-04, while building
+// the ride cell): the third pace — walking — must climb the ramp
+// under motor from the trough, and every climb a standstill melon
+// may face is held to G_GRIND (0.50, the runt's measured 0.634 x
+// 0.8). tan(26 deg) = 0.488, so the exit lane is 22-26 deg, not the
+// 22-30 first proposed; the flights are a little shorter, and the
+// deck is there for exactly that. verify-terrain T1 asserts the
+// grade; the promise itself is the grind law's (verify-grind).
+//
+// Nine draws in a fixed order, whatever the clamps do: the stream is
+// sacred.
+const TT_EXIT_MAX = 26;      // deg; tan <= G_GRIND
+const TT_R_OFF_MIN = 280;    // the roll-off is convex (no-blades does not
+                             // bind) but holds the slab radius anyway so
+                             // the curve-step law reads the same everywhere
+const TT_LAND_MIN = 500;     // run-out floor, px
+function tabletopPlan(r, rec, entryAngle) {
+  const dm = window.FF.dmath;
+  const DEG = Math.PI / 180;
+  const exit = rr(r, 22, TT_EXIT_MAX) * DEG;
+  const radius = rr(r, 280, 420);              // the pop's lane; never below LIP_R_MIN
+  const budget = rrr(r, rec.deckClimb || [100, 200]);
+  const approach = rr(r, 100, 220);
+  const deck = rr(r, 200, 400);
+  const rOff = Math.max(TT_R_OFF_MIN, rr(r, 300, 500));
+  const down = rr(r, 25, 35) * DEG;
+  const landAngle = rr(r, 14, 22) * DEG;       // < down always
+  const extraBelow = rr(r, 60, 140);
+  // the up-arc's own rise from its trough (heading 0) to the lip, and
+  // the ramp that buys the rest
+  const arcRise = radius * (1 - dm.cos(exit));
+  const ramp = Math.max(0, (budget - arcRise) / dm.sin(exit));
+  // the roll-off drops r(1 - cos down); the transition drops
+  // r(cos landAngle - cos down); the run-out drops the rest of the
+  // deck's height plus extraBelow
+  const dRoll = rOff * (1 - dm.cos(down));
+  const dTrans = rOff * (dm.cos(landAngle) - dm.cos(down));
+  const tanLand = dm.sin(landAngle) / dm.cos(landAngle);
+  let landDy = budget - dRoll - dTrans + extraBelow;
+  let landLen = landDy / tanLand;
+  if (landLen < TT_LAND_MIN) { landLen = TT_LAND_MIN; landDy = landLen * tanLand; }   // longer, along the same heading: deeper, never shallower
+  return {
+    approach, entryAngle,
+    end: -exit,                   // up = negative (y down)
+    radius, ramp, budget, arcRise,
+    deck,
+    rOff, down, landAngle, extraBelow,
+    landLen, landDy,
   };
 }
 
@@ -632,7 +737,10 @@ function nextChunk(g, rOpt, recOpt) {
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw) kind = 'sw';
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw + w.tunnel) kind = 'tunnel';
   else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw + w.tunnel + w.trap) kind = 'trap';
-  else kind = 'lip';
+  else if (pick < w.slope + w.roller + w.flat + w.kicker + w.gap + w.sw + w.tunnel + w.trap + w.lip) kind = 'lip';
+  else kind = 'tabletop';   // v9: the last word in the chain; a recipe
+                            // without it (older suite dialects) never
+                            // reaches here because the sum through lip is 1
   // placement grammar: a rest note never follows a rest note
   if (kind === 'flat' && g.lastKind === 'flat') kind = 'slope';
   // MOMENTUM GRAMMAR (2026-08-17): a set piece (kicker, gap) may only
@@ -641,14 +749,16 @@ function nextChunk(g, rOpt, recOpt) {
   // corrections, the field could face a launch ramp at walking pace:
   // the first lap hand-test showed twelve melons parked on one. Not a
   // difficulty tweak — a stall on a ramp is a soft-lock.
-  if ((kind === 'kicker' || kind === 'gap' || kind === 'sw' || kind === 'trap' || kind === 'lip')
+  if ((kind === 'kicker' || kind === 'gap' || kind === 'sw' || kind === 'trap' || kind === 'lip'
+      || kind === 'tabletop')
       && g.lastKind !== 'slope' && g.lastKind !== 'roller') {
     kind = 'slope';
   }
   // The tunnel's converse gate: its mouth cap sits at head height, so
   // it may not follow a word that launches the field airborne.
   if (kind === 'tunnel' && (g.lastKind === 'kicker' || g.lastKind === 'gap'
-      || g.lastKind === 'sw' || g.lastKind === 'trap' || g.lastKind === 'lip')) {
+      || g.lastKind === 'sw' || g.lastKind === 'trap' || g.lastKind === 'lip'
+      || g.lastKind === 'tabletop')) {
     kind = 'flat';
   }
   // THE LAUNCH LAW (stage 5): the grid dumps twelve bodies at walking
@@ -810,6 +920,29 @@ function nextChunk(g, rOpt, recOpt) {
     // the face: from the lip down to extraBelow BELOW the arc's start
     const faceDrop = rise + p.extraBelow;
     g.slope(Math.max(12, faceDrop * FACE_RUN), faceDrop);   // the 60-deg slide (v8; a lip that did not rise keeps a 12 px minimum)
+    g.slope(p.landLen, p.landDy);
+  } else if (kind === 'tabletop') {
+    // THE TABLE-TOP (terrain v9, 2026-09-04). The entry heading and
+    // the along-heading approach exactly as the lip's; then the
+    // up-arc, the ramp, the level deck, the convex ROLL-OFF, a concave
+    // TRANSITION to the run-out's own heading, and the run-out. The
+    // transition is what keeps every CONCAVE step in the word under
+    // the curve-step law: a roll-off ending at 25-35 deg meeting a
+    // 14-22 deg run-out at a crease would be a fold at the very spot
+    // a mid-pace melon lands. Same radius as the roll-off (no extra
+    // draw). The one crease over 7 deg is the lip itself — convex,
+    // and the launch.
+    const n = g.pts.length;
+    const a = g.pts[n - 1], b = g.pts[n - 2] || a;
+    const entryAngle = (a.x > b.x) ? window.FF.dmath.atan2(a.y - b.y, a.x - b.x) : 0;
+    const p = tabletopPlan(r, rec, entryAngle);
+    const dm = window.FF.dmath;
+    g.slope(p.approach * dm.cos(entryAngle), p.approach * dm.sin(entryAngle));
+    g.arc(p.radius, entryAngle, p.end);
+    g.slope(p.ramp * dm.cos(p.end), p.ramp * dm.sin(p.end));   // the straight, along the exit heading (rises: end < 0)
+    g.flat(p.deck);                                            // THE LIP: the word's one convex crease, the launch
+    g.arc(p.rOff, 0, p.down);
+    g.arc(p.rOff, p.down, p.landAngle);
     g.slope(p.landLen, p.landDy);
   } else if (kind === 'tunnel') {
     const p = tunnelPlan(r, rec);
@@ -985,17 +1118,24 @@ window.FF.createTerrainGen = createTerrainGen;
 // THE ARC VERB (shared 2026-09-03; it lived in skijump.js "local until
 // a second customer" — the lip is the second; both cursors — the
 // streaming generator's and the lap builder's — call this one). Steps
-// sized by TURN (<= 6 deg each) but never sub-pixel. Same arithmetic,
-// same bytes: verify-skijump holds the hill.
+// sized by TURN (<= 6 deg each) but never sub-pixel.
+// THE STREAM IS SACRED (terrain v9, 2026-09-04): the verb came across
+// from skijump.js with Math.cos / Math.sin, which are not spec-pinned
+// (dmath.js's header: V8, JSC and SpiderMonkey may differ in the last
+// bit). Since v7 it lays race-track geometry in most lap templates,
+// and a lip point off by an ulp on one phone is a different track on
+// that phone. Every other verb here (the lip's approach, bump, the
+// entry heading) already draws from dmath; this was the outlier.
 function cursorArc(cur, r, a0, a1) {
   const DEG = Math.PI / 180;
+  const dm = window.FF.dmath;
   const turn = Math.abs(a1 - a0);
   const n = Math.max(1, Math.min(Math.ceil(turn / (6 * DEG)),
     Math.max(1, Math.floor((r * turn) / 4))));
   for (let i = 1; i <= n; i++) {
     const a = a0 + (a1 - a0) * (i / n);
     const L = r * (turn / n);
-    cur.slope(Math.max(1, Math.cos(a) * L), Math.sin(a) * L);
+    cur.slope(Math.max(1, dm.cos(a) * L), dm.sin(a) * L);
   }
 }
 
@@ -1049,6 +1189,7 @@ function makeCursor(x0, y0) {
 }
 
 window.FF.terrainLaws = { trackRecipe, kickerPlan, lipPlan, LIP_FAMS, LIP_R_MIN, gapPlan, switchPlan, tunnelPlan, trapPlan, kickerMaxGrade,
+  tabletopPlan, TT_EXIT_MAX, TT_R_OFF_MIN, TT_LAND_MIN,
   subRange, speakChunk: nextChunk, makeCursor, G_GRIND,
   GAP_ENTRY_F, GAP_FLOOR_F, GAP_EXIT_F };
 
