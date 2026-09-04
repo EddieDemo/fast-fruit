@@ -509,7 +509,9 @@ function meshSample(mesh, x, y) {
 // Per-pixel rather than canvas drawing calls, because the decal is
 // sampled through the geodesic mapping: there is no flat canvas to
 // draw on, only a question asked once per body pixel.
-const INK = [26, 26, 18];
+// THE INK is the canonical off-black (shading.PIGMENTS.INK, 2026-09-04);
+// it had been (26, 26, 18) — a warm trace of that value, now the pigment.
+const INK = window.FF.shading.INK_RGB;
 
 // Ten vertices of a five-pointed star, alternating outer/inner, tip
 // UP — art y runs down, so up is -y. Two proportions exist on purpose:
@@ -557,7 +559,7 @@ function starHit(pts, x, y, cx, cy, R, aim) {
 // old literal [246,248,242] carried a green trace nobody authored —
 // re-pinned to the shared colourless pigment, a ~2-unit shift.
 const WHITE = window.FF.shading.WHITE_RGB;   // one source; shading loads first
-const BLACK = window.FF.shading.BLACK_RGB;   // the void, same source (the plain black wrap)
+const BLACK = INK;   // a PAINTED black is the ink, never the void (the sky's #000000 lights nothing)
 
 function ring(nx, ny, r, w) {
   const d = Math.sqrt(nx * nx + ny * ny);
@@ -767,9 +769,9 @@ const ART = {
     }
     // THE CHECKER (2026-09-04): a face-space grid, `cols` cells across
     // the face and rows derived so cells are SQUARE IN PIXELS, two
-    // colours. Ruled four across (a ~5 px cell on a phone melon: the
-    // densest that still shows whole cells). The whole wrap is the
-    // grid — no artboard, no letterbox.
+    // colours. Ruled four across from the sheet, then five on device
+    // (~4 px a cell on a phone melon). The whole wrap is the grid —
+    // no artboard, no letterbox.
     if (f && f.checker) {
       const k = f.checker;
       const rows = Math.max(1, Math.round(k.cols / FACE_ASPECT));
@@ -894,7 +896,7 @@ const FLAGS = {
   fr: { h: false, bands: [[0, 85, 164], WHITE, [239, 65, 53]] },
   ie: { h: false, bands: [[22, 155, 98], WHITE, [255, 136, 62]] },
   it: { h: false, bands: [[0, 140, 69], WHITE, [205, 33, 42]] },
-  de: { h: true, bands: [[24, 24, 24], [221, 0, 0], [255, 206, 0]] },
+  de: { h: true, bands: [INK, [221, 0, 0], [255, 206, 0]] },
   pl: { h: true, bands: [WHITE, [220, 20, 60]] },
   // disc radius: 3/10 of flag height = 0.3 * 1.24
   jp: { field: WHITE,
@@ -913,12 +915,12 @@ const FLAGS = {
   ng: { h: false, bands: [[0, 135, 68], WHITE, [0, 135, 68]] },
   hu: { h: true, bands: [[206, 42, 52], WHITE, [71, 112, 80]] },
   at: { h: true, bands: [[237, 41, 57], WHITE, [237, 41, 57]] },
-  be: { h: false, bands: [[24, 24, 24], [253, 218, 36], [239, 51, 64]] },
+  be: { h: false, bands: [INK, [253, 218, 36], [239, 51, 64]] },
   ro: { h: false, bands: [[0, 43, 127], [252, 209, 22], [206, 17, 38]] },
   ci: { h: false, bands: [[247, 126, 0], WHITE, [0, 158, 96]] },
   // band + star: the emblem rides the middle band (overlays-first law)
   gh: { h: true, bands: [[206, 17, 38], [252, 201, 0], [0, 107, 63]],
-        stars: [{ x: 0, y: 0, r: 0.2, aim: null, color: [24, 24, 24] }] },
+        stars: [{ x: 0, y: 0, r: 0.2, aim: null, color: INK }] },
   sn: { h: false, bands: [[0, 133, 63], [253, 220, 35], [227, 27, 35]],
         stars: [{ x: 0, y: 0, r: 0.18, aim: null, color: [0, 133, 63] }] },
   cm: { h: false, bands: [[0, 122, 61], [206, 17, 38], [252, 209, 22]],
@@ -980,17 +982,29 @@ FLAGS['plain-black'] = { field: BLACK };
 // ---- 2026-09-04: Cornwall, Pride, Trans (docs/proofs/mock-flags*.png)
 // St Piran's: black field, white cross drawn in FACE space (see
 // flagwrap), half-thickness 0.22 — ruled "a touch thinner" than 0.28.
-FLAGS.kw = { field: BLACK, cross: { t: 0.22, color: WHITE } };
-// The six-stripe Pride flag and the Trans flag: horizontal bands,
-// FIT TO FACE so every stripe has an equal share of the melon.
-FLAGS.pride = { h: true, fit: 'face',
+// RE-RULED on device (Eddie, 2026-09-04, from the picker at editor
+// scale): "the bands are too thick — approach them the same as the
+// other banded flags." The cross's bar is now the thickness of a
+// tricolour's band on the face: a band is a third of the artboard's
+// 1.24 height, mapped through the wrap's 1.5x, = 0.276 of the
+// semi-minor; half-thickness 0.138. (0.22 had been 1.6x a band.) At
+// phone pixel view that is ~2 px, as Austria's white band is.
+FLAGS.kw = { field: BLACK, cross: { t: 0.138, color: WHITE } };
+// The six-stripe Pride flag and the Trans flag: horizontal bands
+// under the SAME wrap law as every tricolour (the height onto the
+// middle two-thirds, end bands run out) — `fit: 'face'` was tried
+// and re-ruled off on device the same day; the key stays in
+// flagwrap for a flag that wants it.
+FLAGS.pride = { h: true,
   bands: [[228, 3, 3], [255, 140, 0], [255, 237, 0], [0, 128, 38], [0, 76, 255], [115, 41, 130]] };
-FLAGS.trans = { h: true, fit: 'face',
+FLAGS.trans = { h: true,
   bands: [[91, 206, 250], [245, 169, 184], WHITE, [245, 169, 184], [91, 206, 250]] };
 // ---- 2026-09-04: CHECKER wraps (docs/proofs/mock-checker.png), four
 // across, five colour pairs as ruled. (Blue/cyan was shown merging
 // toward one colour at 1:1 — chosen with that on the sheet.)
-const CHECK = 4;
+// Re-ruled on device the same day: FIVE across (5 x 4 cells; ~4 px a
+// cell at phone pixel view).
+const CHECK = 5;
 FLAGS['check-bw'] = { checker: { cols: CHECK, a: BLACK, b: WHITE } };
 FLAGS['check-mb'] = { checker: { cols: CHECK, a: PLAIN.magenta, b: BLACK } };
 FLAGS['check-yb'] = { checker: { cols: CHECK, a: PLAIN.yellow, b: BLACK } };
@@ -1037,7 +1051,7 @@ const VARSITY_SRC = {
 // first run): the varsity numeral fill was a third hand-typed
 // near-white carrying the same unauthored green trace.
 const VARSITY_FILL = WHITE;
-const VARSITY_EDGE = [26, 26, 18];
+const VARSITY_EDGE = INK;   // the ink (was a second copy of the warm 26,26,18; 2026-09-04)
 
 // { w, h, cells } per glyph: 2 = stroke, 1 = outline, 0 = empty. The
 // outline is every empty cell touching a stroke cell, which is what
@@ -1113,12 +1127,15 @@ const SETS = {
     // drawn since the first eye pass and never listed; angry is new.
     // The set grows 1 -> 5, so the googly is no longer the certain
     // first eye roll (rarity is set size).
+    // EYES 50% BIGGER (Eddie, 2026-09-04, on device): size 1.5 on the
+    // authored base — 0.5625 of the semi-minor, ~10 px in pixel view.
+    // Worn eyes are scaled once by melon.js's migrate (flag eyesDots150).
     items: [
-      { id: 'eye-googly', label: 'googly eye', art: 'googly' },
-      { id: 'eye-wide', label: 'wide eye', art: 'wide' },
-      { id: 'eye-sleepy', label: 'sleepy eye', art: 'sleepy' },
-      { id: 'eye-angry', label: 'angry eye', art: 'angry' },
-      { id: 'eye-x', label: 'x eye', art: 'xeye' },
+      { id: 'eye-googly', label: 'googly eye', art: 'googly', size: 1.5 },
+      { id: 'eye-wide', label: 'wide eye', art: 'wide', size: 1.5 },
+      { id: 'eye-sleepy', label: 'sleepy eye', art: 'sleepy', size: 1.5 },
+      { id: 'eye-angry', label: 'angry eye', art: 'angry', size: 1.5 },
+      { id: 'eye-x', label: 'x eye', art: 'xeye', size: 1.5 },
     ],
   },
   markings: {
@@ -1152,15 +1169,18 @@ const SETS = {
       { id: 'mark-star-white', label: 'white star', art: 'star', size: 2, color: 'white' },
       { id: 'mark-star-black', label: 'black star', art: 'star', size: 2, color: 'black' },
       // POLKA DOTS (2026-09-04): individual dots; wear several for the
-      // pattern. size 0.6 = 75% of the original googly (see ART.dot).
-      { id: 'mark-dot-red', label: 'red dot', art: 'dot', size: 0.6, color: 'red' },
-      { id: 'mark-dot-yellow', label: 'yellow dot', art: 'dot', size: 0.6, color: 'yellow' },
-      { id: 'mark-dot-green', label: 'green dot', art: 'dot', size: 0.6, color: 'green' },
-      { id: 'mark-dot-cyan', label: 'cyan dot', art: 'dot', size: 0.6, color: 'cyan' },
-      { id: 'mark-dot-blue', label: 'blue dot', art: 'dot', size: 0.6, color: 'blue' },
-      { id: 'mark-dot-magenta', label: 'magenta dot', art: 'dot', size: 0.6, color: 'magenta' },
-      { id: 'mark-dot-white', label: 'white dot', art: 'dot', size: 0.6, color: 'white' },
-      { id: 'mark-dot-black', label: 'black dot', art: 'dot', size: 0.6, color: 'black' },
+      // pattern. size 0.6 = 75% of the original googly (see ART.dot);
+      // then 50% bigger on device the same day -> 0.9 (0.3375 of the
+      // semi-minor, ~5-6 px in pixel view). Worn dots scaled once by
+      // melon.js's migrate (flag eyesDots150).
+      { id: 'mark-dot-red', label: 'red dot', art: 'dot', size: 0.9, color: 'red' },
+      { id: 'mark-dot-yellow', label: 'yellow dot', art: 'dot', size: 0.9, color: 'yellow' },
+      { id: 'mark-dot-green', label: 'green dot', art: 'dot', size: 0.9, color: 'green' },
+      { id: 'mark-dot-cyan', label: 'cyan dot', art: 'dot', size: 0.9, color: 'cyan' },
+      { id: 'mark-dot-blue', label: 'blue dot', art: 'dot', size: 0.9, color: 'blue' },
+      { id: 'mark-dot-magenta', label: 'magenta dot', art: 'dot', size: 0.9, color: 'magenta' },
+      { id: 'mark-dot-white', label: 'white dot', art: 'dot', size: 0.9, color: 'white' },
+      { id: 'mark-dot-black', label: 'black dot', art: 'dot', size: 0.9, color: 'black' },
       // MORE MARKINGS (2026-09-04): diamond and crescent in the plain
       // colours; bullseye, teardrop, crash-test roundel as themselves.
       { id: 'mark-diamond-red', label: 'red diamond', art: 'diamond', size: 2, color: 'red' },

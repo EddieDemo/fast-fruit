@@ -186,7 +186,7 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   const pulp = (window.FF.shading && window.FF.shading.pulpPalette)
     ? window.FF.shading.pulpPalette(m.species, colorSeedOf(m), bodyHex,
         F.patternPigment ? { pigment: F.patternPigment } : F.patternOffset)
-    : (F.pulp || { flesh: '#ff4757', fleshLight: '#ff6b7d', seed: '#222222' });
+    : (F.pulp || window.FF.OBJECTS.watermelon.pulp);   // no literals here: the species' own authored pulp (2026-09-04, the INK trace law)
   const rindCol = pulp.rind;
   const slabCol = pulp.slab;
 

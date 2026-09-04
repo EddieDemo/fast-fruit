@@ -201,6 +201,22 @@ function migrate(st) {
     st.stickerS375 = true;
     dirty = true;
   }
+  // EYES AND DOTS 50% BIGGER (Eddie, 2026-09-04, on device): the eye
+  // items went to size 1.5 and the dots 0.6 -> 0.9. Worn ones scaled
+  // ONCE by id prefix ('eye-', 'mark-dot-'), flag eyesDots150 — the
+  // same pattern as stickerS375 above, and it runs after it, so a
+  // save from before either gets both in order.
+  if (!st.eyesDots150) {
+    for (const m of st.melons) {
+      if (!Array.isArray(m.decals)) continue;
+      for (const d of m.decals) {
+        if (d && typeof d.s === 'number' && typeof d.id === 'string'
+            && (d.id.indexOf('eye-') === 0 || d.id.indexOf('mark-dot-') === 0)) d.s *= 1.5;
+      }
+    }
+    st.eyesDots150 = true;
+    dirty = true;
+  }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
     else {

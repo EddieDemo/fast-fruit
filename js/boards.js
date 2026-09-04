@@ -116,7 +116,10 @@ function draw(ctx, state, cam, width, toScreenX, toScreenY, zoom) {
       ctx.fillStyle = '#2a2a2a';
       ctx.fillRect(bx0 + 3, py2 - ph2, 1, ph2);
       ctx.fillRect(bx0 + bw - 4, py2 - ph2, 1, ph2);
-      ctx.fillStyle = ad.bg || '#101010';
+      // the panel's default ground is the canonical off-black (INK,
+      // 2026-09-04) — it had been a hand-typed #101010 near it
+      const bg = ad.bg || window.FF.shading.INK_HEX;
+      ctx.fillStyle = bg;
       ctx.fillRect(bx0, by0, bw, bh);
       ctx.fillStyle = '#636363';           // 0.35 white over the panel
       ctx.fillRect(bx0, by0, bw, 1);
@@ -125,7 +128,7 @@ function draw(ctx, state, cam, width, toScreenX, toScreenY, zoom) {
       ctx.fillRect(bx0 + bw - 1, by0, 1, bh);
       const fgpx = ad.fg || '#e8f2df';
       if (window.FF.palette) {
-        window.FF.palette.register('boards', [ad.bg || '#101010', fgpx,
+        window.FF.palette.register('boards', [bg, fgpx,
           '#636363', '#8e9a88', '#2a2a2a']);
       }
       if (ad.text) {
@@ -155,7 +158,7 @@ function draw(ctx, state, cam, width, toScreenX, toScreenY, zoom) {
     ctx.fillRect(-BOARD_W / 2 + 18, -POST_H, 6, POST_H);
     ctx.fillRect(BOARD_W / 2 - 24, -POST_H, 6, POST_H);
     // Panel + border.
-    ctx.fillStyle = ad.bg || '#101010';
+    ctx.fillStyle = ad.bg || window.FF.shading.INK_HEX;   // INK (2026-09-04)
     ctx.fillRect(-BOARD_W / 2, top, BOARD_W, BOARD_H);
     ctx.strokeStyle = 'rgba(255,255,255,0.35)';
     ctx.lineWidth = 2;

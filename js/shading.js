@@ -709,11 +709,28 @@ function isoContour(angle, a, b, tau, spokes, taper) {
 // tones are that module's authored art, not shared pigments.
 const PIGMENTS = {
   WHITE: '#f6f6f6',   // ruled 2026-08-24 (headroom + colourless law above)
-  BLACK: '#000000',   // the void: sky, and nothing else so far
+  BLACK: '#000000',   // the void: the sky, and nothing else — never a surface
+  // INK — THE CANONICAL OFF-BLACK (ruled 2026-09-04, Eddie: "do the same
+  // for black"). A painted black needs headroom the way the white does,
+  // but MORE of it: highlights add toward 255, so the white's 9 levels
+  // suffice, while shadow is a multiply toward the rig's L* floor, so a
+  // black near 0 has nowhere to go and the terminator vanishes (pure
+  // #000000 through the rig: shadow, base and highlight all #000000).
+  // MEASURED through inkColor over the three bands: at 26 the spread
+  // from the shadow band (#0b0b0b) to the highlight (#5c5c5c) is 81
+  // levels — the same spread the white has (83). So the black surface
+  // is lit exactly as much as the white surface is: that is the
+  // number's reason. Zero chroma by the white's own law (temperature
+  // comes from the light). Consumers: every painted black — decal ink
+  // (pupils, the x-eye), the black wrap and stickers, the flag blacks,
+  // the crash-test quadrants, board backgrounds. The decal ink had
+  // been (26,26,18), a warm trace of this very value.
+  INK: '#1a1a1a',
 };
 const WHITE_HEX = PIGMENTS.WHITE;
 const WHITE_RGB = [246, 246, 246];
-const BLACK_RGB = [0, 0, 0];   // the void as an array, for the decal ink (plain black wrap, 2026-09-04)
+const INK_HEX = PIGMENTS.INK;
+const INK_RGB = [26, 26, 26];
 
 // ---- SPHERE TERMINATOR (rig S1, approved 2026-08-24) ----
 // Smoke (and later clouds) shade with the SAME solver as melons —
@@ -930,7 +947,7 @@ window.FF.shading = {
   castFootprint,
   P, SCHEMA, sun, bands, bandColor, shadeHex, hslToRgb, lstarOf, preSlot, inkColor, preInkColor, inkScale,
   bodyLight, isoContour, rimArc, sphereContour, _sphereStats,
-  WHITE_HEX, WHITE_RGB, BLACK_RGB, PIGMENTS,
+  WHITE_HEX, WHITE_RGB, INK_HEX, INK_RGB, PIGMENTS,
   rgbToHsl,
   // PIXEL 320 Phase 4: the sky needs a FINER ladder than the body
   // law's 4-L* rungs. A gradient is the one place a long ramp of
