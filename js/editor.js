@@ -691,6 +691,14 @@ function removeSelected() {
 function updateFoot() {
   const D = window.FF.decals;
   slotsEl.textContent = worn().length + '/' + D.MAX_DECALS + ' slots';
+  // DEV READOUT (v377, 2026-09-04): the bake's own account of itself,
+  // for the mobile-only colour bug that no headless rig reproduces —
+  // variants held, frames baked, the scratch canvas, and the last
+  // error the bake caught (iOS fails canvases silently past its memory
+  // budget). Reads FF._bakeStats; nothing else changes.
+  const BS = window.FF._bakeStats;
+  if (BS) slotsEl.textContent += '  \u00b7  bake ' + BS.variants + ' var / ' + BS.frames + ' fr / '
+    + (BS.scratchPx / 1e6).toFixed(1) + ' Mpx' + (BS.lastError ? '  \u00b7  ERR ' + BS.lastError : '');
   const M = window.FF.melon;
   nameEl.textContent = M.active().name || 'unnamed melon';
 }

@@ -2529,6 +2529,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
                              // snap; past 64 adjacent frames bake
                              // near-identical pixels
   const melonSprites = new Map();
+  const VARIANT_CAP = 48;   // v377: entries, LRU — a race field is ~12, a drag's trail is the rest
   function decalsSig(decals) {
     if (!decals || !decals.length) return '';
     let sig = '';
@@ -2789,12 +2790,17 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     }
     return s;
   }
-  function variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed) {
+  function variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed, preview) {
     const key = color + '|' + seedKey + '|' + (fruit || '') + '|'
       + a.toFixed(1) + '|' + b.toFixed(1) + '|' + rPx + '|' + decalsSig(decals)
+      + (preview ? '|p' : '')
       + '|' + hullSig(hull) + '|' + printSig(printSeed);
     let e = melonSprites.get(key);
-    if (e !== undefined) return e;
+    if (e !== undefined) {
+      // LRU touch (v377): most-recently-used to the back of the map
+      if (e) { melonSprites.delete(key); melonSprites.set(key, e); }
+      return e;
+    }
     if (typeof document === 'undefined') { melonSprites.set(key, null); return null; }
     const spr = 2 * (rPx + PAD);
     // bR: the world radius rPx was sized from. Equals `a` for every
@@ -2803,9 +2809,20 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // hold. The bake scale must divide by the SAME quantity, or a box
     // would be drawn sqrt(2) too large inside its own sprite.
     e = { spr, rPx, bR: spriteBoundR(fruit, a, b, hull), a, b, color, seedKey,
-      species: fruit, decals, hull: hull || null, printSeed, frames: new Map(),
-      big: null, btx: null };
+      species: fruit, decals, hull: hull || null, printSeed, frames: new Map(), preview: !!preview };
     melonSprites.set(key, e);
+    // THE VARIANT MAP IS BOUNDED (v377, 2026-09-04). It was not: every
+    // arrangement a drag passes through is a new variant, and each one
+    // kept its own frames (and, until v377, its own 4x supersample
+    // canvas — ~12 MB apiece on a phone's editor portrait). A thirty-
+    // move drag retained hundreds of MB of canvas; iOS caps a page's
+    // canvas memory and fails new canvases SILENTLY past it, which is
+    // the mobile-only editor colour bug's second half. Oldest out.
+    while (melonSprites.size > VARIANT_CAP) {
+      const oldest = melonSprites.keys().next().value;
+      if (oldest === undefined || oldest === key) break;
+      melonSprites.delete(oldest);
+    }
     return e;
   }
 
@@ -2827,14 +2844,21 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     return ((Math.round(deg / (360 / SUN_SLOTS)) % SUN_SLOTS) + SUN_SLOTS) % SUN_SLOTS;
   };
 
+  // ONE SUPERSAMPLE SCRATCH FOR EVERY BAKE (v377): the bake is
+  // synchronous, so one canvas serves every variant; it grows to the
+  // largest sprite seen and is never per-entry again.
+  let bigScratch = null, bigScratchSize = 0;
+  const BAKE_STATS = { variants: 0, frames: 0, scratchPx: 0, lastError: null };
+  window.FF._bakeStats = BAKE_STATS;
   function bakeFrame(e, rot, ax, mag, sun) {
     const spr = e.spr, big = spr * SS;
-    if (!e.big) {
-      e.big = document.createElement('canvas');
-      e.big.width = big; e.big.height = big;
-      e.btx = e.big.getContext('2d');
+    if (!bigScratch || bigScratchSize < big) {
+      bigScratch = document.createElement('canvas');
+      bigScratch.width = big; bigScratch.height = big;
+      bigScratchSize = big;
+      BAKE_STATS.scratchPx = big * big;
     }
-    const btx = e.btx;
+    const btx = bigScratch.getContext('2d');
     const zoomBake = (e.rPx * SS) / (e.bR || e.a);
     const half = (SS * SS) * 0.45;
     const quarter = (SS * SS) * 0.25;
@@ -2865,10 +2889,10 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         e.printSeed !== undefined ? { printSeed: e.printSeed } : {})
       : sq;
     drawMelonVector(btx, big / 2, big / 2, rot * 2 * Math.PI / SPRITE_ANGLES,
-      sqH, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals);
+      sqH, e.color, zoomBake, e.seedKey, e.a, e.b, e.species, e.decals, e.preview);
     let src;
     try { src = btx.getImageData(0, 0, big, big); }
-    catch (err) { bakeLodR = null; return null; }
+    catch (err) { bakeLodR = null; BAKE_STATS.lastError = String(err && err.message || err); return null; }
     const sd = src.data;
     const colors = [];
     const colorIdx = new Map();
@@ -2994,6 +3018,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (colors.length >= PX_NONE) throw new Error('sprite bake: ' + colors.length + ' colours cannot be indexed');
     const fc = document.createElement('canvas');
     fc.width = spr; fc.height = spr;
+    BAKE_STATS.frames++; BAKE_STATS.variants = melonSprites.size;
     const frame = { canvas: fc, idx, colors, spr, res: null };
     bakeLodR = null;
     if (sh && sunSave !== null) sh.P.sunBearingDeg = sunSave;
@@ -3127,8 +3152,8 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     return { ax, mag };
   }
 
-  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed) {
-    return variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed);
+  function melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed, preview) {
+    return variantEntry(color, seedKey, a, b, rPx, fruit, decals, hull, printSeed, preview);
   }
   // Verification surface for the cache's pure parts.
   window.FF._pxBake = { squashSlot, frameKey, SS, SQ_AXES, SQ_MAGS,
@@ -3232,7 +3257,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals);
   }
 
-  function drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals) {
+  function drawMelonVector(ctx, sx, sy, angle, squash, color, zoom, seedKey, bodyA, bodyB, fruit, decals, decalPreview) {
     const a = bodyA || CONFIG.semiMajor;
     const b = bodyB || CONFIG.semiMinor;
 
@@ -3321,9 +3346,16 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // three-colour flag. The raster is now built at the bake's own
     // scale (capped at RSCALE_MAX); a race bake's zoom is under 2, so
     // it still asks for RSCALE and its bytes do not move.
+    // THE PREVIEW TIER REACHES THE BAKE (v377): while a decal is being
+    // dragged the editor asks for preview, and the bake now honours it
+    // — the decal raster at the preview scale (<= 2), no cache writes —
+    // under its own variant key ('|p'), so the crisp bake lands on
+    // gesture end and is never served the preview's frame. Before this
+    // every pointer move built a full RSCALE_MAX raster, three lit
+    // copies and a 4x frame: the drag's cost, and the phone's memory.
     const rsBake = (bakeLodR !== null && zoom > RSCALE) ? Math.min(RSCALE_MAX, zoom) : undefined;
-    bakeUpscale = bakeLodR !== null && zoom > RSCALE_MAX;
-    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit, rsBake, decals);
+    bakeUpscale = bakeLodR !== null && (decalPreview || zoom > RSCALE_MAX);
+    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit, rsBake, decals, decalPreview);
     bakeUpscale = false;
 
     ctx.restore();
@@ -4034,7 +4066,24 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // A decal raster recoloured band by band, cached per (raster, slot).
   // Per-pixel work, so it must not happen per frame — same reason
   // tintedPattern is cached.
+  // RASTER CACHES ARE BUDGETED IN PIXELS, NOT ENTRIES (v377,
+  // 2026-09-04). The entry caps were set for race rasters (RSCALE 2:
+  // ~26 KB each); the editor's portrait builds them at RSCALE_MAX (v376,
+  // ~1.7 MB each), so 240 lit copies could hold 400 MB and 48 rasters
+  // 80 MB — past a phone's canvas budget on their own. Each cache
+  // evicts oldest-first until its pixel total is under its budget.
+  function evictToBudget(cache, budgetPx, keep, area) {
+    let total = 0;
+    for (const v of cache.values()) total += area(v);
+    while (total > budgetPx && cache.size > 1) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined || oldest === keep) break;
+      total -= area(cache.get(oldest));
+      cache.delete(oldest);
+    }
+  }
   const SHADED_CAP = 240;
+  const SHADED_PX = 6e6;     // ~24 MB of lit copies
   const shadedCache = new Map();
   function shadedDecal(raster, slot) {
     if (!raster) return null;
@@ -4065,6 +4114,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       if (oldest === undefined || oldest === ck) break;
       shadedCache.delete(oldest);
     }
+    evictToBudget(shadedCache, SHADED_PX, ck, (c) => c ? c.width * c.height : 0);
     return cv;
   }
 
@@ -4122,6 +4172,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // Per-pixel work happens HERE, at bake time, never per frame — the
   // raster is reused until the outfit or the body size changes.
   const DECAL_CAP = 48;
+  const DECAL_PX = 3e6;      // ~12 MB of decal rasters
   const decalCache = new Map();
   function decalRaster(worn, a, b, rs, preview) {
     const D = window.FF.decals;
@@ -4196,6 +4247,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const r = { canvas: cv, ctx: octx, w, h, id: ck };   // w/h stay in BODY units
     if (!ck) return r;                 // preview rasters are never cached
     decalCache.set(ck, r);
+    evictToBudget(decalCache, DECAL_PX, ck, (r0) => (r0 && r0.canvas) ? r0.canvas.width * r0.canvas.height : 0);
     while (decalCache.size > DECAL_CAP) {
       const oldest = decalCache.keys().next().value;
       if (oldest === undefined || oldest === ck) break;
@@ -4252,6 +4304,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // so the capacity is proportionally larger. Touch-on-hit + evict
   // oldest keeps the live set resident.
   const TINT_CAP = 400;
+  const TINT_PX = 4e6;       // ~16 MB of tinted pattern copies
   const tintCache = new Map();
   function tintedPattern(raster, color) {
     const ck = raster.id + '|' + color;
@@ -4270,6 +4323,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     c.fillRect(0, 0, cv.width, cv.height);
     t = cv;
     tintCache.set(ck, t);
+    evictToBudget(tintCache, TINT_PX, ck, (c) => c ? c.width * c.height : 0);
     while (tintCache.size > TINT_CAP) {
       const oldest = tintCache.keys().next().value;
       if (oldest === undefined || oldest === ck) break;
@@ -4320,6 +4374,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // a screen is still drawing it — the protection the cost heuristic
   // was reaching for, without the pathology.
   const RASTER_CAP = 64;
+  const RASTER_PX = 4e6;     // ~16 MB of rind pattern rasters (v377)
   const rasterCache = new Map();
   function patternRaster(key, fruit, a, b, scale) {
     const species = fruit || 'watermelon';
@@ -4352,6 +4407,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     else buildMarbleStripes(octx, cv, a, b, key, w, h, rs);
     rst = { canvas: cv, w, h, id: ck, scale: rs };
     rasterCache.set(ck, rst);
+    evictToBudget(rasterCache, RASTER_PX, ck, (r0) => (r0 && r0.canvas) ? r0.canvas.width * r0.canvas.height : 0);
     // Evict from the OLD end until we are back at capacity. A loop,
     // not a single delete: the cap can be lowered live by a future
     // memory-pressure hook without this needing to know.
@@ -4853,7 +4909,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       const devW = ((typeof window !== 'undefined' && window.innerWidth) || 1600)
         * ((typeof window !== 'undefined' && window.devicePixelRatio) || 1);
       const rPx = Math.max(5, Math.round((a * (scale || 1)) * 320 / Math.max(1, devW)));
-      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals);
+      const e = melonSpriteFrames(color, seedKey, a, b, rPx, fruit, decals, undefined, undefined, !!decalPreview);
       const TAU = Math.PI * 2;
       const k = ((Math.round(angle / (TAU / SPRITE_ANGLES)) % SPRITE_ANGLES)
         + SPRITE_ANGLES) % SPRITE_ANGLES;
