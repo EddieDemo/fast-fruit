@@ -2514,6 +2514,11 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // 16 px melon carries 3 bold stripes, not 6 fine ones). null
   // outside bakes = full detail.
   let bakeLodR = null;
+  // v376: true while a bake draws at a zoom past RSCALE_MAX — the
+  // rasters are being UPSCALED into the supersample, and the decal
+  // stamp draws them nearest-neighbour so no edge becomes a gradient.
+  // Race bakes never set it (their zoom is under 2).
+  let bakeUpscale = false;
   // Ruling pending real captures (Eddie, 2026-08-18): the simplified
   // pattern tier is OFF by default — at 320 every melon fell under
   // the 12 px cutoff, so LOD silently restyled the whole cast. Tune
@@ -2544,15 +2549,30 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   //    significant lightest tone that the vote erased, it is stamped
   //    back (2 px at its source centroid) — the glint is the melon's
   //    life at 16 px.
+  // THE INDEX MAP IS 16-BIT (2026-09-04, v376). A frame is an index map
+  // plus a colour list, and the map was a byte with 255 for "no pixel".
+  // A race sprite holds dozens of colours; the EDITOR'S portrait is
+  // ~300 px across and its 4x bake found 400-1000 distinct colours
+  // (anti-aliased band edges, one blend each), so indices past 255
+  // wrapped round: colour #300 was written as byte 44 and painted with
+  // whatever #44 was — Austria's white band came out green in one
+  // frame and pink in the next, and a dragged sticker changed shade
+  // with every move (every arrangement is a new bake, a new colour
+  // order). Now Uint16 with PX_NONE = 65535, and the bake ASSERTS the
+  // list fits — a signal that cannot say "I don't know" says "yes",
+  // and this one had been saying yes for weeks. The palette quantiser
+  // in bakeFrame keeps the real count small anyway.
+  const PX_NONE = 65535;
+  const PX_QUANT_AT = 32;   // the quantiser runs only past this many colours (race sprites hold under 20; measured)
   function pxRimGuarantee(idx, w, h, rimIdx) {
     const src = idx.slice();
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const p = y * w + x;
-        if (src[p] === 255) continue;
+        if (src[p] === PX_NONE) continue;
         const edge = x === 0 || x === w - 1 || y === 0 || y === h - 1
-          || src[p - 1] === 255 || src[p + 1] === 255
-          || src[p - w] === 255 || src[p + w] === 255;
+          || src[p - 1] === PX_NONE || src[p + 1] === PX_NONE
+          || src[p - w] === PX_NONE || src[p + w] === PX_NONE;
         if (edge) idx[p] = rimIdx;
       }
     }
@@ -2580,20 +2600,20 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const p = y * w + x;
-        if (src[p] !== 255) continue;
+        if (src[p] !== PX_NONE) continue;
         const tally = new Map();
         let op = 0;
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
             if (!dx && !dy) continue;
             const nk = src[(y + dy) * w + x + dx];
-            if (nk === 255) continue;
+            if (nk === PX_NONE) continue;
             op++;
             tally.set(nk, (tally.get(nk) || 0) + 1);
           }
         }
         if (op >= 6) {
-          let bk = 255, bc2 = -1;
+          let bk = PX_NONE, bc2 = -1;
           for (const [kk, c] of tally) if (c > bc2) { bc2 = c; bk = kk; }
           idx[p] = bk;
         }
@@ -2606,37 +2626,39 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const p = y * w + x;
-        if (idx[p] === 255) continue;
+        if (idx[p] === PX_NONE) continue;
         const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
         if (d < bd) { bd = d; best = p; }
       }
     }
     if (best < 0) return false;
     idx[best] = hiIdx;
-    if (idx[best + 1] !== undefined && idx[best + 1] !== 255) idx[best + 1] = hiIdx;
+    if (idx[best + 1] !== undefined && idx[best + 1] !== PX_NONE) idx[best + 1] = hiIdx;
     return true;
   }
   // THE PUPIL GUARANTEE (2026-09-04). A feature's projected centre
-  // (cx, cy) and the white disc it sits in (ex, ey, rw), all in sprite
-  // pixels, plus a lightness function over colour indices. Inside the
-  // white: every DARK pixel (L* < 50) the vote produced is reverted to
-  // the disc's dominant light colour, then ONE pixel is stamped at the
-  // rounded centre in the darkest colour the disc held (the band-lit
-  // ink), or `inkIdx` if it held none. A centre that lands off the
-  // opaque body (an eye at the rim) stamps the nearest opaque pixel
-  // within two: a pupil peeking past the white reads as an eye at the
-  // rim; a missing pupil reads as a bug. Pure over the index map, like
-  // the highlight guarantee beside it, so a suite can hold it.
-  function pxPupilGuarantee(idx, w, h, lOf, cx, cy, ex, ey, rw, inkIdx) {
-    const r2 = rw * rw;
+  // (cx, cy) in sprite pixels, a bounding box (x0..x1, y0..y1) to
+  // search, a predicate `inEye(x, y)` that says whether a sprite pixel
+  // is the EYE'S TERRITORY — the art itself (white or pupil), unprojected, not a disc
+  // (the first draft used a disc of the eye's radius and, on a black
+  // wrap, painted the melon above a sleepy lid white: the eye came out
+  // round on device) — and a lightness function over colour indices.
+  // In white territory: every DARK pixel (L* < 50) the vote produced is
+  // reverted to the territory's dominant light colour, then ONE pixel
+  // is stamped at the rounded centre in the darkest colour the
+  // territory held (the band-lit ink), or `inkIdx` if it held none. A
+  // centre that lands off the opaque body (an eye at the rim) stamps
+  // the nearest opaque pixel within two: a pupil peeking past the white
+  // reads as an eye at the rim; a missing pupil reads as a bug. Pure
+  // over the index map, like the highlight guarantee beside it.
+  function pxPupilGuarantee(idx, w, h, lOf, cx, cy, x0, y0, x1, y1, inEye, inkIdx) {
     const light = new Map(); let darkest = -1, darkL = Infinity;
-    const x0 = Math.max(0, Math.floor(ex - rw - 1)), x1 = Math.min(w - 1, Math.ceil(ex + rw + 1));
-    const y0 = Math.max(0, Math.floor(ey - rw - 1)), y1 = Math.min(h - 1, Math.ceil(ey + rw + 1));
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w - 1, x1); y1 = Math.min(h - 1, y1);
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
-        if ((x + 0.5 - ex) * (x + 0.5 - ex) + (y + 0.5 - ey) * (y + 0.5 - ey) > r2) continue;
+        if (!inEye(x, y)) continue;
         const k = idx[y * w + x];
-        if (k === 255) continue;
+        if (k === PX_NONE) continue;
         const L = lOf(k);
         if (L < 50) { if (L < darkL) { darkL = L; darkest = k; } }
         else light.set(k, (light.get(k) || 0) + 1);
@@ -2647,18 +2669,18 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     if (lightIdx < 0) return false;            // no white here: the eye is behind the rim
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
-        if ((x + 0.5 - ex) * (x + 0.5 - ex) + (y + 0.5 - ey) * (y + 0.5 - ey) > r2) continue;
+        if (!inEye(x, y)) continue;
         const p = y * w + x;
-        if (idx[p] !== 255 && lOf(idx[p]) < 50) idx[p] = lightIdx;
+        if (idx[p] !== PX_NONE && lOf(idx[p]) < 50) idx[p] = lightIdx;
       }
     }
     const ink = darkest >= 0 ? darkest : inkIdx;
     let px = Math.floor(cx), py = Math.floor(cy);
-    if (px < 0 || py < 0 || px >= w || py >= h || idx[py * w + px] === 255) {
+    if (px < 0 || py < 0 || px >= w || py >= h || idx[py * w + px] === PX_NONE) {
       let best = -1, bd = Infinity;
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
         const x = px + dx, y = py + dy;
-        if (x < 0 || y < 0 || x >= w || y >= h || idx[y * w + x] === 255) continue;
+        if (x < 0 || y < 0 || x >= w || y >= h || idx[y * w + x] === PX_NONE) continue;
         const d = dx * dx + dy * dy;
         if (d < bd) { bd = d; best = y * w + x; }
       }
@@ -2669,8 +2691,49 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     idx[py * w + px] = ink;
     return true;
   }
+  // THE PALETTE QUANTISER (2026-09-04, v376). After the vote a frame's
+  // colour list holds every block winner, and on a big sprite most of
+  // them are anti-aliased BLENDS along band edges — colours nobody
+  // authored, each covering a pixel or two. The vote is supposed to say
+  // what a pixel IS, and a blend is not a thing. So: a colour that
+  // covers fewer than `floor` pixels is a candidate; if it lies within
+  // `near` (max channel delta) of a colour that does cover area it is
+  // snapped to that colour; a rare colour FAR from every common one is
+  // kept — a 1 px pupil, a 2 px glint, are real and small, not blends.
+  // The list is then compacted and the map remapped. Pure over
+  // (idx, colors) so a suite can hold it; returns the new colour list.
+  function pxQuantisePalette(idx, colors, floor, near) {
+    const n = colors.length;
+    const count = new Uint32Array(n);
+    for (let p = 0; p < idx.length; p++) if (idx[p] !== PX_NONE) count[idx[p]]++;
+    const common = [];
+    for (let i = 0; i < n; i++) if (count[i] >= floor) common.push(i);
+    const map = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      map[i] = i;
+      if (count[i] === 0 || count[i] >= floor) continue;
+      const r = (colors[i] >> 16) & 255, g = (colors[i] >> 8) & 255, b = colors[i] & 255;
+      let best = -1, bd = Infinity;
+      for (const j of common) {
+        const kj = colors[j];
+        const d = Math.max(Math.abs(((kj >> 16) & 255) - r), Math.abs(((kj >> 8) & 255) - g), Math.abs((kj & 255) - b));
+        if (d < bd) { bd = d; best = j; }
+      }
+      if (best >= 0 && bd <= near) map[i] = best;
+    }
+    // compact: every colour still referenced keeps a slot, in first-use order
+    const slot = new Int32Array(n).fill(-1);
+    const out = [];
+    for (let p = 0; p < idx.length; p++) {
+      if (idx[p] === PX_NONE) continue;
+      const t = map[idx[p]];
+      if (slot[t] < 0) { slot[t] = out.length; out.push(colors[t]); }
+      idx[p] = slot[t];
+    }
+    return out;
+  }
   window.FF._pxSprite = { rim: pxRimGuarantee, highlight: pxHighlightGuarantee,
-    blockWinner: pxBlockWinner, close: pxClose, pupil: pxPupilGuarantee };
+    blockWinner: pxBlockWinner, close: pxClose, pupil: pxPupilGuarantee, quantise: pxQuantisePalette, NONE: PX_NONE };
   // Dev-lane capture (Eddie, 2026-08-18): the actual 320 buffer as a
   // PNG data URL — ground truth for visual iteration, because PIL
   // reconstructions passed proofs while the real device regressed.
@@ -2814,7 +2877,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       if (ci === undefined) { ci = colors.length; colors.push(kk); colorIdx.set(kk, ci); }
       return ci;
     };
-    const idx = new Uint8Array(spr * spr).fill(255);
+    const idx = new Uint16Array(spr * spr).fill(PX_NONE);
     // Pre-pass: the TRUE rendered highlight tone + its centroid.
     const srcHist = new Map();
     for (let sy2 = 0; sy2 < big; sy2++) {
@@ -2853,6 +2916,26 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         if (opaque >= half) idx[y * spr + x] = cOf(pxBlockWinner(tally, hiInt, quarter));
       }
     }
+    // Quantise BEFORE the guarantees: they add deliberate colours
+    // (the rim tone, the glint, the pupil's ink) that must not be
+    // snapped. floor: a colour must cover 0.2% of the opaque pixels,
+    // at least 2 — the editor's 314 px bake fell from 1013 colours to
+    // the rig's own dozens; race sprites are untouched in practice.
+    // near 40: an anti-aliased blend sits between its two neighbours,
+    // always within that of one of them; the pupil's ink is 60+ from
+    // any rind tone and stays.
+    // GATED on a long list (> PX_QUANT_AT = 32 colours): the blends it exists
+    // to remove only arise on big bakes, and the race sprites are
+    // tuned on device — measured byte-identical to v375 with the gate
+    // (without it, single-pixel rind specks moved on 0.1-0.2% of race
+    // pixels: a change nobody asked for).
+    if (colors.length > PX_QUANT_AT) {
+      let opaque = 0;
+      for (let p = 0; p < idx.length; p++) if (idx[p] !== PX_NONE) opaque++;
+      const kept = pxQuantisePalette(idx, colors, Math.max(2, Math.round(opaque * 0.002)), 40);
+      colors.length = 0; colorIdx.clear();
+      for (const kk of kept) { colorIdx.set(kk, colors.length); colors.push(kk); }
+    }
     pxClose(idx, spr, spr);
     if (hiInt >= 0 && hiRec) {
       pxHighlightGuarantee(idx, spr, spr, cOf(hiInt),
@@ -2882,11 +2965,33 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         if (!P || P.z < 0 || !E || E.z < 0) continue;  // the far side
         const cx = spr / 2 + (P.x * ca - P.y * sa) * k, cy = spr / 2 + (P.x * sa + P.y * ca) * k;
         const ex = spr / 2 + (E.x * ca - E.y * sa) * k, ey = spr / 2 + (E.x * sa + E.y * ca) * k;
-        const rw = Math.max(1, ft.white * half * k * 0.85);
+        const rw = ft.white * half * k + 1;
+        // THE EYE'S TERRITORY IS THE ART, UNPROJECTED: a sprite pixel
+        // belongs to the eye if the sticker's own routine paints
+        // ANYTHING there (white or its own pupil ink) — its centre
+        // carried back to body space (the frame's rotation undone),
+        // through the sticker mesh to sticker coordinates, into
+        // sampleArt. A sleepy lid's cut is honoured because the routine
+        // says "nothing" above it, so the melon there is never touched;
+        // the pupil's own patch is inside, so the vote's pupil pixels
+        // are reverted before the one true pixel is stamped. (A draft
+        // that tested for WHITE only left the voted pupil standing next
+        // to the stamp — two pupils.)
+        const mesh = D.buildStickerMesh(wd.u, wd.v, wd.rot, half, e.a, e.b, true);
+        if (!mesh) continue;
+        const inEye = (x, y) => {
+          const sx = (x + 0.5 - spr / 2) / k, sy = (y + 0.5 - spr / 2) / k;
+          const bx = sx * ca + sy * sa, by = -sx * sa + sy * ca;       // R(-angle)
+          const s = D.meshSample(mesh, bx, by);
+          if (!s) return false;
+          return D.sampleArt(item, s.x / half, s.y / half) !== null;
+        };
         if (inkIdx < 0) { const ir = sh.INK_RGB; inkIdx = cOf((ir[0] << 16) | (ir[1] << 8) | ir[2]); }
-        pxPupilGuarantee(idx, spr, spr, lOf, cx, cy, ex, ey, rw, inkIdx);
+        pxPupilGuarantee(idx, spr, spr, lOf, cx, cy,
+          Math.floor(ex - rw), Math.floor(ey - rw), Math.ceil(ex + rw), Math.ceil(ey + rw), inEye, inkIdx);
       }
     }
+    if (colors.length >= PX_NONE) throw new Error('sprite bake: ' + colors.length + ' colours cannot be indexed');
     const fc = document.createElement('canvas');
     fc.width = spr; fc.height = spr;
     const frame = { canvas: fc, idx, colors, spr, res: null };
@@ -2957,7 +3062,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     const lutShade = split ? build(ROOFED) : null;
     for (let p = 0; p < f.idx.length; p++) {
       const ci = f.idx[p];
-      if (ci === 255) continue;
+      if (ci === PX_NONE) continue;
       const col = p % spr;
       // The boundary is a LINE ALONG THE SUN RAY, not a vertical
       // column split. v1 predated the raking cast and assumed a
@@ -3209,7 +3314,17 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     // Cel-shaded body: world-fixed sun, terminator the surface rolls
     // beneath. The rotation that was invisible by design is now
     // readable against the light.
-    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit, undefined, decals);
+    // THE RASTER SCALE FOLLOWS THE BAKE (v376, 2026-09-04): rind and
+    // decal rasters are built at RSCALE (2x body px) and were drawn
+    // into a 4x-supersampled 300 px editor sprite with a 5x smoothed
+    // UPSCALE — every sticker edge became a gradient, 500 colours in a
+    // three-colour flag. The raster is now built at the bake's own
+    // scale (capped at RSCALE_MAX); a race bake's zoom is under 2, so
+    // it still asks for RSCALE and its bytes do not move.
+    const rsBake = (bakeLodR !== null && zoom > RSCALE) ? Math.min(RSCALE_MAX, zoom) : undefined;
+    bakeUpscale = bakeLodR !== null && zoom > RSCALE_MAX;
+    shadeEllipse(ctx, angle, a, b, color || COLORS.rind, seedKey, fruit, rsBake, decals);
+    bakeUpscale = false;
 
     ctx.restore();
   }
@@ -3832,6 +3947,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
           if (!lit) return;
           ctx.save();
           ctx.rotate(angle);
+          if (bakeUpscale) ctx.imageSmoothingEnabled = false;   // v376: an upscaled raster stays blocky, not blended
           ctx.drawImage(lit, -dr.w / 2, -dr.h / 2, dr.w, dr.h);
           ctx.restore();
         };

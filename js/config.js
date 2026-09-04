@@ -310,7 +310,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-09-04g';   // v373: terrain v9 — the table-top; the arc verb draws from dmath
+const BUILD = '2026-09-04i';   // v376: the 16-bit sprite index map, the palette quantiser, the bake-scale raster
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----
