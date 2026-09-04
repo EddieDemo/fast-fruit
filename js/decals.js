@@ -772,6 +772,19 @@ const ART = {
     // colours. Ruled four across from the sheet, then five on device
     // (~4 px a cell on a phone melon). The whole wrap is the grid —
     // no artboard, no letterbox.
+    // THE SPLIT (2026-09-04, from docs/proofs/mock-halves-dots.png): two
+    // plain colours across a face-space divide — 'h' top/bottom, 'v'
+    // left/right, 'd' a diagonal aspect-corrected to 45 deg in pixels,
+    // 'q' quarters. Sixteen hand-authored pairs (option 3: a set of
+    // looks, not a grid), the way the flags were chosen.
+    if (f && f.split) {
+      const sp = f.split;
+      const first = sp.mode === 'h' ? ny < 0
+        : sp.mode === 'v' ? nx < 0
+        : sp.mode === 'd' ? (nx / FACE_ASPECT + ny) < 0
+        : ((nx < 0) === (ny < 0));
+      return first ? sp.a : sp.b;
+    }
     if (f && f.checker) {
       const k = f.checker;
       const rows = Math.max(1, Math.round(k.cols / FACE_ASPECT));
@@ -1010,6 +1023,20 @@ FLAGS['check-mb'] = { checker: { cols: CHECK, a: PLAIN.magenta, b: BLACK } };
 FLAGS['check-yb'] = { checker: { cols: CHECK, a: PLAIN.yellow, b: BLACK } };
 FLAGS['check-bc'] = { checker: { cols: CHECK, a: PLAIN.blue, b: PLAIN.cyan } };
 FLAGS['check-rw'] = { checker: { cols: CHECK, a: PLAIN.red, b: WHITE } };
+// ---- 2026-09-04: SPLIT wraps, sixteen authored pairs (option 3)
+const SPLITS = {
+  // halves, top over bottom — the ones that read as objects
+  'half-rw': ['h', PLAIN.red, WHITE], 'half-bw': ['h', INK, WHITE], 'half-yw': ['h', PLAIN.yellow, WHITE],
+  'half-uw': ['h', PLAIN.blue, WHITE], 'half-gw': ['h', PLAIN.green, WHITE],
+  // quarters — the kits
+  'quad-rk': ['q', PLAIN.red, INK], 'quad-uw': ['q', PLAIN.blue, WHITE], 'quad-yk': ['q', PLAIN.yellow, INK], 'quad-gw': ['q', PLAIN.green, WHITE],
+  // diagonals — the colour-on-colour designs
+  'diag-mc': ['d', PLAIN.magenta, PLAIN.cyan], 'diag-uy': ['d', PLAIN.blue, PLAIN.yellow], 'diag-ry': ['d', PLAIN.red, PLAIN.yellow],
+  'diag-cw': ['d', PLAIN.cyan, WHITE], 'diag-mk': ['d', PLAIN.magenta, INK],
+  // left / right
+  'side-bw': ['v', INK, WHITE], 'side-ru': ['v', PLAIN.red, PLAIN.blue],
+};
+for (const k of Object.keys(SPLITS)) FLAGS[k] = { split: { mode: SPLITS[k][0], a: SPLITS[k][1], b: SPLITS[k][2] } };
 // A marking's ink: the item's colour key resolved through the same
 // table as the plain wraps (white and black by pigment reference).
 function markInk(item, fallback) {
@@ -1127,15 +1154,16 @@ const SETS = {
     // drawn since the first eye pass and never listed; angry is new.
     // The set grows 1 -> 5, so the googly is no longer the certain
     // first eye roll (rarity is set size).
-    // EYES 50% BIGGER (Eddie, 2026-09-04, on device): size 1.5 on the
-    // authored base — 0.5625 of the semi-minor, ~10 px in pixel view.
-    // Worn eyes are scaled once by melon.js's migrate (flag eyesDots150).
+    // EYE SIZE (Eddie, on device, 2026-09-04): 1 -> 1.5 ("50% bigger"),
+    // then "25% smaller — they're too large now" -> 1.125: 0.42 of the
+    // semi-minor, ~8 px in pixel view. Worn eyes are scaled by
+    // melon.js's migrate (flags eyesDots150, then eyes075).
     items: [
-      { id: 'eye-googly', label: 'googly eye', art: 'googly', size: 1.5 },
-      { id: 'eye-wide', label: 'wide eye', art: 'wide', size: 1.5 },
-      { id: 'eye-sleepy', label: 'sleepy eye', art: 'sleepy', size: 1.5 },
-      { id: 'eye-angry', label: 'angry eye', art: 'angry', size: 1.5 },
-      { id: 'eye-x', label: 'x eye', art: 'xeye', size: 1.5 },
+      { id: 'eye-googly', label: 'googly eye', art: 'googly', size: 1.125 },
+      { id: 'eye-wide', label: 'wide eye', art: 'wide', size: 1.125 },
+      { id: 'eye-sleepy', label: 'sleepy eye', art: 'sleepy', size: 1.125 },
+      { id: 'eye-angry', label: 'angry eye', art: 'angry', size: 1.125 },
+      { id: 'eye-x', label: 'x eye', art: 'xeye', size: 1.125 },
     ],
   },
   markings: {
@@ -1181,6 +1209,26 @@ const SETS = {
       { id: 'mark-dot-magenta', label: 'magenta dot', art: 'dot', size: 0.9, color: 'magenta' },
       { id: 'mark-dot-white', label: 'white dot', art: 'dot', size: 0.9, color: 'white' },
       { id: 'mark-dot-black', label: 'black dot', art: 'dot', size: 0.9, color: 'black' },
+      // THE DOT LADDER (2026-09-04, Eddie: "dot x2 the biggest, the third
+      // x1.5"): spot 1.35, big spot 1.8 — same routine; they STACK (the
+      // pile order is the editor's), so a dot on a big spot is an eye of
+      // any colour, and a spot between them an iris.
+      { id: 'mark-spot-red', label: 'red spot', art: 'dot', size: 1.35, color: 'red' },
+      { id: 'mark-spot-yellow', label: 'yellow spot', art: 'dot', size: 1.35, color: 'yellow' },
+      { id: 'mark-spot-green', label: 'green spot', art: 'dot', size: 1.35, color: 'green' },
+      { id: 'mark-spot-cyan', label: 'cyan spot', art: 'dot', size: 1.35, color: 'cyan' },
+      { id: 'mark-spot-blue', label: 'blue spot', art: 'dot', size: 1.35, color: 'blue' },
+      { id: 'mark-spot-magenta', label: 'magenta spot', art: 'dot', size: 1.35, color: 'magenta' },
+      { id: 'mark-spot-white', label: 'white spot', art: 'dot', size: 1.35, color: 'white' },
+      { id: 'mark-spot-black', label: 'black spot', art: 'dot', size: 1.35, color: 'black' },
+      { id: 'mark-bigspot-red', label: 'red big spot', art: 'dot', size: 1.8, color: 'red' },
+      { id: 'mark-bigspot-yellow', label: 'yellow big spot', art: 'dot', size: 1.8, color: 'yellow' },
+      { id: 'mark-bigspot-green', label: 'green big spot', art: 'dot', size: 1.8, color: 'green' },
+      { id: 'mark-bigspot-cyan', label: 'cyan big spot', art: 'dot', size: 1.8, color: 'cyan' },
+      { id: 'mark-bigspot-blue', label: 'blue big spot', art: 'dot', size: 1.8, color: 'blue' },
+      { id: 'mark-bigspot-magenta', label: 'magenta big spot', art: 'dot', size: 1.8, color: 'magenta' },
+      { id: 'mark-bigspot-white', label: 'white big spot', art: 'dot', size: 1.8, color: 'white' },
+      { id: 'mark-bigspot-black', label: 'black big spot', art: 'dot', size: 1.8, color: 'black' },
       // MORE MARKINGS (2026-09-04): diamond and crescent in the plain
       // colours; bullseye, teardrop, crash-test roundel as themselves.
       { id: 'mark-diamond-red', label: 'red diamond', art: 'diamond', size: 2, color: 'red' },
@@ -1281,6 +1329,23 @@ const SETS = {
       { id: 'wrap-check-yb', label: 'yellow & black checker', art: 'flagwrap', flag: 'check-yb', wrap: true },
       { id: 'wrap-check-bc', label: 'blue & cyan checker', art: 'flagwrap', flag: 'check-bc', wrap: true },
       { id: 'wrap-check-rw', label: 'red & white checker', art: 'flagwrap', flag: 'check-rw', wrap: true },
+      // ---- 2026-09-04: splits (see SPLITS)
+      { id: 'wrap-half-rw', label: 'red over white', art: 'flagwrap', flag: 'half-rw', wrap: true },
+      { id: 'wrap-half-bw', label: 'black over white', art: 'flagwrap', flag: 'half-bw', wrap: true },
+      { id: 'wrap-half-yw', label: 'yellow over white', art: 'flagwrap', flag: 'half-yw', wrap: true },
+      { id: 'wrap-half-uw', label: 'blue over white', art: 'flagwrap', flag: 'half-uw', wrap: true },
+      { id: 'wrap-half-gw', label: 'green over white', art: 'flagwrap', flag: 'half-gw', wrap: true },
+      { id: 'wrap-quad-rk', label: 'red & black quarters', art: 'flagwrap', flag: 'quad-rk', wrap: true },
+      { id: 'wrap-quad-uw', label: 'blue & white quarters', art: 'flagwrap', flag: 'quad-uw', wrap: true },
+      { id: 'wrap-quad-yk', label: 'yellow & black quarters', art: 'flagwrap', flag: 'quad-yk', wrap: true },
+      { id: 'wrap-quad-gw', label: 'green & white quarters', art: 'flagwrap', flag: 'quad-gw', wrap: true },
+      { id: 'wrap-diag-mc', label: 'magenta / cyan diagonal', art: 'flagwrap', flag: 'diag-mc', wrap: true },
+      { id: 'wrap-diag-uy', label: 'blue / yellow diagonal', art: 'flagwrap', flag: 'diag-uy', wrap: true },
+      { id: 'wrap-diag-ry', label: 'red / yellow diagonal', art: 'flagwrap', flag: 'diag-ry', wrap: true },
+      { id: 'wrap-diag-cw', label: 'cyan / white diagonal', art: 'flagwrap', flag: 'diag-cw', wrap: true },
+      { id: 'wrap-diag-mk', label: 'magenta / black diagonal', art: 'flagwrap', flag: 'diag-mk', wrap: true },
+      { id: 'wrap-side-bw', label: 'black | white', art: 'flagwrap', flag: 'side-bw', wrap: true },
+      { id: 'wrap-side-ru', label: 'red | blue', art: 'flagwrap', flag: 'side-ru', wrap: true },
     ],
   },
   numbers: {
@@ -1301,11 +1366,13 @@ for (const [setId, set] of Object.entries(SETS)) {
 function byId(id) { return ALL.find(i => i.id === id) || null; }
 
 // ---- WHAT A MELON IS WEARING ---------------------------------------
-// Five decals, untyped: five of anything. Typed slots ("one eye, one
-// mouth, three stickers") would push every melon toward the same face
-// and undo the variety the wardrobe exists to create — a melon
-// covered in five numbers is a valid and funny choice.
-const MAX_DECALS = 5;
+// SIX decals (2026-09-04, Eddie: "cap should change to 6, from 5" —
+// polka and the composed looks wanted one more), untyped: six of
+// anything. Typed slots ("one eye, one mouth, four stickers") would
+// push every melon toward the same face and undo the variety the
+// wardrobe exists to create — a melon covered in six dots is a valid
+// and funny choice.
+const MAX_DECALS = 6;
 
 // A worn decal is { id, u, v, rot, s }. Stored on the melon spec.
 function worn(spec) {

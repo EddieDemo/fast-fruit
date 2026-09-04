@@ -217,6 +217,19 @@ function migrate(st) {
     st.eyesDots150 = true;
     dirty = true;
   }
+  // EYES 25% SMALLER (Eddie, 2026-09-04, on device, after the 50%):
+  // eye items 1.5 -> 1.125. Worn eyes x0.75 once, flag eyes075, after
+  // eyesDots150 so the order of the day's rulings is preserved.
+  if (!st.eyes075) {
+    for (const m of st.melons) {
+      if (!Array.isArray(m.decals)) continue;
+      for (const d of m.decals) {
+        if (d && typeof d.s === 'number' && typeof d.id === 'string' && d.id.indexOf('eye-') === 0) d.s *= 0.75;
+      }
+    }
+    st.eyes075 = true;
+    dirty = true;
+  }
   for (const m of st.melons) {
     if (!m.record) { m.record = blankRecord(); dirty = true; }
     else {
