@@ -310,7 +310,7 @@ const DEFAULT_PRESET = 'Loose 1';
 // the build it came from. Two rounds of "the fix isn't working" have
 // turned out to be a stale file rather than a wrong one, and nothing
 // on screen could tell us apart. Bump it with any shipped change.
-const BUILD = '2026-09-04j';   // v377: bounded sprite memory — one scratch, LRU variants, pixel-budgeted caches, the preview tier in the bake
+const BUILD = '2026-09-05a';   // v380: the materials era — inventory counts, consumable paint, one-use decals, drops per cup
 
 const CONFIG = {
   // ---- HOP PROTOTYPE (dev flag, 2026-08-25, Eddie's spec) ----

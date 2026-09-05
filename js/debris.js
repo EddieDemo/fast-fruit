@@ -186,7 +186,7 @@ function spawnFromBody(m, state, tick, bodyIndex) {
   const pulp = (window.FF.shading && window.FF.shading.pulpPalette)
     ? window.FF.shading.pulpPalette(m.species, colorSeedOf(m), bodyHex,
         F.patternPigment ? { pigment: F.patternPigment } : F.patternOffset)
-    : (F.pulp || window.FF.OBJECTS.watermelon.pulp);   // no literals here: the species' own authored pulp (2026-09-04, the INK trace law)
+    : (F.pulp || (window.FF.OBJECTS && window.FF.OBJECTS.watermelon && window.FF.OBJECTS.watermelon.pulp) || {});   // no literals here: the species' own authored pulp (2026-09-04, the INK trace law); a rig without objects gets nothing rather than a copy
   const rindCol = pulp.rind;
   const slabCol = pulp.slab;
 

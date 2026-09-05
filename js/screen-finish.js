@@ -497,6 +497,16 @@ flow.register('finish', {
               // is granted and persisted here; the card only tells it.
               M.settleLevelRolls();
             }
+            // DROPS PER CUP FINISH (v380, ruled): one to three by
+            // place, no daily cap; granted and queued here, told by the
+            // cards. Before the melon award, which closes the sequence.
+            if (done && M.dropsForCup) {
+              M.dropsForCup({
+                day: (window.FF.cup.current() || {}).day,
+                attempt: (done.record && done.record.attempts) || 1,
+                place: done.place,
+              });
+            }
             if (done && M.awardForCup) {
               const award = M.awardForCup({
                 day: (window.FF.cup.current() || {}).day,

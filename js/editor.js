@@ -104,7 +104,7 @@ function bumpToTop(worn, i) {
 // ---- module state ----------------------------------------------------
 let elScreen = null;
 let cvs = null, ctx = null;
-let trayEl = null, slotsEl = null, nameEl = null;
+let trayEl = null, slotsEl = null, nameEl = null, paintEl = null;
 // The remove affordances' white — the X badge on a selection and the
 // REMOVE ALL glyph in the tray share it (one literal, one meaning).
 const BADGE_WHITE = 'rgba(255,255,255,0.95)';
@@ -158,6 +158,21 @@ const CSS = `
 .ff-tray-chip .ff-chip-rarity { font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro); color: var(--c-faint); }
 .ff-tray-clear { border-style: dashed; }
+.ff-tray-chip { position: relative; }
+.ff-chip-count { position: absolute; top: 4px; right: 6px; font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro); color: var(--c-accent); background: var(--panel-bg);
+  border: 1px solid var(--c-faint); border-radius: 999px; padding: 1px 6px; }
+.ff-edit-warn { text-align: center; font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+  color: var(--c-accent); margin: -4px 0 4px; }
+.ff-paint { margin: 4px 0 8px; }
+.ff-paint-head { font-size: var(--fs-micro); letter-spacing: var(--tr-micro); color: var(--c-faint); margin: 0 0 4px 2px; }
+.ff-paint-strip { display: flex; flex-wrap: wrap; gap: 5px; }
+.ff-pot { position: relative; width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--panel-bg);
+  padding: 0; cursor: pointer; flex: 0 0 auto; }
+.ff-pot.ff-pot-empty { opacity: 0.22; cursor: default; }
+.ff-pot .ff-pot-count { position: absolute; top: -7px; right: -6px; font-size: 9px; line-height: 12px;
+  color: var(--c-accent); background: var(--panel-bg); border-radius: 999px; padding: 0 4px;
+  border: 1px solid var(--c-faint); }
 .ff-editor-screen .ff-foot { flex-wrap: wrap; gap: 8px; }
 .ff-edit-zone { position: relative; }
 .ff-edit-readout { position: absolute; pointer-events: none; display: none;
@@ -585,30 +600,13 @@ function buildTray() {
   const D = window.FF.decals;
   const M = window.FF.melon;
   trayEl.textContent = '';
-  const owned = M.ownedDecals();
-  for (const setKey of Object.keys(D.SETS)) {
-    const set = D.SETS[setKey];
-    for (const item of set.items) {
-      if (owned.indexOf(item.id) === -1) continue;
-      const chip = el('button', 'ff-tray-chip');
-      const cv2 = el('canvas');
-      cv2.width = 88; cv2.height = 88;
-      chipCanvasPaint(cv2, item);
-      chip.appendChild(cv2);
-      chip.appendChild(el('div', 'ff-chip-label', item.label));
-      // Rarity is arithmetic: the set size IS the number.
-      chip.appendChild(el('div', 'ff-chip-rarity',
-        '1 of ' + set.items.length + ' ' + set.label));
-      chip.addEventListener('click', () => applyItem(item.id, chip));
-      trayEl.appendChild(chip);
-    }
-  }
   // REMOVE ALL (Eddie, 2026-09-04): a wrap's X badge sits on a mesh
   // corner that full coverage pushes off the silhouette, so a worn
-  // wrap had no visible way off. One extra slot at the end of the
-  // tray takes everything off in one tap — wraps and stickers alike.
-  // Same door as the X badge (spec.decals = null, save), so the two
-  // cannot disagree about what "bare" means.
+  // wrap had no visible way off. One slot takes everything off in one
+  // tap — wraps and stickers alike — FIRST in the tray (moved from
+  // last, v380, ruled). Same door as the X badge, so the two cannot
+  // disagree about what "bare" means; under the one-use rule it
+  // destroys what it removes, like the badge.
   const clear = el('button', 'ff-tray-chip ff-tray-clear');
   const cv3 = el('canvas'); cv3.width = 88; cv3.height = 88;
   paintClearGlyph(cv3);
@@ -617,6 +615,67 @@ function buildTray() {
   clear.appendChild(el('div', 'ff-chip-rarity', 'bare melon'));
   clear.addEventListener('click', () => removeAll());
   trayEl.appendChild(clear);
+  // THE STOCK (v380): a card per item in stock, with its count; a
+  // card leaves when its last one is used.
+  for (const setKey of Object.keys(D.SETS)) {
+    const set = D.SETS[setKey];
+    for (const item of set.items) {
+      const n = M.stock(item.id);
+      if (!(n > 0)) continue;
+      const chip = el('button', 'ff-tray-chip');
+      const cv2 = el('canvas');
+      cv2.width = 88; cv2.height = 88;
+      chipCanvasPaint(cv2, item);
+      chip.appendChild(cv2);
+      chip.appendChild(el('div', 'ff-chip-label', item.label));
+      chip.appendChild(el('div', 'ff-chip-rarity', 'tap to place one'));
+      chip.appendChild(el('div', 'ff-chip-count', '\u00d7' + n));
+      chip.addEventListener('click', () => applyItem(item.id, chip));
+      trayEl.appendChild(chip);
+    }
+  }
+  buildPaint();
+}
+
+// THE PAINT STRIP (v380): every pot in wheel order, the ones in stock
+// at full colour with a count, the rest dimmed — the strip doubles as
+// the map of what exists. A tap with a sticker selected spends one pot
+// and recolours the sticker (its silhouette in that colour, ink too).
+function buildPaint() {
+  const D = window.FF.decals;
+  const M = window.FF.melon;
+  if (!paintEl) return;
+  paintEl.textContent = '';
+  const owned = M.paintOwned();
+  paintEl.appendChild(el('div', 'ff-paint-head', 'PAINT \u00B7 select a sticker, tap a pot \u00B7 one pot each'));
+  const strip = el('div', 'ff-paint-strip');
+  for (const key of D.PLAIN_KEYS) {
+    const n = owned[key] | 0;
+    const pot = el('button', 'ff-pot' + (n > 0 ? '' : ' ff-pot-empty'));
+    const c = D.PLAIN[key];
+    pot.style.background = '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');   // the colour comes from the table, not from here
+    pot.title = key.replace(/-/g, ' ') + (n > 0 ? ' \u00d7' + n : ' (none)');
+    if (n > 0) pot.appendChild(el('span', 'ff-pot-count', '\u00d7' + n));
+    pot.addEventListener('click', () => applyPaint(key, pot));
+    strip.appendChild(pot);
+  }
+  paintEl.appendChild(strip);
+}
+
+function applyPaint(key, potBtn) {
+  const M = window.FF.melon;
+  const spec = body.spec;
+  const w = worn();
+  const shake = () => { if (potBtn) { potBtn.classList.remove('ff-shake'); void potBtn.offsetWidth; potBtn.classList.add('ff-shake'); } };
+  if (selected < 0 || !w[selected]) { slotsEl.textContent = 'select a sticker first, then tap a pot'; shake(); return; }
+  if (!M.usePaint(key)) { shake(); return; }
+  w[selected] = Object.assign({}, w[selected], { paint: key });
+  spec.decals = w;
+  rebuildHitMeshes();
+  updateFoot();
+  buildPaint();
+  draw(false);
+  window.FF.melon._save();
 }
 
 // The clear chip's art: a bare ring with a cross, in the tray's own
@@ -666,11 +725,15 @@ function applyItem(id, chipBtn) {
   // (one at a time — a hidden underlayer is a wasted slot pretending
   // to be a choice); stickers arrive on top, as ever.
   const item = D.byId(id);
+  // ONE FROM THE STACK (v380): placing consumes; a replaced wrap is
+  // destroyed like a removed one.
+  if (!window.FF.melon.consumeDecal(id)) { buildTray(); return; }
   const wd = D.place(spec, id, w.length);
   spec.decals = wornWithApplied(w, wd, !!(item && item.wrap));
   selected = (item && item.wrap) ? spec.decals.length - 1 : 0;
   rebuildHitMeshes();
   updateFoot();
+  buildTray();
   draw(false);
   window.FF.melon._save();
 }
@@ -713,6 +776,9 @@ function build() {
   head.appendChild(el('h1', 'ff-title', 'EDIT MELON'));
   const sub = el('p', 'ff-sub', 'drag to move \u00B7 knob turns and sizes \u00B7 double-tap straightens');
   head.appendChild(sub);
+  // THE MATERIALS ERA (v380, 2026-09-04): both new rules are one-way,
+  // so they are said before anyone learns them the hard way.
+  head.appendChild(el('p', 'ff-edit-warn', 'removing a sticker destroys it \u00B7 paint is used up when applied'));
   panel.appendChild(head);
 
   const bodyZone = el('div', 'ff-body');
@@ -726,6 +792,8 @@ function build() {
   bodyZone.appendChild(zoneEl);
   slotsEl = el('div', 'ff-edit-slots', '');
   bodyZone.appendChild(slotsEl);
+  paintEl = el('div', 'ff-paint');
+  bodyZone.appendChild(paintEl);
   trayEl = el('div', 'ff-tray');
   bodyZone.appendChild(trayEl);
   panel.appendChild(bodyZone);

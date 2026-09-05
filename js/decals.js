@@ -748,6 +748,11 @@ const ART = {
     if (disc(nx, ny, 0.98)) return PLAIN.red;
     return null;
   },
+  cross(nx, ny, item) {
+    // the medic cross: two square-ended bars, arm 0.34 of the box
+    if ((Math.abs(nx) < 0.34 && Math.abs(ny) < 0.95) || (Math.abs(ny) < 0.34 && Math.abs(nx) < 0.95)) return markInk(item, 'red');
+    return null;
+  },
   teardrop(nx, ny, item) {
     // a disc below, a point above (y runs down: the point is at ny -0.98)
     if (ny > 0.05 && disc(nx, ny - 0.35, 0.62)) return markInk(item, 'cyan');
@@ -1019,19 +1024,44 @@ const FLAGS = {
         ] },
 };
 
-// ---- PLAIN WRAPS (Eddie, 2026-09-04): eight block colours — the RGB
-// primaries, their intermediates, and the two canonical pigments.
-// TEMPERED, not pure: chosen beside the flag colours above so they
-// read as the same authored set (the pure sRGB primaries shout on
-// the Sega palette and pure blue goes near-black in shadow). White
-// and black are the pigments by reference, never a literal.
+// ---- THE PLAIN PALETTE (2026-09-04, v378): FORTY-TWO COLOURS.
+// Twelve hues x (dark / base / light) and six neutrals from canonical
+// black to canonical white. The six base hues that shipped first are
+// the tempered set beside the flag colours; the six between them
+// (orange, lime, teal, azure, violet, pink) are each the OKLCH
+// midpoint of their two neighbours (perceptual hue, lightness and
+// chroma, via oklab.js); light is the base at L +0.17 and 55% chroma
+// (pastel, not washed), dark at L -0.24 and 60% chroma (earthy, not
+// muddy — dark orange IS the brown, dark yellow the ochre). The
+// neutrals step from INK to WHITE in equal OKLab lightness (0.151 a
+// step; equal RGB steps would bunch the dark end). The two ends are
+// the pigments by reference. Authored as literals from that
+// derivation (docs/proofs/mock-42.png); a formula here would move
+// them whenever oklab.js moved.
 const PLAIN = {
-  red: [222, 32, 40], yellow: [250, 208, 0], green: [36, 168, 72],
-  cyan: [0, 178, 196], blue: [28, 84, 220], magenta: [214, 44, 160],
+  red: [222, 32, 40], 'dark-red': [115, 16, 18], 'light-red': [240, 142, 132],
+  orange: [240, 135, 0], 'dark-orange': [135, 79, 22], 'light-orange': [255, 210, 174],
+  yellow: [250, 208, 0], 'dark-yellow': [158, 135, 50], 'light-yellow': [243, 222, 146],
+  lime: [160, 191, 21], 'dark-lime': [95, 112, 32], 'light-lime': [212, 232, 159],
+  green: [36, 168, 72], 'dark-green': [20, 87, 36], 'light-green': [151, 211, 158],
+  teal: [0, 174, 149], 'dark-teal': [16, 93, 80], 'light-teal': [155, 218, 203],
+  cyan: [0, 178, 196], 'dark-cyan': [21, 99, 108], 'light-cyan': [160, 224, 234],
+  azure: [0, 139, 194], 'dark-azure': [0, 67, 96], 'light-azure': [137, 188, 220],
+  blue: [28, 84, 220], 'dark-blue': [23, 55, 128], 'light-blue': [112, 149, 223],
+  violet: [144, 63, 216], 'dark-violet': [77, 35, 116], 'light-violet': [182, 145, 227],
+  magenta: [214, 44, 160], 'dark-magenta': [107, 17, 78], 'light-magenta': [237, 147, 200],
+  pink: [223, 29, 106], 'dark-pink': [113, 12, 51], 'light-pink': [242, 143, 166],
+  // the neutral ladder — dark black is the INK, light white is the WHITE
+  'medium-black': [63, 63, 63], 'light-black': [105, 105, 105],
+  'dark-white': [149, 149, 149], 'medium-white': [197, 197, 197],
 };
+PLAIN['dark-black'] = INK;
+PLAIN['light-white'] = WHITE;
+PLAIN.black = INK;      // the short names the first eight items used
+PLAIN.white = WHITE;
+const PLAIN_KEYS = Object.keys(PLAIN).filter((k) => k !== 'black' && k !== 'white');   // the 42, for the item tables
 for (const k of Object.keys(PLAIN)) FLAGS['plain-' + k] = { field: PLAIN[k] };
-FLAGS['plain-white'] = { field: WHITE };
-FLAGS['plain-black'] = { field: BLACK };
+
 // ---- 2026-09-04: Cornwall, Pride, Trans (docs/proofs/mock-flags*.png)
 // St Piran's: black field, white cross drawn in FACE space (see
 // flagwrap), half-thickness 0.22 — ruled "a touch thinner" than 0.28.
@@ -1081,8 +1111,6 @@ for (const k of Object.keys(SPLITS)) FLAGS[k] = { split: { mode: SPLITS[k][0], a
 // table as the plain wraps (white and black by pigment reference).
 function markInk(item, fallback) {
   const k = (item && item.color) || fallback;
-  if (k === 'white') return WHITE;
-  if (k === 'black') return BLACK;
   return PLAIN[k] || PLAIN[fallback];
 }
 
@@ -1155,6 +1183,16 @@ function sampleArt(item, nx, ny) {
   const fn = ART[item && item.art];
   if (!fn) return null;
   return fn(nx, ny, item);
+}
+// PAINT (v380, 2026-09-04): a worn decal may carry `paint`, a plain
+// colour key. A painted decal is its SILHOUETTE in that one colour —
+// every colour replaced, ink included (ruled: "painting an eye would
+// turn it into a coloured polka dot"). Wraps included: a painted flag
+// is a plain wrap. This is the one sampling door the rasters use.
+function sampleWorn(wd, item, nx, ny) {
+  const c = sampleArt(item, nx, ny);
+  if (!c || !wd || !wd.paint) return c;
+  return PLAIN[wd.paint] || c;
 }
 
 // ---- THE CATALOGUE -------------------------------------------------
@@ -1250,7 +1288,7 @@ const SETS = {
       { id: 'mark-dot-white', label: 'white dot', art: 'dot', size: 0.9, color: 'white' },
       { id: 'mark-dot-black', label: 'black dot', art: 'dot', size: 0.9, color: 'black' },
       // THE DOT LADDER (2026-09-04, Eddie: "dot x2 the biggest, the third
-      // x1.5"): spot 1.35, big spot 1.8 — same routine; they STACK (the
+      // x1.5"): spot 1.35, big spot 1.8 -> 2 (v380, ruled: the roundel's size) — same routine; they STACK (the
       // pile order is the editor's), so a dot on a big spot is an eye of
       // any colour, and a spot between them an iris.
       { id: 'mark-spot-red', label: 'red spot', art: 'dot', size: 1.35, color: 'red' },
@@ -1261,14 +1299,14 @@ const SETS = {
       { id: 'mark-spot-magenta', label: 'magenta spot', art: 'dot', size: 1.35, color: 'magenta' },
       { id: 'mark-spot-white', label: 'white spot', art: 'dot', size: 1.35, color: 'white' },
       { id: 'mark-spot-black', label: 'black spot', art: 'dot', size: 1.35, color: 'black' },
-      { id: 'mark-bigspot-red', label: 'red big spot', art: 'dot', size: 1.8, color: 'red' },
-      { id: 'mark-bigspot-yellow', label: 'yellow big spot', art: 'dot', size: 1.8, color: 'yellow' },
-      { id: 'mark-bigspot-green', label: 'green big spot', art: 'dot', size: 1.8, color: 'green' },
-      { id: 'mark-bigspot-cyan', label: 'cyan big spot', art: 'dot', size: 1.8, color: 'cyan' },
-      { id: 'mark-bigspot-blue', label: 'blue big spot', art: 'dot', size: 1.8, color: 'blue' },
-      { id: 'mark-bigspot-magenta', label: 'magenta big spot', art: 'dot', size: 1.8, color: 'magenta' },
-      { id: 'mark-bigspot-white', label: 'white big spot', art: 'dot', size: 1.8, color: 'white' },
-      { id: 'mark-bigspot-black', label: 'black big spot', art: 'dot', size: 1.8, color: 'black' },
+      { id: 'mark-bigspot-red', label: 'red big spot', art: 'dot', size: 2, color: 'red' },
+      { id: 'mark-bigspot-yellow', label: 'yellow big spot', art: 'dot', size: 2, color: 'yellow' },
+      { id: 'mark-bigspot-green', label: 'green big spot', art: 'dot', size: 2, color: 'green' },
+      { id: 'mark-bigspot-cyan', label: 'cyan big spot', art: 'dot', size: 2, color: 'cyan' },
+      { id: 'mark-bigspot-blue', label: 'blue big spot', art: 'dot', size: 2, color: 'blue' },
+      { id: 'mark-bigspot-magenta', label: 'magenta big spot', art: 'dot', size: 2, color: 'magenta' },
+      { id: 'mark-bigspot-white', label: 'white big spot', art: 'dot', size: 2, color: 'white' },
+      { id: 'mark-bigspot-black', label: 'black big spot', art: 'dot', size: 2, color: 'black' },
       // MORE MARKINGS (2026-09-04): diamond and crescent in the plain
       // colours; bullseye, teardrop, crash-test roundel as themselves.
       { id: 'mark-diamond-red', label: 'red diamond', art: 'diamond', size: 2, color: 'red' },
@@ -1290,6 +1328,292 @@ const SETS = {
       { id: 'mark-bullseye', label: 'bullseye', art: 'bullseye', size: 2 },
       { id: 'mark-teardrop', label: 'teardrop', art: 'teardrop', size: 2, color: 'cyan' },
       { id: 'mark-crashtest', label: 'crash-test roundel', art: 'crashtest', size: 2 },
+      // EVERY COLOURED SHAPE IN EVERY COLOUR (v379, 2026-09-04, Eddie:
+      // "make sure all shapes that come in different colors have a
+      // version for every single color we now have"). The eight first
+      // colours keep their ids above; these are the other thirty-four
+      // per shape. The tray question stands parked by ruling.
+      { id: 'mark-heart-dark-red', label: 'dark red heart', art: 'heart', size: 2, color: 'dark-red' },
+      { id: 'mark-heart-light-red', label: 'light red heart', art: 'heart', size: 2, color: 'light-red' },
+      { id: 'mark-heart-dark-orange', label: 'dark orange heart', art: 'heart', size: 2, color: 'dark-orange' },
+      { id: 'mark-heart-orange', label: 'orange heart', art: 'heart', size: 2, color: 'orange' },
+      { id: 'mark-heart-light-orange', label: 'light orange heart', art: 'heart', size: 2, color: 'light-orange' },
+      { id: 'mark-heart-dark-yellow', label: 'dark yellow heart', art: 'heart', size: 2, color: 'dark-yellow' },
+      { id: 'mark-heart-light-yellow', label: 'light yellow heart', art: 'heart', size: 2, color: 'light-yellow' },
+      { id: 'mark-heart-dark-lime', label: 'dark lime heart', art: 'heart', size: 2, color: 'dark-lime' },
+      { id: 'mark-heart-lime', label: 'lime heart', art: 'heart', size: 2, color: 'lime' },
+      { id: 'mark-heart-light-lime', label: 'light lime heart', art: 'heart', size: 2, color: 'light-lime' },
+      { id: 'mark-heart-dark-green', label: 'dark green heart', art: 'heart', size: 2, color: 'dark-green' },
+      { id: 'mark-heart-light-green', label: 'light green heart', art: 'heart', size: 2, color: 'light-green' },
+      { id: 'mark-heart-dark-teal', label: 'dark teal heart', art: 'heart', size: 2, color: 'dark-teal' },
+      { id: 'mark-heart-teal', label: 'teal heart', art: 'heart', size: 2, color: 'teal' },
+      { id: 'mark-heart-light-teal', label: 'light teal heart', art: 'heart', size: 2, color: 'light-teal' },
+      { id: 'mark-heart-dark-cyan', label: 'dark cyan heart', art: 'heart', size: 2, color: 'dark-cyan' },
+      { id: 'mark-heart-light-cyan', label: 'light cyan heart', art: 'heart', size: 2, color: 'light-cyan' },
+      { id: 'mark-heart-dark-azure', label: 'dark azure heart', art: 'heart', size: 2, color: 'dark-azure' },
+      { id: 'mark-heart-azure', label: 'azure heart', art: 'heart', size: 2, color: 'azure' },
+      { id: 'mark-heart-light-azure', label: 'light azure heart', art: 'heart', size: 2, color: 'light-azure' },
+      { id: 'mark-heart-dark-blue', label: 'dark blue heart', art: 'heart', size: 2, color: 'dark-blue' },
+      { id: 'mark-heart-light-blue', label: 'light blue heart', art: 'heart', size: 2, color: 'light-blue' },
+      { id: 'mark-heart-dark-violet', label: 'dark violet heart', art: 'heart', size: 2, color: 'dark-violet' },
+      { id: 'mark-heart-violet', label: 'violet heart', art: 'heart', size: 2, color: 'violet' },
+      { id: 'mark-heart-light-violet', label: 'light violet heart', art: 'heart', size: 2, color: 'light-violet' },
+      { id: 'mark-heart-dark-magenta', label: 'dark magenta heart', art: 'heart', size: 2, color: 'dark-magenta' },
+      { id: 'mark-heart-light-magenta', label: 'light magenta heart', art: 'heart', size: 2, color: 'light-magenta' },
+      { id: 'mark-heart-dark-pink', label: 'dark pink heart', art: 'heart', size: 2, color: 'dark-pink' },
+      { id: 'mark-heart-pink', label: 'pink heart', art: 'heart', size: 2, color: 'pink' },
+      { id: 'mark-heart-light-pink', label: 'light pink heart', art: 'heart', size: 2, color: 'light-pink' },
+      { id: 'mark-heart-medium-black', label: 'medium black heart', art: 'heart', size: 2, color: 'medium-black' },
+      { id: 'mark-heart-light-black', label: 'light black heart', art: 'heart', size: 2, color: 'light-black' },
+      { id: 'mark-heart-dark-white', label: 'dark white heart', art: 'heart', size: 2, color: 'dark-white' },
+      { id: 'mark-heart-medium-white', label: 'medium white heart', art: 'heart', size: 2, color: 'medium-white' },
+      { id: 'mark-star-dark-red', label: 'dark red star', art: 'star', size: 2, color: 'dark-red' },
+      { id: 'mark-star-light-red', label: 'light red star', art: 'star', size: 2, color: 'light-red' },
+      { id: 'mark-star-dark-orange', label: 'dark orange star', art: 'star', size: 2, color: 'dark-orange' },
+      { id: 'mark-star-orange', label: 'orange star', art: 'star', size: 2, color: 'orange' },
+      { id: 'mark-star-light-orange', label: 'light orange star', art: 'star', size: 2, color: 'light-orange' },
+      { id: 'mark-star-dark-yellow', label: 'dark yellow star', art: 'star', size: 2, color: 'dark-yellow' },
+      { id: 'mark-star-light-yellow', label: 'light yellow star', art: 'star', size: 2, color: 'light-yellow' },
+      { id: 'mark-star-dark-lime', label: 'dark lime star', art: 'star', size: 2, color: 'dark-lime' },
+      { id: 'mark-star-lime', label: 'lime star', art: 'star', size: 2, color: 'lime' },
+      { id: 'mark-star-light-lime', label: 'light lime star', art: 'star', size: 2, color: 'light-lime' },
+      { id: 'mark-star-dark-green', label: 'dark green star', art: 'star', size: 2, color: 'dark-green' },
+      { id: 'mark-star-light-green', label: 'light green star', art: 'star', size: 2, color: 'light-green' },
+      { id: 'mark-star-dark-teal', label: 'dark teal star', art: 'star', size: 2, color: 'dark-teal' },
+      { id: 'mark-star-teal', label: 'teal star', art: 'star', size: 2, color: 'teal' },
+      { id: 'mark-star-light-teal', label: 'light teal star', art: 'star', size: 2, color: 'light-teal' },
+      { id: 'mark-star-dark-cyan', label: 'dark cyan star', art: 'star', size: 2, color: 'dark-cyan' },
+      { id: 'mark-star-light-cyan', label: 'light cyan star', art: 'star', size: 2, color: 'light-cyan' },
+      { id: 'mark-star-dark-azure', label: 'dark azure star', art: 'star', size: 2, color: 'dark-azure' },
+      { id: 'mark-star-azure', label: 'azure star', art: 'star', size: 2, color: 'azure' },
+      { id: 'mark-star-light-azure', label: 'light azure star', art: 'star', size: 2, color: 'light-azure' },
+      { id: 'mark-star-dark-blue', label: 'dark blue star', art: 'star', size: 2, color: 'dark-blue' },
+      { id: 'mark-star-light-blue', label: 'light blue star', art: 'star', size: 2, color: 'light-blue' },
+      { id: 'mark-star-dark-violet', label: 'dark violet star', art: 'star', size: 2, color: 'dark-violet' },
+      { id: 'mark-star-violet', label: 'violet star', art: 'star', size: 2, color: 'violet' },
+      { id: 'mark-star-light-violet', label: 'light violet star', art: 'star', size: 2, color: 'light-violet' },
+      { id: 'mark-star-dark-magenta', label: 'dark magenta star', art: 'star', size: 2, color: 'dark-magenta' },
+      { id: 'mark-star-light-magenta', label: 'light magenta star', art: 'star', size: 2, color: 'light-magenta' },
+      { id: 'mark-star-dark-pink', label: 'dark pink star', art: 'star', size: 2, color: 'dark-pink' },
+      { id: 'mark-star-pink', label: 'pink star', art: 'star', size: 2, color: 'pink' },
+      { id: 'mark-star-light-pink', label: 'light pink star', art: 'star', size: 2, color: 'light-pink' },
+      { id: 'mark-star-medium-black', label: 'medium black star', art: 'star', size: 2, color: 'medium-black' },
+      { id: 'mark-star-light-black', label: 'light black star', art: 'star', size: 2, color: 'light-black' },
+      { id: 'mark-star-dark-white', label: 'dark white star', art: 'star', size: 2, color: 'dark-white' },
+      { id: 'mark-star-medium-white', label: 'medium white star', art: 'star', size: 2, color: 'medium-white' },
+      { id: 'mark-dot-dark-red', label: 'dark red dot', art: 'dot', size: 0.9, color: 'dark-red' },
+      { id: 'mark-dot-light-red', label: 'light red dot', art: 'dot', size: 0.9, color: 'light-red' },
+      { id: 'mark-dot-dark-orange', label: 'dark orange dot', art: 'dot', size: 0.9, color: 'dark-orange' },
+      { id: 'mark-dot-orange', label: 'orange dot', art: 'dot', size: 0.9, color: 'orange' },
+      { id: 'mark-dot-light-orange', label: 'light orange dot', art: 'dot', size: 0.9, color: 'light-orange' },
+      { id: 'mark-dot-dark-yellow', label: 'dark yellow dot', art: 'dot', size: 0.9, color: 'dark-yellow' },
+      { id: 'mark-dot-light-yellow', label: 'light yellow dot', art: 'dot', size: 0.9, color: 'light-yellow' },
+      { id: 'mark-dot-dark-lime', label: 'dark lime dot', art: 'dot', size: 0.9, color: 'dark-lime' },
+      { id: 'mark-dot-lime', label: 'lime dot', art: 'dot', size: 0.9, color: 'lime' },
+      { id: 'mark-dot-light-lime', label: 'light lime dot', art: 'dot', size: 0.9, color: 'light-lime' },
+      { id: 'mark-dot-dark-green', label: 'dark green dot', art: 'dot', size: 0.9, color: 'dark-green' },
+      { id: 'mark-dot-light-green', label: 'light green dot', art: 'dot', size: 0.9, color: 'light-green' },
+      { id: 'mark-dot-dark-teal', label: 'dark teal dot', art: 'dot', size: 0.9, color: 'dark-teal' },
+      { id: 'mark-dot-teal', label: 'teal dot', art: 'dot', size: 0.9, color: 'teal' },
+      { id: 'mark-dot-light-teal', label: 'light teal dot', art: 'dot', size: 0.9, color: 'light-teal' },
+      { id: 'mark-dot-dark-cyan', label: 'dark cyan dot', art: 'dot', size: 0.9, color: 'dark-cyan' },
+      { id: 'mark-dot-light-cyan', label: 'light cyan dot', art: 'dot', size: 0.9, color: 'light-cyan' },
+      { id: 'mark-dot-dark-azure', label: 'dark azure dot', art: 'dot', size: 0.9, color: 'dark-azure' },
+      { id: 'mark-dot-azure', label: 'azure dot', art: 'dot', size: 0.9, color: 'azure' },
+      { id: 'mark-dot-light-azure', label: 'light azure dot', art: 'dot', size: 0.9, color: 'light-azure' },
+      { id: 'mark-dot-dark-blue', label: 'dark blue dot', art: 'dot', size: 0.9, color: 'dark-blue' },
+      { id: 'mark-dot-light-blue', label: 'light blue dot', art: 'dot', size: 0.9, color: 'light-blue' },
+      { id: 'mark-dot-dark-violet', label: 'dark violet dot', art: 'dot', size: 0.9, color: 'dark-violet' },
+      { id: 'mark-dot-violet', label: 'violet dot', art: 'dot', size: 0.9, color: 'violet' },
+      { id: 'mark-dot-light-violet', label: 'light violet dot', art: 'dot', size: 0.9, color: 'light-violet' },
+      { id: 'mark-dot-dark-magenta', label: 'dark magenta dot', art: 'dot', size: 0.9, color: 'dark-magenta' },
+      { id: 'mark-dot-light-magenta', label: 'light magenta dot', art: 'dot', size: 0.9, color: 'light-magenta' },
+      { id: 'mark-dot-dark-pink', label: 'dark pink dot', art: 'dot', size: 0.9, color: 'dark-pink' },
+      { id: 'mark-dot-pink', label: 'pink dot', art: 'dot', size: 0.9, color: 'pink' },
+      { id: 'mark-dot-light-pink', label: 'light pink dot', art: 'dot', size: 0.9, color: 'light-pink' },
+      { id: 'mark-dot-medium-black', label: 'medium black dot', art: 'dot', size: 0.9, color: 'medium-black' },
+      { id: 'mark-dot-light-black', label: 'light black dot', art: 'dot', size: 0.9, color: 'light-black' },
+      { id: 'mark-dot-dark-white', label: 'dark white dot', art: 'dot', size: 0.9, color: 'dark-white' },
+      { id: 'mark-dot-medium-white', label: 'medium white dot', art: 'dot', size: 0.9, color: 'medium-white' },
+      { id: 'mark-spot-dark-red', label: 'dark red spot', art: 'dot', size: 1.35, color: 'dark-red' },
+      { id: 'mark-spot-light-red', label: 'light red spot', art: 'dot', size: 1.35, color: 'light-red' },
+      { id: 'mark-spot-dark-orange', label: 'dark orange spot', art: 'dot', size: 1.35, color: 'dark-orange' },
+      { id: 'mark-spot-orange', label: 'orange spot', art: 'dot', size: 1.35, color: 'orange' },
+      { id: 'mark-spot-light-orange', label: 'light orange spot', art: 'dot', size: 1.35, color: 'light-orange' },
+      { id: 'mark-spot-dark-yellow', label: 'dark yellow spot', art: 'dot', size: 1.35, color: 'dark-yellow' },
+      { id: 'mark-spot-light-yellow', label: 'light yellow spot', art: 'dot', size: 1.35, color: 'light-yellow' },
+      { id: 'mark-spot-dark-lime', label: 'dark lime spot', art: 'dot', size: 1.35, color: 'dark-lime' },
+      { id: 'mark-spot-lime', label: 'lime spot', art: 'dot', size: 1.35, color: 'lime' },
+      { id: 'mark-spot-light-lime', label: 'light lime spot', art: 'dot', size: 1.35, color: 'light-lime' },
+      { id: 'mark-spot-dark-green', label: 'dark green spot', art: 'dot', size: 1.35, color: 'dark-green' },
+      { id: 'mark-spot-light-green', label: 'light green spot', art: 'dot', size: 1.35, color: 'light-green' },
+      { id: 'mark-spot-dark-teal', label: 'dark teal spot', art: 'dot', size: 1.35, color: 'dark-teal' },
+      { id: 'mark-spot-teal', label: 'teal spot', art: 'dot', size: 1.35, color: 'teal' },
+      { id: 'mark-spot-light-teal', label: 'light teal spot', art: 'dot', size: 1.35, color: 'light-teal' },
+      { id: 'mark-spot-dark-cyan', label: 'dark cyan spot', art: 'dot', size: 1.35, color: 'dark-cyan' },
+      { id: 'mark-spot-light-cyan', label: 'light cyan spot', art: 'dot', size: 1.35, color: 'light-cyan' },
+      { id: 'mark-spot-dark-azure', label: 'dark azure spot', art: 'dot', size: 1.35, color: 'dark-azure' },
+      { id: 'mark-spot-azure', label: 'azure spot', art: 'dot', size: 1.35, color: 'azure' },
+      { id: 'mark-spot-light-azure', label: 'light azure spot', art: 'dot', size: 1.35, color: 'light-azure' },
+      { id: 'mark-spot-dark-blue', label: 'dark blue spot', art: 'dot', size: 1.35, color: 'dark-blue' },
+      { id: 'mark-spot-light-blue', label: 'light blue spot', art: 'dot', size: 1.35, color: 'light-blue' },
+      { id: 'mark-spot-dark-violet', label: 'dark violet spot', art: 'dot', size: 1.35, color: 'dark-violet' },
+      { id: 'mark-spot-violet', label: 'violet spot', art: 'dot', size: 1.35, color: 'violet' },
+      { id: 'mark-spot-light-violet', label: 'light violet spot', art: 'dot', size: 1.35, color: 'light-violet' },
+      { id: 'mark-spot-dark-magenta', label: 'dark magenta spot', art: 'dot', size: 1.35, color: 'dark-magenta' },
+      { id: 'mark-spot-light-magenta', label: 'light magenta spot', art: 'dot', size: 1.35, color: 'light-magenta' },
+      { id: 'mark-spot-dark-pink', label: 'dark pink spot', art: 'dot', size: 1.35, color: 'dark-pink' },
+      { id: 'mark-spot-pink', label: 'pink spot', art: 'dot', size: 1.35, color: 'pink' },
+      { id: 'mark-spot-light-pink', label: 'light pink spot', art: 'dot', size: 1.35, color: 'light-pink' },
+      { id: 'mark-spot-medium-black', label: 'medium black spot', art: 'dot', size: 1.35, color: 'medium-black' },
+      { id: 'mark-spot-light-black', label: 'light black spot', art: 'dot', size: 1.35, color: 'light-black' },
+      { id: 'mark-spot-dark-white', label: 'dark white spot', art: 'dot', size: 1.35, color: 'dark-white' },
+      { id: 'mark-spot-medium-white', label: 'medium white spot', art: 'dot', size: 1.35, color: 'medium-white' },
+      { id: 'mark-bigspot-dark-red', label: 'dark red big spot', art: 'dot', size: 2, color: 'dark-red' },
+      { id: 'mark-bigspot-light-red', label: 'light red big spot', art: 'dot', size: 2, color: 'light-red' },
+      { id: 'mark-bigspot-dark-orange', label: 'dark orange big spot', art: 'dot', size: 2, color: 'dark-orange' },
+      { id: 'mark-bigspot-orange', label: 'orange big spot', art: 'dot', size: 2, color: 'orange' },
+      { id: 'mark-bigspot-light-orange', label: 'light orange big spot', art: 'dot', size: 2, color: 'light-orange' },
+      { id: 'mark-bigspot-dark-yellow', label: 'dark yellow big spot', art: 'dot', size: 2, color: 'dark-yellow' },
+      { id: 'mark-bigspot-light-yellow', label: 'light yellow big spot', art: 'dot', size: 2, color: 'light-yellow' },
+      { id: 'mark-bigspot-dark-lime', label: 'dark lime big spot', art: 'dot', size: 2, color: 'dark-lime' },
+      { id: 'mark-bigspot-lime', label: 'lime big spot', art: 'dot', size: 2, color: 'lime' },
+      { id: 'mark-bigspot-light-lime', label: 'light lime big spot', art: 'dot', size: 2, color: 'light-lime' },
+      { id: 'mark-bigspot-dark-green', label: 'dark green big spot', art: 'dot', size: 2, color: 'dark-green' },
+      { id: 'mark-bigspot-light-green', label: 'light green big spot', art: 'dot', size: 2, color: 'light-green' },
+      { id: 'mark-bigspot-dark-teal', label: 'dark teal big spot', art: 'dot', size: 2, color: 'dark-teal' },
+      { id: 'mark-bigspot-teal', label: 'teal big spot', art: 'dot', size: 2, color: 'teal' },
+      { id: 'mark-bigspot-light-teal', label: 'light teal big spot', art: 'dot', size: 2, color: 'light-teal' },
+      { id: 'mark-bigspot-dark-cyan', label: 'dark cyan big spot', art: 'dot', size: 2, color: 'dark-cyan' },
+      { id: 'mark-bigspot-light-cyan', label: 'light cyan big spot', art: 'dot', size: 2, color: 'light-cyan' },
+      { id: 'mark-bigspot-dark-azure', label: 'dark azure big spot', art: 'dot', size: 2, color: 'dark-azure' },
+      { id: 'mark-bigspot-azure', label: 'azure big spot', art: 'dot', size: 2, color: 'azure' },
+      { id: 'mark-bigspot-light-azure', label: 'light azure big spot', art: 'dot', size: 2, color: 'light-azure' },
+      { id: 'mark-bigspot-dark-blue', label: 'dark blue big spot', art: 'dot', size: 2, color: 'dark-blue' },
+      { id: 'mark-bigspot-light-blue', label: 'light blue big spot', art: 'dot', size: 2, color: 'light-blue' },
+      { id: 'mark-bigspot-dark-violet', label: 'dark violet big spot', art: 'dot', size: 2, color: 'dark-violet' },
+      { id: 'mark-bigspot-violet', label: 'violet big spot', art: 'dot', size: 2, color: 'violet' },
+      { id: 'mark-bigspot-light-violet', label: 'light violet big spot', art: 'dot', size: 2, color: 'light-violet' },
+      { id: 'mark-bigspot-dark-magenta', label: 'dark magenta big spot', art: 'dot', size: 2, color: 'dark-magenta' },
+      { id: 'mark-bigspot-light-magenta', label: 'light magenta big spot', art: 'dot', size: 2, color: 'light-magenta' },
+      { id: 'mark-bigspot-dark-pink', label: 'dark pink big spot', art: 'dot', size: 2, color: 'dark-pink' },
+      { id: 'mark-bigspot-pink', label: 'pink big spot', art: 'dot', size: 2, color: 'pink' },
+      { id: 'mark-bigspot-light-pink', label: 'light pink big spot', art: 'dot', size: 2, color: 'light-pink' },
+      { id: 'mark-bigspot-medium-black', label: 'medium black big spot', art: 'dot', size: 2, color: 'medium-black' },
+      { id: 'mark-bigspot-light-black', label: 'light black big spot', art: 'dot', size: 2, color: 'light-black' },
+      { id: 'mark-bigspot-dark-white', label: 'dark white big spot', art: 'dot', size: 2, color: 'dark-white' },
+      { id: 'mark-bigspot-medium-white', label: 'medium white big spot', art: 'dot', size: 2, color: 'medium-white' },
+      { id: 'mark-diamond-dark-red', label: 'dark red diamond', art: 'diamond', size: 2, color: 'dark-red' },
+      { id: 'mark-diamond-light-red', label: 'light red diamond', art: 'diamond', size: 2, color: 'light-red' },
+      { id: 'mark-diamond-dark-orange', label: 'dark orange diamond', art: 'diamond', size: 2, color: 'dark-orange' },
+      { id: 'mark-diamond-orange', label: 'orange diamond', art: 'diamond', size: 2, color: 'orange' },
+      { id: 'mark-diamond-light-orange', label: 'light orange diamond', art: 'diamond', size: 2, color: 'light-orange' },
+      { id: 'mark-diamond-dark-yellow', label: 'dark yellow diamond', art: 'diamond', size: 2, color: 'dark-yellow' },
+      { id: 'mark-diamond-light-yellow', label: 'light yellow diamond', art: 'diamond', size: 2, color: 'light-yellow' },
+      { id: 'mark-diamond-dark-lime', label: 'dark lime diamond', art: 'diamond', size: 2, color: 'dark-lime' },
+      { id: 'mark-diamond-lime', label: 'lime diamond', art: 'diamond', size: 2, color: 'lime' },
+      { id: 'mark-diamond-light-lime', label: 'light lime diamond', art: 'diamond', size: 2, color: 'light-lime' },
+      { id: 'mark-diamond-dark-green', label: 'dark green diamond', art: 'diamond', size: 2, color: 'dark-green' },
+      { id: 'mark-diamond-light-green', label: 'light green diamond', art: 'diamond', size: 2, color: 'light-green' },
+      { id: 'mark-diamond-dark-teal', label: 'dark teal diamond', art: 'diamond', size: 2, color: 'dark-teal' },
+      { id: 'mark-diamond-teal', label: 'teal diamond', art: 'diamond', size: 2, color: 'teal' },
+      { id: 'mark-diamond-light-teal', label: 'light teal diamond', art: 'diamond', size: 2, color: 'light-teal' },
+      { id: 'mark-diamond-dark-cyan', label: 'dark cyan diamond', art: 'diamond', size: 2, color: 'dark-cyan' },
+      { id: 'mark-diamond-light-cyan', label: 'light cyan diamond', art: 'diamond', size: 2, color: 'light-cyan' },
+      { id: 'mark-diamond-dark-azure', label: 'dark azure diamond', art: 'diamond', size: 2, color: 'dark-azure' },
+      { id: 'mark-diamond-azure', label: 'azure diamond', art: 'diamond', size: 2, color: 'azure' },
+      { id: 'mark-diamond-light-azure', label: 'light azure diamond', art: 'diamond', size: 2, color: 'light-azure' },
+      { id: 'mark-diamond-dark-blue', label: 'dark blue diamond', art: 'diamond', size: 2, color: 'dark-blue' },
+      { id: 'mark-diamond-light-blue', label: 'light blue diamond', art: 'diamond', size: 2, color: 'light-blue' },
+      { id: 'mark-diamond-dark-violet', label: 'dark violet diamond', art: 'diamond', size: 2, color: 'dark-violet' },
+      { id: 'mark-diamond-violet', label: 'violet diamond', art: 'diamond', size: 2, color: 'violet' },
+      { id: 'mark-diamond-light-violet', label: 'light violet diamond', art: 'diamond', size: 2, color: 'light-violet' },
+      { id: 'mark-diamond-dark-magenta', label: 'dark magenta diamond', art: 'diamond', size: 2, color: 'dark-magenta' },
+      { id: 'mark-diamond-light-magenta', label: 'light magenta diamond', art: 'diamond', size: 2, color: 'light-magenta' },
+      { id: 'mark-diamond-dark-pink', label: 'dark pink diamond', art: 'diamond', size: 2, color: 'dark-pink' },
+      { id: 'mark-diamond-pink', label: 'pink diamond', art: 'diamond', size: 2, color: 'pink' },
+      { id: 'mark-diamond-light-pink', label: 'light pink diamond', art: 'diamond', size: 2, color: 'light-pink' },
+      { id: 'mark-diamond-medium-black', label: 'medium black diamond', art: 'diamond', size: 2, color: 'medium-black' },
+      { id: 'mark-diamond-light-black', label: 'light black diamond', art: 'diamond', size: 2, color: 'light-black' },
+      { id: 'mark-diamond-dark-white', label: 'dark white diamond', art: 'diamond', size: 2, color: 'dark-white' },
+      { id: 'mark-diamond-medium-white', label: 'medium white diamond', art: 'diamond', size: 2, color: 'medium-white' },
+      { id: 'mark-crescent-dark-red', label: 'dark red crescent', art: 'crescent', size: 2, color: 'dark-red' },
+      { id: 'mark-crescent-light-red', label: 'light red crescent', art: 'crescent', size: 2, color: 'light-red' },
+      { id: 'mark-crescent-dark-orange', label: 'dark orange crescent', art: 'crescent', size: 2, color: 'dark-orange' },
+      { id: 'mark-crescent-orange', label: 'orange crescent', art: 'crescent', size: 2, color: 'orange' },
+      { id: 'mark-crescent-light-orange', label: 'light orange crescent', art: 'crescent', size: 2, color: 'light-orange' },
+      { id: 'mark-crescent-dark-yellow', label: 'dark yellow crescent', art: 'crescent', size: 2, color: 'dark-yellow' },
+      { id: 'mark-crescent-light-yellow', label: 'light yellow crescent', art: 'crescent', size: 2, color: 'light-yellow' },
+      { id: 'mark-crescent-dark-lime', label: 'dark lime crescent', art: 'crescent', size: 2, color: 'dark-lime' },
+      { id: 'mark-crescent-lime', label: 'lime crescent', art: 'crescent', size: 2, color: 'lime' },
+      { id: 'mark-crescent-light-lime', label: 'light lime crescent', art: 'crescent', size: 2, color: 'light-lime' },
+      { id: 'mark-crescent-dark-green', label: 'dark green crescent', art: 'crescent', size: 2, color: 'dark-green' },
+      { id: 'mark-crescent-light-green', label: 'light green crescent', art: 'crescent', size: 2, color: 'light-green' },
+      { id: 'mark-crescent-dark-teal', label: 'dark teal crescent', art: 'crescent', size: 2, color: 'dark-teal' },
+      { id: 'mark-crescent-teal', label: 'teal crescent', art: 'crescent', size: 2, color: 'teal' },
+      { id: 'mark-crescent-light-teal', label: 'light teal crescent', art: 'crescent', size: 2, color: 'light-teal' },
+      { id: 'mark-crescent-dark-cyan', label: 'dark cyan crescent', art: 'crescent', size: 2, color: 'dark-cyan' },
+      { id: 'mark-crescent-light-cyan', label: 'light cyan crescent', art: 'crescent', size: 2, color: 'light-cyan' },
+      { id: 'mark-crescent-dark-azure', label: 'dark azure crescent', art: 'crescent', size: 2, color: 'dark-azure' },
+      { id: 'mark-crescent-azure', label: 'azure crescent', art: 'crescent', size: 2, color: 'azure' },
+      { id: 'mark-crescent-light-azure', label: 'light azure crescent', art: 'crescent', size: 2, color: 'light-azure' },
+      { id: 'mark-crescent-dark-blue', label: 'dark blue crescent', art: 'crescent', size: 2, color: 'dark-blue' },
+      { id: 'mark-crescent-light-blue', label: 'light blue crescent', art: 'crescent', size: 2, color: 'light-blue' },
+      { id: 'mark-crescent-dark-violet', label: 'dark violet crescent', art: 'crescent', size: 2, color: 'dark-violet' },
+      { id: 'mark-crescent-violet', label: 'violet crescent', art: 'crescent', size: 2, color: 'violet' },
+      { id: 'mark-crescent-light-violet', label: 'light violet crescent', art: 'crescent', size: 2, color: 'light-violet' },
+      { id: 'mark-crescent-dark-magenta', label: 'dark magenta crescent', art: 'crescent', size: 2, color: 'dark-magenta' },
+      { id: 'mark-crescent-light-magenta', label: 'light magenta crescent', art: 'crescent', size: 2, color: 'light-magenta' },
+      { id: 'mark-crescent-dark-pink', label: 'dark pink crescent', art: 'crescent', size: 2, color: 'dark-pink' },
+      { id: 'mark-crescent-pink', label: 'pink crescent', art: 'crescent', size: 2, color: 'pink' },
+      { id: 'mark-crescent-light-pink', label: 'light pink crescent', art: 'crescent', size: 2, color: 'light-pink' },
+      { id: 'mark-crescent-medium-black', label: 'medium black crescent', art: 'crescent', size: 2, color: 'medium-black' },
+      { id: 'mark-crescent-light-black', label: 'light black crescent', art: 'crescent', size: 2, color: 'light-black' },
+      { id: 'mark-crescent-dark-white', label: 'dark white crescent', art: 'crescent', size: 2, color: 'dark-white' },
+      { id: 'mark-crescent-medium-white', label: 'medium white crescent', art: 'crescent', size: 2, color: 'medium-white' },
+      // THE MEDIC CROSS (v378, 2026-09-04; docs/proofs/mock-16-cross.png): arms 0.34 of the box, square-ended, no stroke — the most legible shape in the tray at 11 px — in all forty-two plain colours.
+      { id: 'mark-cross-dark-red', label: 'dark red cross', art: 'cross', size: 2, color: 'dark-red' },
+      { id: 'mark-cross-red', label: 'red cross', art: 'cross', size: 2, color: 'red' },
+      { id: 'mark-cross-light-red', label: 'light red cross', art: 'cross', size: 2, color: 'light-red' },
+      { id: 'mark-cross-dark-orange', label: 'dark orange cross', art: 'cross', size: 2, color: 'dark-orange' },
+      { id: 'mark-cross-orange', label: 'orange cross', art: 'cross', size: 2, color: 'orange' },
+      { id: 'mark-cross-light-orange', label: 'light orange cross', art: 'cross', size: 2, color: 'light-orange' },
+      { id: 'mark-cross-dark-yellow', label: 'dark yellow cross', art: 'cross', size: 2, color: 'dark-yellow' },
+      { id: 'mark-cross-yellow', label: 'yellow cross', art: 'cross', size: 2, color: 'yellow' },
+      { id: 'mark-cross-light-yellow', label: 'light yellow cross', art: 'cross', size: 2, color: 'light-yellow' },
+      { id: 'mark-cross-dark-lime', label: 'dark lime cross', art: 'cross', size: 2, color: 'dark-lime' },
+      { id: 'mark-cross-lime', label: 'lime cross', art: 'cross', size: 2, color: 'lime' },
+      { id: 'mark-cross-light-lime', label: 'light lime cross', art: 'cross', size: 2, color: 'light-lime' },
+      { id: 'mark-cross-dark-green', label: 'dark green cross', art: 'cross', size: 2, color: 'dark-green' },
+      { id: 'mark-cross-green', label: 'green cross', art: 'cross', size: 2, color: 'green' },
+      { id: 'mark-cross-light-green', label: 'light green cross', art: 'cross', size: 2, color: 'light-green' },
+      { id: 'mark-cross-dark-teal', label: 'dark teal cross', art: 'cross', size: 2, color: 'dark-teal' },
+      { id: 'mark-cross-teal', label: 'teal cross', art: 'cross', size: 2, color: 'teal' },
+      { id: 'mark-cross-light-teal', label: 'light teal cross', art: 'cross', size: 2, color: 'light-teal' },
+      { id: 'mark-cross-dark-cyan', label: 'dark cyan cross', art: 'cross', size: 2, color: 'dark-cyan' },
+      { id: 'mark-cross-cyan', label: 'cyan cross', art: 'cross', size: 2, color: 'cyan' },
+      { id: 'mark-cross-light-cyan', label: 'light cyan cross', art: 'cross', size: 2, color: 'light-cyan' },
+      { id: 'mark-cross-dark-azure', label: 'dark azure cross', art: 'cross', size: 2, color: 'dark-azure' },
+      { id: 'mark-cross-azure', label: 'azure cross', art: 'cross', size: 2, color: 'azure' },
+      { id: 'mark-cross-light-azure', label: 'light azure cross', art: 'cross', size: 2, color: 'light-azure' },
+      { id: 'mark-cross-dark-blue', label: 'dark blue cross', art: 'cross', size: 2, color: 'dark-blue' },
+      { id: 'mark-cross-blue', label: 'blue cross', art: 'cross', size: 2, color: 'blue' },
+      { id: 'mark-cross-light-blue', label: 'light blue cross', art: 'cross', size: 2, color: 'light-blue' },
+      { id: 'mark-cross-dark-violet', label: 'dark violet cross', art: 'cross', size: 2, color: 'dark-violet' },
+      { id: 'mark-cross-violet', label: 'violet cross', art: 'cross', size: 2, color: 'violet' },
+      { id: 'mark-cross-light-violet', label: 'light violet cross', art: 'cross', size: 2, color: 'light-violet' },
+      { id: 'mark-cross-dark-magenta', label: 'dark magenta cross', art: 'cross', size: 2, color: 'dark-magenta' },
+      { id: 'mark-cross-magenta', label: 'magenta cross', art: 'cross', size: 2, color: 'magenta' },
+      { id: 'mark-cross-light-magenta', label: 'light magenta cross', art: 'cross', size: 2, color: 'light-magenta' },
+      { id: 'mark-cross-dark-pink', label: 'dark pink cross', art: 'cross', size: 2, color: 'dark-pink' },
+      { id: 'mark-cross-pink', label: 'pink cross', art: 'cross', size: 2, color: 'pink' },
+      { id: 'mark-cross-light-pink', label: 'light pink cross', art: 'cross', size: 2, color: 'light-pink' },
+      { id: 'mark-cross-dark-black', label: 'dark black cross', art: 'cross', size: 2, color: 'dark-black' },
+      { id: 'mark-cross-medium-black', label: 'medium black cross', art: 'cross', size: 2, color: 'medium-black' },
+      { id: 'mark-cross-light-black', label: 'light black cross', art: 'cross', size: 2, color: 'light-black' },
+      { id: 'mark-cross-dark-white', label: 'dark white cross', art: 'cross', size: 2, color: 'dark-white' },
+      { id: 'mark-cross-medium-white', label: 'medium white cross', art: 'cross', size: 2, color: 'medium-white' },
+      { id: 'mark-cross-light-white', label: 'light white cross', art: 'cross', size: 2, color: 'light-white' },
     ],
   },
   flags: {
@@ -1359,6 +1683,41 @@ const SETS = {
       { id: 'wrap-magenta', label: 'magenta', art: 'flagwrap', flag: 'plain-magenta', wrap: true },
       { id: 'wrap-white', label: 'white', art: 'flagwrap', flag: 'plain-white', wrap: true },
       { id: 'wrap-black', label: 'black', art: 'flagwrap', flag: 'plain-black', wrap: true },
+      // ---- v378: the rest of the forty-two (see PLAIN); wrap-black is dark black, wrap-white is light white
+      { id: 'wrap-dark-red', label: 'dark red', art: 'flagwrap', flag: 'plain-dark-red', wrap: true },
+      { id: 'wrap-light-red', label: 'light red', art: 'flagwrap', flag: 'plain-light-red', wrap: true },
+      { id: 'wrap-dark-orange', label: 'dark orange', art: 'flagwrap', flag: 'plain-dark-orange', wrap: true },
+      { id: 'wrap-orange', label: 'orange', art: 'flagwrap', flag: 'plain-orange', wrap: true },
+      { id: 'wrap-light-orange', label: 'light orange', art: 'flagwrap', flag: 'plain-light-orange', wrap: true },
+      { id: 'wrap-dark-yellow', label: 'dark yellow', art: 'flagwrap', flag: 'plain-dark-yellow', wrap: true },
+      { id: 'wrap-light-yellow', label: 'light yellow', art: 'flagwrap', flag: 'plain-light-yellow', wrap: true },
+      { id: 'wrap-dark-lime', label: 'dark lime', art: 'flagwrap', flag: 'plain-dark-lime', wrap: true },
+      { id: 'wrap-lime', label: 'lime', art: 'flagwrap', flag: 'plain-lime', wrap: true },
+      { id: 'wrap-light-lime', label: 'light lime', art: 'flagwrap', flag: 'plain-light-lime', wrap: true },
+      { id: 'wrap-dark-green', label: 'dark green', art: 'flagwrap', flag: 'plain-dark-green', wrap: true },
+      { id: 'wrap-light-green', label: 'light green', art: 'flagwrap', flag: 'plain-light-green', wrap: true },
+      { id: 'wrap-dark-teal', label: 'dark teal', art: 'flagwrap', flag: 'plain-dark-teal', wrap: true },
+      { id: 'wrap-teal', label: 'teal', art: 'flagwrap', flag: 'plain-teal', wrap: true },
+      { id: 'wrap-light-teal', label: 'light teal', art: 'flagwrap', flag: 'plain-light-teal', wrap: true },
+      { id: 'wrap-dark-cyan', label: 'dark cyan', art: 'flagwrap', flag: 'plain-dark-cyan', wrap: true },
+      { id: 'wrap-light-cyan', label: 'light cyan', art: 'flagwrap', flag: 'plain-light-cyan', wrap: true },
+      { id: 'wrap-dark-azure', label: 'dark azure', art: 'flagwrap', flag: 'plain-dark-azure', wrap: true },
+      { id: 'wrap-azure', label: 'azure', art: 'flagwrap', flag: 'plain-azure', wrap: true },
+      { id: 'wrap-light-azure', label: 'light azure', art: 'flagwrap', flag: 'plain-light-azure', wrap: true },
+      { id: 'wrap-dark-blue', label: 'dark blue', art: 'flagwrap', flag: 'plain-dark-blue', wrap: true },
+      { id: 'wrap-light-blue', label: 'light blue', art: 'flagwrap', flag: 'plain-light-blue', wrap: true },
+      { id: 'wrap-dark-violet', label: 'dark violet', art: 'flagwrap', flag: 'plain-dark-violet', wrap: true },
+      { id: 'wrap-violet', label: 'violet', art: 'flagwrap', flag: 'plain-violet', wrap: true },
+      { id: 'wrap-light-violet', label: 'light violet', art: 'flagwrap', flag: 'plain-light-violet', wrap: true },
+      { id: 'wrap-dark-magenta', label: 'dark magenta', art: 'flagwrap', flag: 'plain-dark-magenta', wrap: true },
+      { id: 'wrap-light-magenta', label: 'light magenta', art: 'flagwrap', flag: 'plain-light-magenta', wrap: true },
+      { id: 'wrap-dark-pink', label: 'dark pink', art: 'flagwrap', flag: 'plain-dark-pink', wrap: true },
+      { id: 'wrap-pink', label: 'pink', art: 'flagwrap', flag: 'plain-pink', wrap: true },
+      { id: 'wrap-light-pink', label: 'light pink', art: 'flagwrap', flag: 'plain-light-pink', wrap: true },
+      { id: 'wrap-medium-black', label: 'medium black', art: 'flagwrap', flag: 'plain-medium-black', wrap: true },
+      { id: 'wrap-light-black', label: 'light black', art: 'flagwrap', flag: 'plain-light-black', wrap: true },
+      { id: 'wrap-dark-white', label: 'dark white', art: 'flagwrap', flag: 'plain-dark-white', wrap: true },
+      { id: 'wrap-medium-white', label: 'medium white', art: 'flagwrap', flag: 'plain-medium-white', wrap: true },
       // ---- 2026-09-04: Cornwall, Pride, Trans
       { id: 'wrap-kw', label: 'Cornwall', art: 'flagwrap', flag: 'kw', wrap: true },
       { id: 'wrap-pride', label: 'Pride', art: 'flagwrap', flag: 'pride', wrap: true },
@@ -1489,7 +1848,7 @@ function signature(spec) {
   const d = worn(spec);
   if (!d.length) return '';
   return '+' + d.map(x => x.id + ',' + x.u.toFixed(2) + ',' + x.v.toFixed(2)
-    + ',' + x.rot.toFixed(2) + ',' + x.s.toFixed(2)).join(';');
+    + ',' + x.rot.toFixed(2) + ',' + x.s.toFixed(2) + (x.paint ? ',' + x.paint : '')).join(';');
 }
 
 // The scale ceiling BY KIND (ruled 2026-08-16): wraps are fixed (the
@@ -1529,7 +1888,7 @@ window.FF.decals = {
   project, unproject, pointAt, unitAt, tangentsAt, sampleAt, foreshorten, visible,
   buildStickerMesh, meshSample, meshNFor, MESH_STEP, MESH_N_MIN, MESH_N_MAX, MESH_CELL,
   stickerPoint, FEATURES,
-  ART, VARSITY, FLAGS, sampleArt,
+  ART, VARSITY, FLAGS, sampleArt, sampleWorn, PLAIN, PLAIN_KEYS,
   worn, place, signature, paintArt, maxScaleFor, WRAP_POSE, WRAP_BLEED,
 };
 })();

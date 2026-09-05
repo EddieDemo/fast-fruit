@@ -2536,7 +2536,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     for (const wd of decals) {
       sig += (wd.id || '') + '@' + Math.round((wd.u || 0) * 50) + ','
         + Math.round((wd.v || 0) * 50) + ',' + Math.round((wd.rot || 0) * 10)
-        + ',' + Math.round((wd.s || 1) * 20) + ';';
+        + ',' + Math.round((wd.s || 1) * 20) + (wd.paint ? '/' + wd.paint : '') + ';';
     }
     return sig;
   }
@@ -2980,7 +2980,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
       let inkIdx = -1;
       for (const wd of e.decals) {
         const item = D.byId(wd.id); const ft = item && F[item.art];
-        if (!ft) continue;
+        if (!ft || wd.paint) continue;                 // a painted eye is a dot: nothing to guarantee (v380)
         const half = wd.s * e.b;
         const pr = ft.pupil.r * half * k;
         if (pr >= 1.5) continue;                       // big enough to vote: leave it
@@ -4179,7 +4179,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
     let ck = null;
     if (!preview) {
       const sig = worn.map(w => w.id + ',' + w.u.toFixed(2) + ',' + w.v.toFixed(2)
-        + ',' + w.rot.toFixed(2) + ',' + w.s.toFixed(2)).join(';');
+        + ',' + w.rot.toFixed(2) + ',' + w.s.toFixed(2) + (w.paint ? ',' + w.paint : '')).join(';');   // v380: paint is part of the outfit
       ck = sig + '|' + (a | 0) + '|' + (b | 0) + '|' + rs.toFixed(2);
       const r0 = decalCache.get(ck);
       if (r0 !== undefined) {
@@ -4221,7 +4221,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
           if (!q) continue;
           const nx = q.x / half, ny = q.y / half;
           if (Math.abs(nx) > 1 || Math.abs(ny) > 1) continue;
-          const c = D.sampleArt(item, nx, ny);
+          const c = D.sampleWorn(wd, item, nx, ny);   // v380: paint applies here
           if (!c) continue;
           const o = (py * pw + pxi) * 4;
           // PRE-COMPENSATED (option A + inverse). The art declares the

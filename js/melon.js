@@ -185,6 +185,22 @@ function migrate(st) {
     st.eraRoll = true;
     dirty = true;
   }
+  // THE MATERIALS ERA (2026-09-04, v380; ruled: paint is consumable,
+  // decals are one-use, drops come per cup finish, and you can own
+  // more than one of a thing). The owned list becomes an INVENTORY OF
+  // COUNTS, st.inv = { id: n }, and paint a stock, st.paint =
+  // { colourKey: n }. Migrated ONCE (flag inv1): every owned id
+  // becomes a count of one; stickers already on melons are consumed-
+  // in-place and untouched; st.decals stays as a mirror of the ids in
+  // stock for anything that still reads it.
+  if (!st.inv || typeof st.inv !== 'object') { st.inv = {}; dirty = true; }
+  if (!st.paint || typeof st.paint !== 'object') { st.paint = {}; dirty = true; }
+  if (!st.inv1) {
+    for (const id of st.decals) st.inv[id] = (st.inv[id] || 0) + 1;
+    st.inv1 = true;
+    dirty = true;
+  }
+  st.decals = Object.keys(st.inv).filter((id) => st.inv[id] > 0);
   // STICKERS 25% BIGGER (Eddie, 2026-09-04, v373): decals.js's one
   // authored sticker size went 0.30 -> 0.375 for legibility in pixel
   // view. A worn decal carries its own s, so stickers already on a
@@ -228,6 +244,17 @@ function migrate(st) {
       }
     }
     st.eyes075 = true;
+    dirty = true;
+  }
+  // BIG SPOT = ROUNDEL SIZE (v380): size 1.8 -> 2; worn big spots x(2/1.8) once, flag bigspot2.
+  if (!st.bigspot2) {
+    for (const m of st.melons) {
+      if (!Array.isArray(m.decals)) continue;
+      for (const d of m.decals) {
+        if (d && typeof d.s === 'number' && typeof d.id === 'string' && d.id.indexOf('mark-bigspot-') === 0) d.s *= 2 / 1.8;
+      }
+    }
+    st.bigspot2 = true;
     dirty = true;
   }
   for (const m of st.melons) {
@@ -387,21 +414,64 @@ const AWARD_CHANCE = { 1: 1, 2: 0.5, 3: 0.25 };
 // catalogue later dropped (the varsity 2) keeps it harmlessly — byId
 // returns null everywhere it matters — and gets it back the day the
 // item returns.
+// ---- THE INVENTORY (v380): counts, not a set ------------------------
+// ownedDecals() is the ids IN STOCK (count > 0); stock(id) the count;
+// grantDecal adds one (duplicates are the point now); consumeDecal
+// takes one and reports whether there was one to take. Removing a
+// worn sticker puts nothing back — that is the one-use ruling, and
+// the editor's hint line says so.
 function ownedDecals() {
   const st = stable || (load(), stable);
-  return (st.decals || []).slice();
+  return Object.keys(st.inv || {}).filter((id) => st.inv[id] > 0);
 }
 function hasDecal(id) {
   const st = stable || (load(), stable);
-  return !!(st.decals && st.decals.indexOf(id) !== -1);
+  return !!(st.inv && st.inv[id] > 0);
+}
+function stock(id) {
+  const st = stable || (load(), stable);
+  return (st.inv && st.inv[id]) | 0;
 }
 function grantDecal(id) {
   const D = window.FF.decals;
   if (!D || !D.byId(id)) return false;
   const st = stable || (load(), stable);
-  if (!st.decals) st.decals = [];
-  if (st.decals.indexOf(id) !== -1) return false;   // duplicates impossible
-  st.decals.push(id);
+  if (!st.inv) st.inv = {};
+  st.inv[id] = (st.inv[id] || 0) + 1;
+  st.decals = Object.keys(st.inv).filter((k) => st.inv[k] > 0);
+  save();
+  return true;
+}
+function consumeDecal(id) {
+  const st = stable || (load(), stable);
+  if (!st.inv || !(st.inv[id] > 0)) return false;
+  st.inv[id]--;
+  st.decals = Object.keys(st.inv).filter((k) => st.inv[k] > 0);
+  save();
+  return true;
+}
+// ---- PAINT (v380): a stock of pots by colour key, consumable ---------
+function paintStock(key) {
+  const st = stable || (load(), stable);
+  return (st.paint && st.paint[key]) | 0;
+}
+function paintOwned() {
+  const st = stable || (load(), stable);
+  return Object.assign({}, st.paint || {});
+}
+function grantPaint(key) {
+  const D = window.FF.decals;
+  if (!D || !D.PLAIN_KEYS || D.PLAIN_KEYS.indexOf(key) === -1) return false;
+  const st = stable || (load(), stable);
+  if (!st.paint) st.paint = {};
+  st.paint[key] = (st.paint[key] || 0) + 1;
+  save();
+  return true;
+}
+function usePaint(key) {
+  const st = stable || (load(), stable);
+  if (!st.paint || !(st.paint[key] > 0)) return false;
+  st.paint[key]--;
   save();
   return true;
 }
@@ -446,23 +516,54 @@ function addXp(n) {
 //
 // A full collection rolls null: the level-up beat still plays, the
 // decal beat simply doesn't. Completion is its own reward, deadpan.
-function rollDecal(level) {
+// THE DROP (v380). Materials, not treasures: the roll no longer
+// excludes what is owned (it must be able to hand you a second red
+// dot), and PAINT is a fourth set — the forty-two colour keys, equal
+// odds (ruled). Pick a non-empty set uniformly, then an item uniformly.
+// Pure and seeded by the caller's facts; rollDecal(level) is the
+// level-up's door into the same draw.
+function rollDrop(seed) {
   const D = window.FF.decals;
   if (!D) return null;
-  const st = stable || (load(), stable);
-  const owned = st.decals || [];
-  const eligible = [];
+  const sets = [];
   for (const key of Object.keys(D.SETS)) {
-    const items = D.SETS[key].items.filter(it => owned.indexOf(it.id) === -1);
-    if (items.length) eligible.push({ key, label: D.SETS[key].label, items });
+    const items = D.SETS[key].items;
+    if (items.length) sets.push({ key, label: D.SETS[key].label, items });
   }
-  if (!eligible.length) return null;
-  const seed = (playerSalt() ^ Math.imul(level >>> 0, 2654435761)) >>> 0;
-  const rng = window.FF.mulberry32(seed);
-  const set = eligible[Math.floor(rng() * eligible.length)];
+  if (D.PLAIN_KEYS && D.PLAIN_KEYS.length) sets.push({ key: 'paint', label: 'PAINT', items: D.PLAIN_KEYS.map((k) => ({ id: 'paint:' + k, key: k, label: k.replace(/-/g, ' ') + ' paint' })) });
+  if (!sets.length) return null;
+  const rng = window.FF.mulberry32(seed >>> 0);
+  const set = sets[Math.floor(rng() * sets.length)];
   const item = set.items[Math.floor(rng() * set.items.length)];
-  return { id: item.id, label: item.label, setLabel: set.label,
-    setSize: window.FF.decals.SETS[set.key].items.length };
+  if (set.key === 'paint') return { kind: 'paint', key: item.key, label: item.label, setLabel: set.label, setSize: set.items.length };
+  return { kind: 'decal', id: item.id, label: item.label, setLabel: set.label, setSize: set.items.length };
+}
+function rollDecal(level) {
+  return rollDrop((playerSalt() ^ Math.imul(level >>> 0, 2654435761)) >>> 0);
+}
+// Grant a drop and return its reward entry (the card tells it).
+function grantDrop(r, why) {
+  if (!r) return null;
+  if (r.kind === 'paint') { grantPaint(r.key); return { kind: 'paint', key: r.key, label: r.label, setLabel: r.setLabel, setSize: r.setSize, stock: paintStock(r.key), why }; }
+  grantDecal(r.id);
+  return { kind: 'decal', id: r.id, label: r.label, setLabel: r.setLabel, setSize: r.setSize, stock: stock(r.id), why };
+}
+// DROPS PER CUP FINISH (ruled 2026-09-04): first place three, second
+// two, everyone who finishes one. No daily cap — these are materials.
+// Seeded by (day, attempt, place, salt) like the melon award, so a
+// reload re-tells the same drops rather than re-rolling them.
+function dropsForPlace(place) { return place === 1 ? 3 : place === 2 ? 2 : 1; }
+function dropsForCup(result) {
+  const day = result.day || today();
+  const n = dropsForPlace(result.place);
+  const base = hashStr(day + '|' + (result.attempt || 1) + '|' + result.place + '|drops') ^ playerSalt();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = rollDrop((base ^ Math.imul(i + 1, 2654435761)) >>> 0);
+    const e = grantDrop(r, { place: result.place, i, n });
+    if (e) { queueReward(e); out.push(e); }
+  }
+  return out;
 }
 
 // ---- THE REWARD QUEUE ------------------------------------------------
@@ -508,9 +609,8 @@ function settleLevelRolls() {
     const L = (st.player.rolledLevel || 1) + 1;
     const r = rollDecal(L);
     if (r) {
-      grantDecal(r.id);
-      const entry = { kind: 'decal', level: L, id: r.id, label: r.label,
-        setLabel: r.setLabel, setSize: r.setSize };
+      const entry = grantDrop(r, { level: L });
+      entry.level = L;
       st.rewards.push(entry);
       queued.push(entry);
     }
@@ -770,7 +870,7 @@ function stats(seed, fruit, wide) {
 }
 
 window.FF.melon = { BASE_KG, derive, deriveSpec, _save: save, stats, career, awardForCup, acceptAward, deleteMelon,
-  ownedDecals, hasDecal, grantDecal, pilotXp, addXp, rollDecal,
+  ownedDecals, hasDecal, grantDecal, stock, consumeDecal, paintStock, paintOwned, grantPaint, usePaint, pilotXp, addXp, rollDecal, rollDrop, grantDrop, dropsForCup, dropsForPlace,
   queueReward, pendingRewards, shiftReward, takeReward, settleLevelRolls,
   awardsToday, playerSalt, stableFull, stableList, STABLE_MAX, DAILY_AWARD_CAP, AWARD_CHANCE, BAND_WIDE, BAND_STD, recordRace, recordCup, active, setActive, rename, playerName, renamePlayer, DEFAULT_PILOT, encodeMelon, decodeMelon, needsName, pickHeadline, UNNAMED_NAME, NAMING_HEADLINES, _load: load,
   // TRUE reload: drops the in-memory stable and re-reads storage.

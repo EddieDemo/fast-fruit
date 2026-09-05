@@ -44,6 +44,7 @@ function showRewardCard(entry, onAdvance) {
   elReward.style.display = 'flex';
 
   if (entry.kind === 'xp') paintXpCard(panel, entry);
+  else if (entry.kind === 'paint') paintPaintCard(panel, entry);
   else paintDecalCard(panel, entry);
 
   // A REAL BUTTON. The quiet style is for the road not taken (QUIT
@@ -116,12 +117,23 @@ function paintXpCard(panel, e) {
   })(t0);
 }
 
+// The drop's provenance line (v380): a level-up, or a cup finish and
+// its place; and the stock afterwards, so a second red dot reads as
+// "now x2" rather than a repeat.
+const ORD = ['', '1st', '2nd', '3rd'];
+function whyLine(e) {
+  if (e.level) return 'issued at pilot level ' + e.level;
+  if (e.why && e.why.place) {
+    const p = e.why.place;
+    return 'for ' + (ORD[p] || (p + 'th')) + ' place \u00b7 drop ' + (e.why.i + 1) + ' of ' + e.why.n;
+  }
+  return 'awarded';
+}
 function paintDecalCard(panel, e) {
   const D = window.FF.decals;
   const head = el('div', 'ff-head');
   head.appendChild(el('h1', 'ff-title', 'DECAL AWARDED'));
-  head.appendChild(el('p', 'ff-sub ff-reward-sub',
-    'issued at pilot level ' + e.level));
+  head.appendChild(el('p', 'ff-sub ff-reward-sub', whyLine(e)));
   panel.appendChild(head);
   const cv = el('canvas', 'ff-reward-art');
   cv.width = 176; cv.height = 176;
@@ -130,7 +142,27 @@ function paintDecalCard(panel, e) {
   panel.appendChild(cv);
   panel.appendChild(el('div', 'ff-reward-name', (e.label || e.id).toUpperCase()));
   panel.appendChild(el('div', 'ff-xp-line',
-    '1 OF ' + e.setSize + ' \u00b7 ' + e.setLabel));
+    '1 OF ' + e.setSize + ' \u00b7 ' + e.setLabel + (e.stock > 1 ? ' \u00b7 NOW \u00d7' + e.stock : '')));
+}
+// A pot of paint (v380): a swatch, the colour's name, the stock.
+function paintPaintCard(panel, e) {
+  const D = window.FF.decals;
+  const head = el('div', 'ff-head');
+  head.appendChild(el('h1', 'ff-title', 'PAINT AWARDED'));
+  head.appendChild(el('p', 'ff-sub ff-reward-sub', whyLine(e)));
+  panel.appendChild(head);
+  const cv = el('canvas', 'ff-reward-art');
+  cv.width = 176; cv.height = 176;
+  const c = (D.PLAIN && D.PLAIN[e.key]) || [127, 127, 127];
+  const x = cv.getContext('2d');
+  if (x) {
+    x.fillStyle = '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');   // the pot's colour, from the table
+    x.beginPath(); x.arc(88, 88, 62, 0, Math.PI * 2); x.fill();
+  }
+  panel.appendChild(cv);
+  panel.appendChild(el('div', 'ff-reward-name', (e.label || e.key).toUpperCase()));
+  panel.appendChild(el('div', 'ff-xp-line',
+    '1 OF ' + e.setSize + ' \u00b7 ' + e.setLabel + ' \u00b7 ONE POT' + (e.stock > 1 ? ' \u00b7 NOW \u00d7' + e.stock : '')));
 }
 
 // Run the queue front-to-back. Melon entries hand off to the existing
