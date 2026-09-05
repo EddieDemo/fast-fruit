@@ -602,6 +602,11 @@ function disc(nx, ny, r) { return nx * nx + ny * ny < r * r; }
 // editor) the vote is left alone: ruled fine as-is on device.
 // `white` is the disc the pupil sits in (the clearing radius).
 const FEATURES = {
+  // the ring's HOLE (v381): at the smallest ring's 5 px the vote filled
+  // the hole in half the rotation frames (measured 29/64 on the real
+  // bake); the bake stamps the surrounding colour at the projected
+  // centre when the ring is under HOLE_AT px across.
+  ring: { outer: 0.98, hole: { x: 0, y: 0 } },
   googly: { white: 0.98, pupil: { x: 0.22, y: -0.18, r: 0.34 } },
   wide: { white: 0.98, pupil: { x: 0, y: 0, r: 0.30 } },
   sleepy: { white: 0.98, pupil: { x: 0, y: 0.28, r: 0.30 } },
@@ -730,6 +735,14 @@ const ART = {
   // the one sticker with no interior to lose at that size.
   dot(nx, ny, item) {
     return disc(nx, ny, 0.98) ? markInk(item, 'white') : null;
+  },
+  // THE RING (v381, 2026-09-05): the dot with a hole, in the dot's
+  // three sizes. Inner radius 0.6 of the outer — at the smallest ring's
+  // 5 px on a phone that is a one-pixel wall round a one-pixel hole,
+  // the thinnest ring that is still a ring (0.7 lost its hole to the
+  // vote; 0.5 read as a dot with a pip). docs/proofs/mock-rings.png.
+  ring(nx, ny, item) {
+    return (disc(nx, ny, 0.98) && !disc(nx, ny, 0.6)) ? markInk(item, 'white') : null;
   },
   // MORE MARKINGS (Eddie, 2026-09-04, from docs/proofs/mock-more.png).
   // The diamond and the crescent in the plain colours; the bullseye,
@@ -1328,6 +1341,134 @@ const SETS = {
       { id: 'mark-bullseye', label: 'bullseye', art: 'bullseye', size: 2 },
       { id: 'mark-teardrop', label: 'teardrop', art: 'teardrop', size: 2, color: 'cyan' },
       { id: 'mark-crashtest', label: 'crash-test roundel', art: 'crashtest', size: 2 },
+      // RINGS (v381): the dot ladder with a hole — dot ring 0.9, spot ring
+      // 1.35, big spot ring 2 — in all forty-two.
+      { id: 'mark-dotring-dark-red', label: 'dark red dot ring', art: 'ring', size: 0.9, color: 'dark-red' },
+      { id: 'mark-dotring-red', label: 'red dot ring', art: 'ring', size: 0.9, color: 'red' },
+      { id: 'mark-dotring-light-red', label: 'light red dot ring', art: 'ring', size: 0.9, color: 'light-red' },
+      { id: 'mark-dotring-dark-orange', label: 'dark orange dot ring', art: 'ring', size: 0.9, color: 'dark-orange' },
+      { id: 'mark-dotring-orange', label: 'orange dot ring', art: 'ring', size: 0.9, color: 'orange' },
+      { id: 'mark-dotring-light-orange', label: 'light orange dot ring', art: 'ring', size: 0.9, color: 'light-orange' },
+      { id: 'mark-dotring-dark-yellow', label: 'dark yellow dot ring', art: 'ring', size: 0.9, color: 'dark-yellow' },
+      { id: 'mark-dotring-yellow', label: 'yellow dot ring', art: 'ring', size: 0.9, color: 'yellow' },
+      { id: 'mark-dotring-light-yellow', label: 'light yellow dot ring', art: 'ring', size: 0.9, color: 'light-yellow' },
+      { id: 'mark-dotring-dark-lime', label: 'dark lime dot ring', art: 'ring', size: 0.9, color: 'dark-lime' },
+      { id: 'mark-dotring-lime', label: 'lime dot ring', art: 'ring', size: 0.9, color: 'lime' },
+      { id: 'mark-dotring-light-lime', label: 'light lime dot ring', art: 'ring', size: 0.9, color: 'light-lime' },
+      { id: 'mark-dotring-dark-green', label: 'dark green dot ring', art: 'ring', size: 0.9, color: 'dark-green' },
+      { id: 'mark-dotring-green', label: 'green dot ring', art: 'ring', size: 0.9, color: 'green' },
+      { id: 'mark-dotring-light-green', label: 'light green dot ring', art: 'ring', size: 0.9, color: 'light-green' },
+      { id: 'mark-dotring-dark-teal', label: 'dark teal dot ring', art: 'ring', size: 0.9, color: 'dark-teal' },
+      { id: 'mark-dotring-teal', label: 'teal dot ring', art: 'ring', size: 0.9, color: 'teal' },
+      { id: 'mark-dotring-light-teal', label: 'light teal dot ring', art: 'ring', size: 0.9, color: 'light-teal' },
+      { id: 'mark-dotring-dark-cyan', label: 'dark cyan dot ring', art: 'ring', size: 0.9, color: 'dark-cyan' },
+      { id: 'mark-dotring-cyan', label: 'cyan dot ring', art: 'ring', size: 0.9, color: 'cyan' },
+      { id: 'mark-dotring-light-cyan', label: 'light cyan dot ring', art: 'ring', size: 0.9, color: 'light-cyan' },
+      { id: 'mark-dotring-dark-azure', label: 'dark azure dot ring', art: 'ring', size: 0.9, color: 'dark-azure' },
+      { id: 'mark-dotring-azure', label: 'azure dot ring', art: 'ring', size: 0.9, color: 'azure' },
+      { id: 'mark-dotring-light-azure', label: 'light azure dot ring', art: 'ring', size: 0.9, color: 'light-azure' },
+      { id: 'mark-dotring-dark-blue', label: 'dark blue dot ring', art: 'ring', size: 0.9, color: 'dark-blue' },
+      { id: 'mark-dotring-blue', label: 'blue dot ring', art: 'ring', size: 0.9, color: 'blue' },
+      { id: 'mark-dotring-light-blue', label: 'light blue dot ring', art: 'ring', size: 0.9, color: 'light-blue' },
+      { id: 'mark-dotring-dark-violet', label: 'dark violet dot ring', art: 'ring', size: 0.9, color: 'dark-violet' },
+      { id: 'mark-dotring-violet', label: 'violet dot ring', art: 'ring', size: 0.9, color: 'violet' },
+      { id: 'mark-dotring-light-violet', label: 'light violet dot ring', art: 'ring', size: 0.9, color: 'light-violet' },
+      { id: 'mark-dotring-dark-magenta', label: 'dark magenta dot ring', art: 'ring', size: 0.9, color: 'dark-magenta' },
+      { id: 'mark-dotring-magenta', label: 'magenta dot ring', art: 'ring', size: 0.9, color: 'magenta' },
+      { id: 'mark-dotring-light-magenta', label: 'light magenta dot ring', art: 'ring', size: 0.9, color: 'light-magenta' },
+      { id: 'mark-dotring-dark-pink', label: 'dark pink dot ring', art: 'ring', size: 0.9, color: 'dark-pink' },
+      { id: 'mark-dotring-pink', label: 'pink dot ring', art: 'ring', size: 0.9, color: 'pink' },
+      { id: 'mark-dotring-light-pink', label: 'light pink dot ring', art: 'ring', size: 0.9, color: 'light-pink' },
+      { id: 'mark-dotring-dark-black', label: 'dark black dot ring', art: 'ring', size: 0.9, color: 'dark-black' },
+      { id: 'mark-dotring-medium-black', label: 'medium black dot ring', art: 'ring', size: 0.9, color: 'medium-black' },
+      { id: 'mark-dotring-light-black', label: 'light black dot ring', art: 'ring', size: 0.9, color: 'light-black' },
+      { id: 'mark-dotring-dark-white', label: 'dark white dot ring', art: 'ring', size: 0.9, color: 'dark-white' },
+      { id: 'mark-dotring-medium-white', label: 'medium white dot ring', art: 'ring', size: 0.9, color: 'medium-white' },
+      { id: 'mark-dotring-light-white', label: 'light white dot ring', art: 'ring', size: 0.9, color: 'light-white' },
+      { id: 'mark-spotring-dark-red', label: 'dark red spot ring', art: 'ring', size: 1.35, color: 'dark-red' },
+      { id: 'mark-spotring-red', label: 'red spot ring', art: 'ring', size: 1.35, color: 'red' },
+      { id: 'mark-spotring-light-red', label: 'light red spot ring', art: 'ring', size: 1.35, color: 'light-red' },
+      { id: 'mark-spotring-dark-orange', label: 'dark orange spot ring', art: 'ring', size: 1.35, color: 'dark-orange' },
+      { id: 'mark-spotring-orange', label: 'orange spot ring', art: 'ring', size: 1.35, color: 'orange' },
+      { id: 'mark-spotring-light-orange', label: 'light orange spot ring', art: 'ring', size: 1.35, color: 'light-orange' },
+      { id: 'mark-spotring-dark-yellow', label: 'dark yellow spot ring', art: 'ring', size: 1.35, color: 'dark-yellow' },
+      { id: 'mark-spotring-yellow', label: 'yellow spot ring', art: 'ring', size: 1.35, color: 'yellow' },
+      { id: 'mark-spotring-light-yellow', label: 'light yellow spot ring', art: 'ring', size: 1.35, color: 'light-yellow' },
+      { id: 'mark-spotring-dark-lime', label: 'dark lime spot ring', art: 'ring', size: 1.35, color: 'dark-lime' },
+      { id: 'mark-spotring-lime', label: 'lime spot ring', art: 'ring', size: 1.35, color: 'lime' },
+      { id: 'mark-spotring-light-lime', label: 'light lime spot ring', art: 'ring', size: 1.35, color: 'light-lime' },
+      { id: 'mark-spotring-dark-green', label: 'dark green spot ring', art: 'ring', size: 1.35, color: 'dark-green' },
+      { id: 'mark-spotring-green', label: 'green spot ring', art: 'ring', size: 1.35, color: 'green' },
+      { id: 'mark-spotring-light-green', label: 'light green spot ring', art: 'ring', size: 1.35, color: 'light-green' },
+      { id: 'mark-spotring-dark-teal', label: 'dark teal spot ring', art: 'ring', size: 1.35, color: 'dark-teal' },
+      { id: 'mark-spotring-teal', label: 'teal spot ring', art: 'ring', size: 1.35, color: 'teal' },
+      { id: 'mark-spotring-light-teal', label: 'light teal spot ring', art: 'ring', size: 1.35, color: 'light-teal' },
+      { id: 'mark-spotring-dark-cyan', label: 'dark cyan spot ring', art: 'ring', size: 1.35, color: 'dark-cyan' },
+      { id: 'mark-spotring-cyan', label: 'cyan spot ring', art: 'ring', size: 1.35, color: 'cyan' },
+      { id: 'mark-spotring-light-cyan', label: 'light cyan spot ring', art: 'ring', size: 1.35, color: 'light-cyan' },
+      { id: 'mark-spotring-dark-azure', label: 'dark azure spot ring', art: 'ring', size: 1.35, color: 'dark-azure' },
+      { id: 'mark-spotring-azure', label: 'azure spot ring', art: 'ring', size: 1.35, color: 'azure' },
+      { id: 'mark-spotring-light-azure', label: 'light azure spot ring', art: 'ring', size: 1.35, color: 'light-azure' },
+      { id: 'mark-spotring-dark-blue', label: 'dark blue spot ring', art: 'ring', size: 1.35, color: 'dark-blue' },
+      { id: 'mark-spotring-blue', label: 'blue spot ring', art: 'ring', size: 1.35, color: 'blue' },
+      { id: 'mark-spotring-light-blue', label: 'light blue spot ring', art: 'ring', size: 1.35, color: 'light-blue' },
+      { id: 'mark-spotring-dark-violet', label: 'dark violet spot ring', art: 'ring', size: 1.35, color: 'dark-violet' },
+      { id: 'mark-spotring-violet', label: 'violet spot ring', art: 'ring', size: 1.35, color: 'violet' },
+      { id: 'mark-spotring-light-violet', label: 'light violet spot ring', art: 'ring', size: 1.35, color: 'light-violet' },
+      { id: 'mark-spotring-dark-magenta', label: 'dark magenta spot ring', art: 'ring', size: 1.35, color: 'dark-magenta' },
+      { id: 'mark-spotring-magenta', label: 'magenta spot ring', art: 'ring', size: 1.35, color: 'magenta' },
+      { id: 'mark-spotring-light-magenta', label: 'light magenta spot ring', art: 'ring', size: 1.35, color: 'light-magenta' },
+      { id: 'mark-spotring-dark-pink', label: 'dark pink spot ring', art: 'ring', size: 1.35, color: 'dark-pink' },
+      { id: 'mark-spotring-pink', label: 'pink spot ring', art: 'ring', size: 1.35, color: 'pink' },
+      { id: 'mark-spotring-light-pink', label: 'light pink spot ring', art: 'ring', size: 1.35, color: 'light-pink' },
+      { id: 'mark-spotring-dark-black', label: 'dark black spot ring', art: 'ring', size: 1.35, color: 'dark-black' },
+      { id: 'mark-spotring-medium-black', label: 'medium black spot ring', art: 'ring', size: 1.35, color: 'medium-black' },
+      { id: 'mark-spotring-light-black', label: 'light black spot ring', art: 'ring', size: 1.35, color: 'light-black' },
+      { id: 'mark-spotring-dark-white', label: 'dark white spot ring', art: 'ring', size: 1.35, color: 'dark-white' },
+      { id: 'mark-spotring-medium-white', label: 'medium white spot ring', art: 'ring', size: 1.35, color: 'medium-white' },
+      { id: 'mark-spotring-light-white', label: 'light white spot ring', art: 'ring', size: 1.35, color: 'light-white' },
+      { id: 'mark-bigspotring-dark-red', label: 'dark red big spot ring', art: 'ring', size: 2, color: 'dark-red' },
+      { id: 'mark-bigspotring-red', label: 'red big spot ring', art: 'ring', size: 2, color: 'red' },
+      { id: 'mark-bigspotring-light-red', label: 'light red big spot ring', art: 'ring', size: 2, color: 'light-red' },
+      { id: 'mark-bigspotring-dark-orange', label: 'dark orange big spot ring', art: 'ring', size: 2, color: 'dark-orange' },
+      { id: 'mark-bigspotring-orange', label: 'orange big spot ring', art: 'ring', size: 2, color: 'orange' },
+      { id: 'mark-bigspotring-light-orange', label: 'light orange big spot ring', art: 'ring', size: 2, color: 'light-orange' },
+      { id: 'mark-bigspotring-dark-yellow', label: 'dark yellow big spot ring', art: 'ring', size: 2, color: 'dark-yellow' },
+      { id: 'mark-bigspotring-yellow', label: 'yellow big spot ring', art: 'ring', size: 2, color: 'yellow' },
+      { id: 'mark-bigspotring-light-yellow', label: 'light yellow big spot ring', art: 'ring', size: 2, color: 'light-yellow' },
+      { id: 'mark-bigspotring-dark-lime', label: 'dark lime big spot ring', art: 'ring', size: 2, color: 'dark-lime' },
+      { id: 'mark-bigspotring-lime', label: 'lime big spot ring', art: 'ring', size: 2, color: 'lime' },
+      { id: 'mark-bigspotring-light-lime', label: 'light lime big spot ring', art: 'ring', size: 2, color: 'light-lime' },
+      { id: 'mark-bigspotring-dark-green', label: 'dark green big spot ring', art: 'ring', size: 2, color: 'dark-green' },
+      { id: 'mark-bigspotring-green', label: 'green big spot ring', art: 'ring', size: 2, color: 'green' },
+      { id: 'mark-bigspotring-light-green', label: 'light green big spot ring', art: 'ring', size: 2, color: 'light-green' },
+      { id: 'mark-bigspotring-dark-teal', label: 'dark teal big spot ring', art: 'ring', size: 2, color: 'dark-teal' },
+      { id: 'mark-bigspotring-teal', label: 'teal big spot ring', art: 'ring', size: 2, color: 'teal' },
+      { id: 'mark-bigspotring-light-teal', label: 'light teal big spot ring', art: 'ring', size: 2, color: 'light-teal' },
+      { id: 'mark-bigspotring-dark-cyan', label: 'dark cyan big spot ring', art: 'ring', size: 2, color: 'dark-cyan' },
+      { id: 'mark-bigspotring-cyan', label: 'cyan big spot ring', art: 'ring', size: 2, color: 'cyan' },
+      { id: 'mark-bigspotring-light-cyan', label: 'light cyan big spot ring', art: 'ring', size: 2, color: 'light-cyan' },
+      { id: 'mark-bigspotring-dark-azure', label: 'dark azure big spot ring', art: 'ring', size: 2, color: 'dark-azure' },
+      { id: 'mark-bigspotring-azure', label: 'azure big spot ring', art: 'ring', size: 2, color: 'azure' },
+      { id: 'mark-bigspotring-light-azure', label: 'light azure big spot ring', art: 'ring', size: 2, color: 'light-azure' },
+      { id: 'mark-bigspotring-dark-blue', label: 'dark blue big spot ring', art: 'ring', size: 2, color: 'dark-blue' },
+      { id: 'mark-bigspotring-blue', label: 'blue big spot ring', art: 'ring', size: 2, color: 'blue' },
+      { id: 'mark-bigspotring-light-blue', label: 'light blue big spot ring', art: 'ring', size: 2, color: 'light-blue' },
+      { id: 'mark-bigspotring-dark-violet', label: 'dark violet big spot ring', art: 'ring', size: 2, color: 'dark-violet' },
+      { id: 'mark-bigspotring-violet', label: 'violet big spot ring', art: 'ring', size: 2, color: 'violet' },
+      { id: 'mark-bigspotring-light-violet', label: 'light violet big spot ring', art: 'ring', size: 2, color: 'light-violet' },
+      { id: 'mark-bigspotring-dark-magenta', label: 'dark magenta big spot ring', art: 'ring', size: 2, color: 'dark-magenta' },
+      { id: 'mark-bigspotring-magenta', label: 'magenta big spot ring', art: 'ring', size: 2, color: 'magenta' },
+      { id: 'mark-bigspotring-light-magenta', label: 'light magenta big spot ring', art: 'ring', size: 2, color: 'light-magenta' },
+      { id: 'mark-bigspotring-dark-pink', label: 'dark pink big spot ring', art: 'ring', size: 2, color: 'dark-pink' },
+      { id: 'mark-bigspotring-pink', label: 'pink big spot ring', art: 'ring', size: 2, color: 'pink' },
+      { id: 'mark-bigspotring-light-pink', label: 'light pink big spot ring', art: 'ring', size: 2, color: 'light-pink' },
+      { id: 'mark-bigspotring-dark-black', label: 'dark black big spot ring', art: 'ring', size: 2, color: 'dark-black' },
+      { id: 'mark-bigspotring-medium-black', label: 'medium black big spot ring', art: 'ring', size: 2, color: 'medium-black' },
+      { id: 'mark-bigspotring-light-black', label: 'light black big spot ring', art: 'ring', size: 2, color: 'light-black' },
+      { id: 'mark-bigspotring-dark-white', label: 'dark white big spot ring', art: 'ring', size: 2, color: 'dark-white' },
+      { id: 'mark-bigspotring-medium-white', label: 'medium white big spot ring', art: 'ring', size: 2, color: 'medium-white' },
+      { id: 'mark-bigspotring-light-white', label: 'light white big spot ring', art: 'ring', size: 2, color: 'light-white' },
       // EVERY COLOURED SHAPE IN EVERY COLOUR (v379, 2026-09-04, Eddie:
       // "make sure all shapes that come in different colors have a
       // version for every single color we now have"). The eight first
@@ -1866,13 +2007,20 @@ function maxScaleFor(item) {
 // Paint an item's art flat onto a square canvas — the tray chips and
 // the award card share this, so a sticker can never look different in
 // the two places it is shown small.
-function paintArt(cv, item) {
+// rel (v381): draw the art at a fraction of the canvas, centred. The
+// editor's tray passes the item's size against the markings' 2 so the
+// cards read as a size chart — a dot is smaller than a big spot, an
+// eye smaller than a heart — instead of every item filling its card.
+function paintArt(cv, item, rel) {
   const c2 = cv.getContext('2d');
   const S = cv.width;
   const img = c2.createImageData(S, S);
+  const k = (rel > 0 && rel < 1) ? 1 / rel : 1;
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
-      const ink = sampleArt(item, (x / (S - 1)) * 2 - 1, (y / (S - 1)) * 2 - 1);
+      const nx = ((x / (S - 1)) * 2 - 1) * k, ny = ((y / (S - 1)) * 2 - 1) * k;
+      if (nx < -1 || nx > 1 || ny < -1 || ny > 1) continue;
+      const ink = sampleArt(item, nx, ny);
       if (!ink) continue;
       const o = (y * S + x) * 4;
       img.data[o] = ink[0]; img.data[o + 1] = ink[1];

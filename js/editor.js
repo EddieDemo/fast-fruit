@@ -593,7 +593,12 @@ function onKeyDown(ev) {
 
 // ---- tray ---------------------------------------------------------------
 function chipCanvasPaint(cv, item) {
-  window.FF.decals.paintArt(cv, item);   // one painter (see decals.js)
+  // THE TRAY IS A SIZE CHART (v381, ruled): a marking is drawn at its
+  // size against the markings' 2 (a dot at 45%, a spot at 68%, an eye
+  // at 56%, a heart full); wraps fill their card. One painter, one
+  // number (see decals.js paintArt).
+  const rel = item.wrap ? 1 : Math.min(1, (item.size || 1) / 2);
+  window.FF.decals.paintArt(cv, item, rel);   // one painter (see decals.js)
 }
 
 function buildTray() {

@@ -560,7 +560,7 @@ window.FF._grant = (id) => {
   const gbtn = document.createElement('button');
   gbtn.id = 'ff-grant-all-btn';
   gbtn.textContent = '\ud83c\udf81 all decals';
-  gbtn.title = 'Grant every catalogue decal (dev)';
+  gbtn.title = 'Grant five of every catalogue decal and five pots of every paint (dev)';
   // LANE GEOMETRY, not hardcoded pixels: slot 4 of the dev stack
   // (tune, cockpit, studio, grant-all). A hardcoded top:190px put it
   // under the HUD on a phone — invisible, which reads exactly like a
@@ -575,8 +575,13 @@ window.FF._grant = (id) => {
   gbtn.addEventListener('click', () => {
     const D = window.FF.decals, M = window.FF.melon;
     if (!D || !M) return;
+    // FIVE OF EACH (v382, Eddie): in the materials era a decal is used
+    // up when placed, so one of everything lasts one melon. Five of every
+    // decal and five pots of every paint — enough to compose with.
+    const EACH = 5;
     let got = 0;
-    for (const item of D.ALL) if (M.grantDecal(item.id)) got++;
+    for (const item of D.ALL) for (let i = 0; i < EACH; i++) if (M.grantDecal(item.id)) got++;
+    if (M.grantPaint && D.PLAIN_KEYS) for (const k of D.PLAIN_KEYS) for (let i = 0; i < EACH; i++) if (M.grantPaint(k)) got++;
     if (window.FF.editor && window.FF.editor.refreshTray) {
       window.FF.editor.refreshTray();
     }
