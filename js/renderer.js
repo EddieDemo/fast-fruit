@@ -2564,8 +2564,7 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
   // and this one had been saying yes for weeks. The palette quantiser
   // in bakeFrame keeps the real count small anyway.
   const PX_NONE = 65535;
-  const PX_QUANT_AT = 32;
-  const HOLE_AT = 7;        // v381: rings under this many sprite px across get the hole guarantee (the 5 px dot ring; the 8 px spot ring votes fine, measured 63/64)   // the quantiser runs only past this many colours (race sprites hold under 20; measured)
+  const PX_QUANT_AT = 32;   // the quantiser runs only past this many colours (race sprites hold under 20; measured)
   function pxRimGuarantee(idx, w, h, rimIdx) {
     const src = idx.slice();
     for (let y = 0; y < h; y++) {
@@ -2983,60 +2982,12 @@ if (window.FF && window.FF.palette) window.FF.palette.register('places', []); //
         const item = D.byId(wd.id); const ft = item && F[item.art];
         if (!ft) continue;
         const half = wd.s * e.b;
-        // THE HOLE GUARANTEE (v381): a small ring keeps its hole — the
-        // colour just OUTSIDE the ring (the dominant opaque colour in a
-        // thin annulus beyond its outer radius) is stamped at the
-        // projected centre when the ring is under HOLE_AT sprite px
-        // across. Paint does not switch it off: a painted ring is a
-        // silhouette WITH a hole.
-        if (ft.hole) {
-          const ro = ft.outer * half * k;
-          if (ro * 2 >= HOLE_AT) continue;
-          const C = D.stickerPoint(wd.u, wd.v, wd.rot, half, e.a, e.b, ft.hole.x * half, ft.hole.y * half);
-          if (!C || C.z < 0) continue;
-          const cx = spr / 2 + (C.x * ca - C.y * sa) * k, cy = spr / 2 + (C.x * sa + C.y * ca) * k;
-          const tally = new Map();
-          const r0 = ro + 0.5, r1 = ro + 2.5;
-          for (let y = Math.floor(cy - r1); y <= Math.ceil(cy + r1); y++) {
-            for (let x = Math.floor(cx - r1); x <= Math.ceil(cx + r1); x++) {
-              if (x < 0 || y < 0 || x >= spr || y >= spr) continue;
-              const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
-              if (d < r0 || d > r1) continue;
-              const ci = idx[y * spr + x]; if (ci === PX_NONE) continue;
-              tally.set(ci, (tally.get(ci) || 0) + 1);
-            }
-          }
-          let best = -1, bc = -1; for (const [ci, c] of tally) if (c > bc) { bc = c; best = ci; }
-          // the ring's own colour: the dominant colour the vote put in
-          // the wall band (0.4..1.0 of the outer radius)
-          const wall = new Map();
-          for (let y = Math.floor(cy - ro - 1); y <= Math.ceil(cy + ro + 1); y++) {
-            for (let x = Math.floor(cx - ro - 1); x <= Math.ceil(cx + ro + 1); x++) {
-              if (x < 0 || y < 0 || x >= spr || y >= spr) continue;
-              const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
-              if (d < ro * 0.4 || d > ro) continue;
-              const ci = idx[y * spr + x]; if (ci === PX_NONE) continue;
-              wall.set(ci, (wall.get(ci) || 0) + 1);
-            }
-          }
-          let wi = -1, wc = -1; for (const [ci, c] of wall) if (c > wc) { wc = c; wi = ci; }
-          // RE-STAMP the ring at sprite resolution: the hole is the pixel
-          // (or pixels) within 1.2 of the centre in the outside colour;
-          // the wall is every pixel from there out to the outer radius
-          // (+0.4) in the ring's colour. A 5 px ring becomes an O.
-          if (best >= 0 && wi >= 0) {
-            for (let y = Math.floor(cy - ro - 1); y <= Math.ceil(cy + ro + 1); y++) {
-              for (let x = Math.floor(cx - ro - 1); x <= Math.ceil(cx + ro + 1); x++) {
-                if (x < 0 || y < 0 || x >= spr || y >= spr) continue;
-                const p = y * spr + x; if (idx[p] === PX_NONE) continue;
-                const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
-                if (d < 1.2) idx[p] = best;
-                else if (d <= ro + 0.4) idx[p] = wi;
-              }
-            }
-          }
-          continue;
-        }
+        // (v383: the hole guarantee of v381 is GONE. It re-stamped small
+        // rings from the dominant colour in the wall band, and in frames
+        // where the vote had thinned the wall that colour was the WRAP —
+        // the whole ring vanished for that frame; where it kept the ring
+        // it painted a blob. Rings are ordinary voted stickers now, by
+        // ruling: no feature treatment.)
         if (wd.paint) continue;                        // a painted eye is a dot: nothing to guarantee (v380)
         const pr = ft.pupil.r * half * k;
         if (pr >= 1.5) continue;                       // big enough to vote: leave it

@@ -602,11 +602,6 @@ function disc(nx, ny, r) { return nx * nx + ny * ny < r * r; }
 // editor) the vote is left alone: ruled fine as-is on device.
 // `white` is the disc the pupil sits in (the clearing radius).
 const FEATURES = {
-  // the ring's HOLE (v381): at the smallest ring's 5 px the vote filled
-  // the hole in half the rotation frames (measured 29/64 on the real
-  // bake); the bake stamps the surrounding colour at the projected
-  // centre when the ring is under HOLE_AT px across.
-  ring: { outer: 0.98, hole: { x: 0, y: 0 } },
   googly: { white: 0.98, pupil: { x: 0.22, y: -0.18, r: 0.34 } },
   wide: { white: 0.98, pupil: { x: 0, y: 0, r: 0.30 } },
   sleepy: { white: 0.98, pupil: { x: 0, y: 0.28, r: 0.30 } },
@@ -737,12 +732,12 @@ const ART = {
     return disc(nx, ny, 0.98) ? markInk(item, 'white') : null;
   },
   // THE RING (v381, 2026-09-05): the dot with a hole, in the dot's
-  // three sizes. Inner radius 0.6 of the outer — at the smallest ring's
-  // 5 px on a phone that is a one-pixel wall round a one-pixel hole,
-  // the thinnest ring that is still a ring (0.7 lost its hole to the
-  // vote; 0.5 read as a dot with a pip). docs/proofs/mock-rings.png.
+  // three sizes. Inner radius 0.7 of the outer (v383, Eddie: "too
+  // thick"; 0.6 before). An ordinary voted sticker — no feature
+  // treatment, by ruling; the smallest size may not hold at race
+  // scale, and that is reported, not faked. docs/proofs/mock-rings.png.
   ring(nx, ny, item) {
-    return (disc(nx, ny, 0.98) && !disc(nx, ny, 0.6)) ? markInk(item, 'white') : null;
+    return (disc(nx, ny, 0.98) && !disc(nx, ny, 0.7)) ? markInk(item, 'white') : null;
   },
   // MORE MARKINGS (Eddie, 2026-09-04, from docs/proofs/mock-more.png).
   // The diamond and the crescent in the plain colours; the bullseye,
